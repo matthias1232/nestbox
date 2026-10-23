@@ -104,6 +104,14 @@ if [ "$TLS_MODE" != "none" ] && [ ! -s "$TLS_DIR/cert.pem" ]; then
   if [ -s "$TLS_DIR/key.pem" ]; then chmod 600 "$TLS_DIR/key.pem"; fi
 fi
 
+# The controller runs as uid 10001 inside its container; the mounted pair has to be
+# readable for that user, and only for that user.
+if [ -s "$TLS_DIR/key.pem" ]; then
+  chown 10001:10001 "$TLS_DIR/key.pem" "$TLS_DIR/cert.pem" 2>/dev/null || true
+  chmod 600 "$TLS_DIR/key.pem"
+  chmod 644 "$TLS_DIR/cert.pem"
+fi
+
 SCHEME=http
 if [ -s "$TLS_DIR/cert.pem" ]; then SCHEME=https; fi
 

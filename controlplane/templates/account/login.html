@@ -1,0 +1,73 @@
+{% load i18n static %}<!doctype html>
+<html lang="{{ LANGUAGE_CODE }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% translate "Sign in" %} — Nestbox</title>
+  <meta name="color-scheme" content="dark light">
+  <link rel="icon" href="{% static 'img/icon.svg' %}" type="image/svg+xml">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+</head>
+<body class="auth-body">
+  <main class="auth-wrap">
+    <a class="auth-brand" href="{% url 'dashboard' %}">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="3.75" y="3.75" width="16.5" height="16.5" rx="4" stroke="var(--nb-primary)" stroke-width="1.5"/>
+        <rect x="7.25" y="7.25" width="9.5" height="9.5" rx="2.5" stroke="var(--nb-primary)" stroke-width="1.25" opacity=".65"/>
+        <rect x="10" y="10" width="4" height="4" rx="1" fill="var(--nb-accent)"/>
+      </svg>
+      <span>Nestbox</span>
+    </a>
+
+    <section class="auth-card">
+      <h1>{% translate "Sign in" %}</h1>
+      <p class="muted auth-hint">
+        {% translate "Use the administrator address and the password that first boot printed on the console." %}
+      </p>
+
+      {% if form.non_field_errors %}
+        <div class="banner error" role="alert">
+          {% for error in form.non_field_errors %}<p>{{ error }}</p>{% endfor %}
+        </div>
+      {% endif %}
+
+      <form method="post" action="{% url 'account_login' %}" novalidate>
+        {% csrf_token %}
+        {% if redirect_field_value %}
+          <input type="hidden" name="{{ redirect_field_name }}" value="{{ redirect_field_value }}">
+        {% endif %}
+
+        <label class="field">
+          <span class="field-label">{{ form.login.label }}</span>
+          <input class="input" type="email" name="{{ form.login.name }}" id="{{ form.login.id_for_label }}"
+                 value="{{ form.login.value|default:'' }}" autocomplete="email" autofocus required>
+          {% for error in form.login.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </label>
+
+        <label class="field">
+          <span class="field-label">{{ form.password.label }}</span>
+          <input class="input" type="password" name="{{ form.password.name }}" id="{{ form.password.id_for_label }}"
+                 autocomplete="current-password" required>
+          {% for error in form.password.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </label>
+
+        <label class="auth-remember">
+          <input type="checkbox" name="{{ form.remember.name }}" id="{{ form.remember.id_for_label }}">
+          <span>{% translate "Keep me signed in on this device" %}</span>
+        </label>
+
+        <button class="btn primary auth-submit" type="submit">{% translate "Sign in" %}</button>
+      </form>
+
+      <p class="muted auth-foot">
+        {% translate "Passwords are managed by the administrator in the Nestbox admin." %}
+        <a href="{% url 'account_reset_password' %}">{% translate "Forgot your password?" %}</a>
+      </p>
+    </section>
+
+    <p class="auth-disclaimer">
+      Nestbox · Apache-2.0 · Independent community project, not affiliated with or endorsed by NVIDIA.
+    </p>
+  </main>
+</body>
+</html>
