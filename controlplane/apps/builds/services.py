@@ -103,7 +103,11 @@ def _ports(recipe: BuildRecipe) -> list[int]:
 def _port_conflicts(recipe: BuildRecipe) -> list[str]:
     seen: dict[int, str] = {}
     problems: list[str] = []
-    entries = [("ui", recipe.ui_port), ("admin", recipe.admin_port)]
+    # The admin UI is served by the same listener as the UI on the same port; only a genuinely
+    # distinct admin port can collide.
+    entries = [("ui", recipe.ui_port)]
+    if recipe.admin_port != recipe.ui_port:
+        entries.append(("admin", recipe.admin_port))
     entries += [(p["name"], p["port"]) for p in _preseed(recipe)]
     for label, port in entries:
         if not 1 <= port <= 65535:
