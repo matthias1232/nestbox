@@ -1,0 +1,22 @@
+key: opencode
+name: OpenCode
+version: "latest"
+vendor: Anomaly
+description: >
+  Terminal-first coding agent with multi-provider model support. Pairs well with a local vLLM
+  endpoint, so a nest can run entirely on-premises.
+install:
+  method: script
+  spec: "https://opencode.ai/install"
+  verified: true
+entrypoint: ["opencode"]
+ports: []
+env:
+  - slot: OPENCODE_API_KEY
+    required: false
+healthcheck:
+  type: process
+  timeout_seconds: 10
+policy_profile: coding-agent
+requires_gpu: false
+docs_url: https://opencode.ai/docs

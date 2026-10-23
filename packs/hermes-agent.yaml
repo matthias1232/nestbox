@@ -1,0 +1,25 @@
+key: hermes-agent
+name: Hermes Agent
+version: "0.x"
+vendor: Nous Research
+description: >
+  Open-weights agent tuned for tool use and long-horizon tasks. Works against local Nemotron
+  through an OpenAI-compatible endpoint, or against a cloud provider.
+install:
+  method: script
+  spec: "https://raw.githubusercontent.com/NousResearch/Hermes-Agent/main/install.sh"
+  verified: false
+  notes: "Verify the install URL and pinned version before shipping this pack as stable."
+entrypoint: ["hermes"]
+ports: []
+env:
+  - slot: HERMES_API_BASE
+    required: false
+  - slot: HERMES_API_KEY
+    required: false
+healthcheck:
+  type: process
+  timeout_seconds: 10
+policy_profile: coding-agent
+requires_gpu: false
+docs_url: https://nousresearch.com

@@ -1,0 +1,8 @@
+App icon for an open-source AI infrastructure project. A single rounded-square mark in deep navy
+#0B1020, containing a minimal geometric glyph: three small nested rounded squares in cyan #22D3EE
+with thin luminous 1px borders, separated by visible gaps, the outermost square broken on one side
+like an opening. One inner square in amber #F59E0B. Flat minimal geometric design, crisp edges,
+centered, generous padding, subtle inner glow on the cyan outlines. No text, no letters, no
+numbers, no wordmark, no photographic detail. Designed to stay legible at 32px favicon size.
+
+Size: 1024x1024. Output: assets/brand/icon-1024.jpg

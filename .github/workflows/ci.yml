@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: nestbox
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+        ports: ["5432:5432"]
+    env:
+      NESTBOX_SECRET_KEY: ci-only-not-secret
+      NESTBOX_BOOTSTRAP_ADMIN_EMAIL: ci@example.test
+      NESTBOX_BOOTSTRAP_ADMIN_PASSWORD: ci-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv venv && uv pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: uv run ruff check controlplane scripts
+
+      - name: No ASCII diagrams
+        run: uv run python scripts/lint_no_ascii_diagrams.py
+
+      - name: Django checks
+        working-directory: controlplane
+        run: uv run python manage.py check --deploy --fail-level ERROR
+
+      - name: Tests
+        run: uv run pytest -q
+
+      - name: OpenAPI contract is clean and unchanged
+        run: |
+          uv run python controlplane/manage.py spectacular \
+            --file /tmp/openapi.json --fail-on-warn --validate
+          test -f contracts/openapi-v1.json
+          uv run python controlplane/manage.py spectacular --file /tmp/openapi-new.json
+          diff -u contracts/openapi-v1.json /tmp/openapi-new.json
+
+      - name: Translation catalogs compile
+        working-directory: controlplane
+        run: uv run python manage.py compilemessages --ignore .venv
+
+      - name: Translation coverage report
+        run: uv run python scripts/i18n/audit.py
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: images/controller/Dockerfile
+          push: false
+          tags: nestbox-controller:ci

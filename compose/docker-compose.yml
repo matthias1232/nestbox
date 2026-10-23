@@ -1,0 +1,41 @@
+name: nestbox
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: nestbox
+      POSTGRES_USER: nestbox
+      POSTGRES_PASSWORD: ${NESTBOX_DB_PASSWORD:-nestbox}
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nestbox"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  controller:
+    build:
+      context: ..
+      dockerfile: images/controller/Dockerfile
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.prod
+      NESTBOX_SECRET_KEY: ${NESTBOX_SECRET_KEY:-dev-only}
+      NESTBOX_DB_HOST: db
+      NESTBOX_DB_PASSWORD: ${NESTBOX_DB_PASSWORD:-nestbox}
+      NESTBOX_BOOTSTRAP_ADMIN_EMAIL: ${NESTBOX_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}
+      NESTBOX_BOOTSTRAP_ADMIN_PASSWORD: ${NESTBOX_BOOTSTRAP_ADMIN_PASSWORD:-change-me}
+      NESTBOX_OPENSHELL_ADAPTER: ${NESTBOX_OPENSHELL_ADAPTER:-auto}
+    ports:
+      - "8000:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - data:/var/lib/nestbox
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db:
+  data:

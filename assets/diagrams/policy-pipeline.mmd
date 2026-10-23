@@ -1,0 +1,14 @@
+sequenceDiagram
+  actor Op as Operator
+  participant UI as Web UI
+  participant Ctl as Controller
+  participant Db as Policy + Revision
+  participant Gw as OpenShell gateway
+  Op->>UI: edit network rule
+  UI->>Ctl: PATCH /api/v1/policies/{id}/
+  Ctl->>Db: store YAML, bump version, keep revision
+  Ctl->>Ctl: validate against schema
+  Ctl->>Gw: set_policy(name, yaml)
+  Gw-->>Ctl: applied
+  Ctl-->>UI: new effective policy
+  Note over Gw: network sections hot-reload<br/>filesystem/process need a new nest

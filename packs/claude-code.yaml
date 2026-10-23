@@ -1,0 +1,25 @@
+key: claude-code
+name: Claude Code
+version: "2.x"
+vendor: Anthropic
+description: >
+  Anthropic's terminal coding agent. Runs as the canonical process inside a nest; the
+  controller attaches a terminal and the pack's policy profile grants access to the model API
+  only.
+install:
+  method: npm
+  spec: "@anthropic-ai/claude-code@latest"
+  verified: true
+entrypoint: ["claude"]
+ports: []
+env:
+  - slot: ANTHROPIC_API_KEY
+    required: true
+  - slot: CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+    required: false
+healthcheck:
+  type: process
+  timeout_seconds: 10
+policy_profile: coding-agent
+requires_gpu: false
+docs_url: https://docs.anthropic.com/en/docs/claude-code

@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}Builds · Nestbox{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>{% translate "ISO builds" %}</h1>
+  <p>{% translate "Recipes become a bootable Ubuntu image with the appliance pre-configured." %}</p>
+</div>
+<div class="grid cols-2">
+  <section class="card">
+    <h2>{% translate "Recipes" %}</h2>
+    <table>
+      <thead><tr><th>{% translate "Name" %}</th><th>Ubuntu</th><th>{% translate "Profile" %}</th><th>{% translate "Network" %}</th><th></th></tr></thead>
+      <tbody>
+      {% for recipe in recipes %}
+        <tr>
+          <td>{{ recipe.name }}</td>
+          <td class="muted">{{ recipe.ubuntu_series }}</td>
+          <td class="muted">{{ recipe.profile }}</td>
+          <td class="muted">{{ recipe.network_mode }}</td>
+          <td>
+            <form method="post">{% csrf_token %}
+              <input type="hidden" name="recipe" value="{{ recipe.pk }}">
+              <button class="btn small" type="submit">{% translate "Build" %}</button>
+            </form>
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="5" class="muted">{% translate "No recipes yet. Create one in the admin." %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  <section class="card">
+    <h2>{% translate "Builds" %}</h2>
+    <table>
+      <thead><tr><th>#</th><th>{% translate "Recipe" %}</th><th>{% translate "State" %}</th><th>{% translate "Created" %}</th></tr></thead>
+      <tbody>
+      {% for job in jobs %}
+        <tr>
+          <td><a href="{% url 'build-detail' job.pk %}">{{ job.pk }}</a></td>
+          <td>{{ job.recipe.name }}</td>
+          <td><span class="badge">{{ job.state }}</span></td>
+          <td class="muted small">{{ job.created_at|date:"Y-m-d H:i" }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="4" class="muted">{% translate "No builds yet." %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</div>
+{% endblock %}

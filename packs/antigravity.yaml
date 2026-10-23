@@ -1,0 +1,23 @@
+key: antigravity
+name: Antigravity
+version: "latest"
+vendor: Google
+description: >
+  Agentic IDE. Ships with a virtual desktop inside the nest and is reachable through a noVNC
+  session, because a desktop application cannot be proxied as a plain HTTP port.
+install:
+  method: manual
+  spec: "vendor installer, fetched at nest creation"
+  verified: false
+entrypoint: ["/usr/bin/novnc-session", "antigravity"]
+ports:
+  - name: desktop
+    port: 6080
+    url_path: "/vnc.html"
+env: []
+healthcheck:
+  http: "http://127.0.0.1:6080/"
+  timeout_seconds: 30
+policy_profile: desktop-agent
+requires_gpu: false
+docs_url: https://antigravity.google

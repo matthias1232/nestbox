@@ -1,0 +1,25 @@
+key: openclaw-gateway
+name: OpenClaw Gateway
+version: "latest"
+vendor: OpenClaw Foundation
+description: >
+  Self-hosted gateway between chat applications and coding agents. Runs as a service inside its
+  own nest, reachable by hostname through the traffic container.
+install:
+  method: npm
+  spec: "openclaw@latest"
+  verified: false
+entrypoint: ["openclaw", "gateway", "--listen", "0.0.0.0:8080"]
+ports:
+  - name: ui
+    port: 8080
+    url_path: "/"
+env:
+  - slot: OPENCLAW_GATEWAY_TOKEN
+    required: true
+healthcheck:
+  http: "http://127.0.0.1:8080/healthz"
+  timeout_seconds: 15
+policy_profile: gateway
+requires_gpu: false
+docs_url: https://docs.openclaw.ai

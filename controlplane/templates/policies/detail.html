@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}{{ policy.name }} · Nestbox{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ policy.name }}</h1>
+  <p class="muted">v{{ policy.version }} · {{ policy.scope }} · <span class="mono">{{ policy.content_hash|truncatechars:16 }}</span></p>
+</div>
+
+{% if validation %}
+  <div class="banner {% if validation.valid %}ok{% else %}error{% endif %}">
+    {% if validation.valid %}{% translate "Policy is valid." %}{% else %}{% translate "Policy has errors." %}{% endif %}
+    {% for error in validation.errors %}<div class="small mono">{{ error }}</div>{% endfor %}
+    {% for warning in validation.warnings %}<div class="small muted">{{ warning }}</div>{% endfor %}
+  </div>
+{% endif %}
+
+<div class="grid cols-2">
+  <section class="card">
+    <form method="post">
+      {% csrf_token %}
+      <label for="yaml_text">{% translate "Policy document" %}</label>
+      <textarea id="yaml_text" name="yaml_text" class="code" spellcheck="false">{{ yaml_text }}</textarea>
+      <div class="actions mt">
+        <button class="btn primary" type="submit" name="action" value="save">{% translate "Save as new version" %}</button>
+        <button class="btn" type="submit" name="action" value="validate">{% translate "Validate" %}</button>
+      </div>
+    </form>
+  </section>
+  <section class="card">
+    <h2>{% translate "Revisions" %}</h2>
+    {% for revision in revisions %}
+      <p class="small">v{{ revision.version }} <span class="muted">{{ revision.created_at|date:"Y-m-d H:i" }}</span></p>
+    {% empty %}
+      <p class="muted small">{% translate "No revisions yet." %}</p>
+    {% endfor %}
+  </section>
+</div>
+{% endblock %}

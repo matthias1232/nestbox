@@ -1,0 +1,25 @@
+key: nemoclaw
+name: NemoClaw blueprint
+version: "latest"
+vendor: NVIDIA
+description: >
+  Reference blueprints for governed, always-on agents. The pack installs the blueprint runtime
+  inside a nest and relies on OpenShell for policy enforcement.
+install:
+  method: git
+  spec: "blueprint repository, pinned by commit at nest creation"
+  verified: false
+entrypoint: ["/opt/nemoclaw/bin/run"]
+ports:
+  - name: ui
+    port: 8000
+    url_path: "/"
+env:
+  - slot: NEMOCLAW_PROVIDER_PROFILE
+    required: false
+healthcheck:
+  http: "http://127.0.0.1:8000/healthz"
+  timeout_seconds: 20
+policy_profile: governed-agent
+requires_gpu: true
+docs_url: https://www.nvidia.com/en-us/ai/nemoclaw/

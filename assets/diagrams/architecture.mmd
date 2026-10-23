@@ -1,0 +1,19 @@
+flowchart TB
+  subgraph host["Ubuntu Server (one boot)"]
+    ctl["controller<br/>Django · DRF · HTMX"]
+    trf["traffic<br/>Caddy · ACME · WireGuard"]
+    gw["gateway<br/>OpenShell gRPC"]
+    dns["core-dns<br/>internal zone"]
+  end
+  ctl -->|"mTLS operator"| gw
+  ctl --> trf
+  ctl --> dns
+  gw --> rt["sandbox runtime<br/>Docker · Podman · MicroVM · K8s"]
+  rt --> n1["nest: claude-code"]
+  rt --> n2["nest: hermes-agent"]
+  rt --> n3["nest: openclaw-gateway"]
+  rt --> n4["nest: local-nemotron"]
+  n1 --> pol{{"policy walls<br/>filesystem · process · network"}}
+  n2 --> pol
+  n3 --> pol
+  n4 --> pol

@@ -1,0 +1,45 @@
+site_name: Nestbox
+site_description: One-boot AI appliance — OpenShell sandboxes, policies and a web UI.
+site_url: https://nestbox.mmbits.com
+repo_url: https://github.com/matthias1232/nestbox
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: cyan
+      accent: amber
+      toggle:
+        icon: material/weather-night
+        name: Light mode
+    - scheme: default
+      toggle:
+        icon: material/weather-sunny
+        name: Dark mode
+  features:
+    - navigation.sections
+    - content.code.copy
+    - search.suggest
+plugins:
+  - search
+  - i18n:
+      default_language: en
+      languages:
+        en: English
+markdown_extensions:
+  - admonition
+  - tables
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+nav:
+  - Home: index.md
+  - Roadmap: roadmap.md
+  - API: api/overview.md
+  - Policies: policies/network-rules.md
+  - Models: models/nemotron.md
+  - Hardware: hardware/dgx-spark.md
+  - ISO: iso/index.md
+  - Claims: claims.md
+  - Style guide: style-guide.md

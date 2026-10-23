@@ -1,0 +1,25 @@
+key: local-nemotron
+name: Local Nemotron endpoint
+version: "Nano / Super / Ultra"
+vendor: NVIDIA
+description: >
+  An OpenAI-compatible endpoint in front of a local Nemotron checkpoint (vLLM). Not an agent:
+  this pack provisions the model server so other nests can point their provider profile at it.
+install:
+  method: container
+  spec: "vllm/vllm-openai:latest"
+  verified: true
+entrypoint: ["vllm", "serve", "nvidia/Nemotron-3-Nano-30B-A3B", "--port", "8000"]
+ports:
+  - name: api
+    port: 8000
+    url_path: "/v1"
+env:
+  - slot: HF_TOKEN
+    required: false
+healthcheck:
+  http: "http://127.0.0.1:8000/health"
+  timeout_seconds: 120
+policy_profile: model-server
+requires_gpu: true
+docs_url: https://research.nvidia.com/labs/nemotron/

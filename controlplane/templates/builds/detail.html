@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}Build #{{ job.pk }} · Nestbox{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>{% translate "Build" %} #{{ job.pk }}</h1>
+  <p><span class="badge">{{ job.state }}</span> {{ job.recipe.name }}</p>
+</div>
+<div class="grid cols-2">
+  <section class="card">
+    <h2>{% translate "Recipe" %}</h2>
+    <table>
+      <tr><td class="muted">Ubuntu</td><td>{{ job.recipe.ubuntu_series }}</td></tr>
+      <tr><td class="muted">{% translate "Profile" %}</td><td>{{ job.recipe.profile }}</td></tr>
+      <tr><td class="muted">{% translate "Network" %}</td><td>{{ job.recipe.network_mode }}</td></tr>
+      <tr><td class="muted">{% translate "Hostname" %}</td><td class="mono">{{ job.recipe.hostname }}</td></tr>
+      <tr><td class="muted">{% translate "Locale" %}</td><td>{{ job.recipe.locale }}</td></tr>
+    </table>
+    <p class="muted small mt">{% translate "The seed below is rendered deterministically from the recipe and is exactly what the builder consumes." %}</p>
+  </section>
+  <section class="card">
+    <h2>autoinstall.yaml</h2>
+    <pre class="log">{{ seed.autoinstall }}</pre>
+  </section>
+</div>
+<section class="card mt">
+  <h2>user-data</h2>
+  <pre class="log">{{ seed.user_data }}</pre>
+</section>
+{% endblock %}

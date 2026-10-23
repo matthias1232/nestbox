@@ -1,0 +1,12 @@
+Minimal premium technical hero banner for an open-source AI infrastructure project. Deep dark
+navy background with a subtle faint grid and soft radial glow. Center-left: one stylized server
+appliance cube emitting soft cyan light. From the appliance, a neat organized grid of small
+glowing rectangular compartments floats outward to the right; each compartment is outlined and
+separated from its neighbours by thin luminous vertical walls, evoking secure isolated sandboxes
+and policy firewalls. Thin faint network connection lines link the appliance to the compartments.
+One compartment glows warm amber as a highlight. Cool teal, cyan and violet palette with a single
+warm accent. Clean minimal vector-infographic 3D style, generous negative space on the right for a
+text overlay. Absolutely no text, no words, no letters, no numbers, no logos, no brand marks, no
+people.
+
+Size: 1792x1024. Output: assets/brand/hero-banner.jpg

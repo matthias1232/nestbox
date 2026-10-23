@@ -1,0 +1,17 @@
+[Unit]
+Description=Nestbox first-boot configuration
+Documentation=https://nestbox.mmbits.com
+After=network-online.target docker.service
+Wants=network-online.target
+ConditionPathExists=!/var/lib/nestbox/.firstboot-done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/nestbox/firstboot.sh
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

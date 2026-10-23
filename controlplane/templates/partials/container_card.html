@@ -1,0 +1,16 @@
+<article class="node {{ container.state }}">
+  <div class="name">
+    <span class="dot {{ container.state }}"></span>
+    <a href="{% url 'container-detail' container.name %}">{{ container.name }}</a>
+  </div>
+  <div class="meta">
+    <span>{{ container.role }}</span>
+    <span>{{ container.state }}</span>
+    {% if container.health %}<span class="badge ok">{{ container.health }}</span>{% endif %}
+  </div>
+  {% if container.ports %}
+    <div class="ports">
+      {% for p in container.ports %}{{ p.container }}{% if p.host_port %} → {{ p.host_port }}{% endif %}{% if not forloop.last %} · {% endif %}{% endfor %}
+    </div>
+  {% endif %}
+</article>

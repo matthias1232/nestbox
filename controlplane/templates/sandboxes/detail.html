@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% load i18n %}
+{% block title %}{{ sandbox.name }} · Nestbox{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ sandbox.name }}</h1>
+  <p><span class="dot {{ sandbox.state }}"></span> {{ sandbox.state }}</p>
+</div>
+
+{% if sandbox.last_error %}
+  <div class="banner">{{ sandbox.last_error }}</div>
+{% endif %}
+
+<div class="grid cols-2">
+  <section class="card">
+    <h2>{% translate "Nest" %}</h2>
+    <table>
+      <tr><td class="muted">{% translate "Agent" %}</td><td>{{ sandbox.agent_pack_key|default:"—" }}</td></tr>
+      <tr><td class="muted">{% translate "OpenShell id" %}</td><td class="mono small">{{ sandbox.openshell_id|default:"—" }}</td></tr>
+      <tr><td class="muted">{% translate "Workspace" %}</td><td>{{ sandbox.workspace }}</td></tr>
+      <tr><td class="muted">{% translate "Overlay IP" %}</td><td class="mono">{{ sandbox.overlay_ip|default:"—" }}</td></tr>
+      <tr><td class="muted">{% translate "URL" %}</td><td class="mono small"><a href="https://{{ sandbox.url_host }}/">https://{{ sandbox.url_host }}/</a></td></tr>
+    </table>
+    {% if pack %}
+      <h2 class="mt">{% translate "Pack" %}</h2>
+      <p class="small">{{ pack.description }}</p>
+      <p class="muted small">{% translate "Ports" %}:
+        {% for port in pack.ports %}{{ port.port }}{% if not forloop.last %}, {% endif %}{% endfor %}
+      </p>
+    {% endif %}
+    <div class="actions mt">
+      <form method="post">{% csrf_token %}
+        <input type="hidden" name="action" value="stop">
+        <button class="btn" type="submit">{% translate "Stop" %}</button>
+      </form>
+      <form method="post" onsubmit="return confirm('{% translate "Delete this nest and its workspace?" %}')">{% csrf_token %}
+        <input type="hidden" name="action" value="delete">
+        <button class="btn danger" type="submit">{% translate "Delete" %}</button>
+      </form>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>{% translate "Policies" %}</h2>
+    {% for policy in policies %}
+      <p><a href="{% url 'policy-detail' policy.pk %}">{{ policy.name }}</a>
+         <span class="muted small">v{{ policy.version }} · {{ policy.scope }}</span></p>
+    {% empty %}
+      <p class="muted small">{% translate "No policy bound to this nest yet." %}</p>
+    {% endfor %}
+  </section>
+</div>
+{% endblock %}
