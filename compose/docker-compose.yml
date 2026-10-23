@@ -3,6 +3,7 @@ name: nestbox
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: nestbox
       POSTGRES_USER: nestbox
@@ -16,6 +17,7 @@ services:
       retries: 10
 
   controller:
+    restart: unless-stopped
     build:
       context: ..
       dockerfile: images/controller/Dockerfile
