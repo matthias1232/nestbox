@@ -28,10 +28,11 @@ services:
       NESTBOX_BOOTSTRAP_ADMIN_PASSWORD: ${NESTBOX_BOOTSTRAP_ADMIN_PASSWORD:-change-me}
       NESTBOX_OPENSHELL_ADAPTER: ${NESTBOX_OPENSHELL_ADAPTER:-auto}
     ports:
-      - "8000:8000"
+      - "${NESTBOX_UI_PORT:-443}:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - data:/var/lib/nestbox
+      - /etc/nestbox/tls:/etc/nestbox/tls:ro
     depends_on:
       db:
         condition: service_healthy

@@ -61,23 +61,60 @@ netplan apply || echo "[nestbox] netplan apply failed; review /etc/netplan/10-ne
 echo "[nestbox] installing runtime packages"
 export DEBIAN_FRONTEND=noninteractive
 retry apt-get update -qq || true
-retry apt-get install -y -qq ca-certificates curl jq git chrony docker.io docker-compose-v2 || \
+retry apt-get install -y -qq ca-certificates curl jq git chrony openssl docker.io docker-compose-v2 || \
   echo "[nestbox] package installation incomplete; the controller may not start"
 
 systemctl enable --now chrony || true
 systemctl enable --now docker || true
 
 PROFILE=$(json "d.get('profile','slim')")
-echo "[nestbox] starting the stack (profile $PROFILE)"
+UI_PORT=$(json "d.get('ports',{}).get('ui',443)")
+TLS_MODE=$(json "d.get('tls',{}).get('mode','self_signed')")
+TLS_DOMAIN=$(json "d.get('tls',{}).get('domain','') or ''")
+TLS_DIR=/etc/nestbox/tls
+ENV_FILE=/etc/nestbox/nestbox.env
+mkdir -p "$TLS_DIR" /etc/nestbox
+
+echo "[nestbox] preparing the controller environment"
+if [ ! -f "$ENV_FILE" ]; then
+  ADMIN_EMAIL="admin@${TLS_DOMAIN:-nestbox.local}"
+  ADMIN_PASSWORD=$(head -c 18 /dev/urandom | base64 | tr -d '=+/')
+  cat > "$ENV_FILE" <<ENV
+NESTBOX_SECRET_KEY=$(head -c 48 /dev/urandom | base64 | tr -d '=+/')
+NESTBOX_DB_PASSWORD=$(head -c 24 /dev/urandom | base64 | tr -d '=+/')
+NESTBOX_ALLOWED_HOSTS=*
+NESTBOX_UI_PORT=$UI_PORT
+NESTBOX_BOOTSTRAP_ADMIN_EMAIL=$ADMIN_EMAIL
+NESTBOX_BOOTSTRAP_ADMIN_PASSWORD=$ADMIN_PASSWORD
+ENV
+  chmod 600 "$ENV_FILE"
+  printf '%s\n' "$ADMIN_PASSWORD" > "$STATE/admin-password.txt"
+  chmod 600 "$STATE/admin-password.txt"
+  NEW_ADMIN=1
+fi
+
+if [ "$TLS_MODE" != "none" ] && [ ! -s "$TLS_DIR/cert.pem" ]; then
+  echo "[nestbox] creating a self-signed certificate for ${TLS_DOMAIN:-$(hostname)}"
+  CERT_IP=$(hostname -I | awk '{print $1}')
+  openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -days 825 \
+    -subj "/CN=${TLS_DOMAIN:-$(hostname)}" \
+    -addext "subjectAltName=DNS:${TLS_DOMAIN:-$(hostname)},DNS:$(hostname),DNS:$(hostname).local,IP:$CERT_IP" \
+    -keyout "$TLS_DIR/key.pem" -out "$TLS_DIR/cert.pem" 2>/dev/null || \
+    echo "[nestbox] certificate creation failed; the UI stays on http"
+  if [ -s "$TLS_DIR/key.pem" ]; then chmod 600 "$TLS_DIR/key.pem"; fi
+fi
+
+SCHEME=http
+if [ -s "$TLS_DIR/cert.pem" ]; then SCHEME=https; fi
+
+echo "[nestbox] starting the stack (profile $PROFILE, port $UI_PORT)"
 if [ -f /opt/nestbox/compose/docker-compose.yml ]; then
-  if [ -f /etc/nestbox/nestbox.env ]; then
-    retry docker compose --env-file /etc/nestbox/nestbox.env -f /opt/nestbox/compose/docker-compose.yml up -d --build
-  else
-    retry docker compose -f /opt/nestbox/compose/docker-compose.yml up -d --build
-  fi
+  retry docker compose --env-file "$ENV_FILE" -f /opt/nestbox/compose/docker-compose.yml up -d --build
 else
   echo "[nestbox] compose file missing at /opt/nestbox/compose/docker-compose.yml"
 fi
+
+UI_HOST=$(hostname -I | awk '{print $1}')
 
 {
   echo "# Nestbox self-check"
@@ -86,9 +123,17 @@ fi
   echo "- network: $MODE"
   echo "- hostname: $(hostname)"
   echo "- addresses: $(hostname -I)"
+  echo "- ui: $SCHEME://$UI_HOST:$UI_PORT/"
   echo "- generated: $(date -u +%FT%TZ)"
   echo "- containers: $(docker ps -q 2>/dev/null | wc -l)"
 } > "$STATE/self-check.md"
 
 touch "$STATE/.firstboot-done"
 echo "[nestbox] first boot complete"
+echo "[nestbox] web UI: $SCHEME://$UI_HOST:$UI_PORT/"
+if [ "${NEW_ADMIN:-0}" = "1" ]; then
+  echo "[nestbox] admin login: $ADMIN_EMAIL"
+  echo "[nestbox] admin password: $ADMIN_PASSWORD"
+  echo "[nestbox] the same password is stored in $STATE/admin-password.txt"
+fi
+

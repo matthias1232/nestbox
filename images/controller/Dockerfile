@@ -23,7 +23,9 @@ COPY --chown=nestbox:nestbox docs ./docs
 COPY --chown=nestbox:nestbox images/controller/entrypoint.sh /app/images/controller/entrypoint.sh
 USER nestbox
 WORKDIR /app/controlplane
-RUN STATIC_ROOT=/app/staticfiles python manage.py collectstatic --noinput
+# collectstatic only needs the settings to import; the runtime secret is injected by compose.
+RUN NESTBOX_SECRET_KEY=collectstatic-only STATIC_ROOT=/app/staticfiles \
+    python manage.py collectstatic --noinput
 
 EXPOSE 8000
 ENTRYPOINT ["/usr/bin/tini", "--"]
