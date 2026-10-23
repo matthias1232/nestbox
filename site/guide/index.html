@@ -102,6 +102,20 @@ cd nestbox
             The script prints the final size and SHA-256. Keep the checksum: it is the quickest way to tell
             a truncated upload from a broken boot.
           </p>
+
+          <p>
+            The Image Creator in the appliance renders the same seed from a form: hostname, network mode,
+            UI port, TLS mode and the nests to preseed. Download the bundle and point <code>--seed</code>
+            at its <code>seed/</code> directory — no YAML editing needed.
+          </p>
+          <figure class="shot">
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="frame-title">Image Creator · recipe</span></div>
+              <a class="zoom" href="../assets/site/creator.png" title="Open at full resolution"><img src="../assets/site/creator.png" alt="Nestbox Image Creator page with the recipe summary, the Brev command and the rendered autoinstall and user-data" width="3200" height="2200"></a>
+            </div>
+            <figcaption>A creator recipe: DHCP on the appliance side, the UI on port 8443, self-signed TLS for
+              <code>nestbox-ct.local</code>, and one preseeded nest on port 8080.</figcaption>
+          </figure>
           <div class="callout">
             <p><strong>One image, three series.</strong> The same seed format works for Ubuntu 22.04, 24.04 and 26.04.
               Pick the base ISO for the series you want; the payload is identical.</p>
