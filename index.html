@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0B1020">
+  <title>Nestbox — one boot, every agent in its own nest</title>
+  <meta name="description" content="Nestbox is an open-source, one-boot Ubuntu appliance for AI agents: sandboxed nests, a hot-reloadable AI firewall, one web UI and a versioned API.">
+  <link rel="canonical" href="https://nestbox.mmbits.com/">
+  <link rel="icon" type="image/jpeg" href="../assets/brand/icon-1024.jpg">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Nestbox">
+  <meta property="og:title" content="Nestbox — every AI agent gets its own nest">
+  <meta property="og:description" content="One bootable Ubuntu appliance for governed AI agent workspaces: sandboxed nests, a hot-reloadable AI firewall and one web UI.">
+  <meta property="og:url" content="https://nestbox.mmbits.com/">
+  <meta property="og:image" content="https://nestbox.mmbits.com/assets/brand/hero-banner.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Nestbox — every AI agent gets its own nest">
+  <meta name="twitter:description" content="One bootable Ubuntu appliance for governed AI agent workspaces: sandboxed nests, a hot-reloadable AI firewall and one web UI.">
+  <meta name="twitter:image" content="https://nestbox.mmbits.com/assets/brand/hero-banner.jpg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="./" aria-label="Nestbox home">
+        <span class="brand-mark">
+          <img src="../assets/brand/icon-1024.jpg" alt="Nestbox app icon: nested cyan squares around an amber core on a dark tile" width="36" height="36">
+        </span>
+        <span class="brand-name">Nestbox</span>
+      </a>
+
+      <nav class="site-nav" aria-label="Primary">
+        <a href="#what">What it does</a>
+        <a href="#firewall">AI firewall</a>
+        <a href="#run">Ways to run</a>
+        <a href="#models">Models</a>
+        <a href="#api">API</a>
+        <a href="guide/">Install guide</a>
+      </nav>
+
+      <div class="header-actions">
+        <a class="btn btn-ghost btn-sm header-docs" href="/docs/">Docs</a>
+
+        <details class="mobile-menu">
+          <summary>Menu</summary>
+          <div class="menu-panel">
+            <nav class="menu-links" aria-label="Mobile">
+              <a href="#what">What it does</a>
+              <a href="#firewall">AI firewall</a>
+              <a href="#run">Ways to run</a>
+              <a href="#models">Models</a>
+              <a href="#api">API</a>
+              <a href="guide/">Install guide</a>
+              <a href="/docs/">Documentation</a>
+              <a href="https://github.com/matthias1232/nestbox">GitHub</a>
+            </nav>
+          </div>
+        </details>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="container">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span> Open source · Apache-2.0 · One boot</p>
+          <h1 class="hero-title" id="hero-title">Every AI agent gets its own <span class="text-grad">nest</span>.</h1>
+          <p class="lede">Nestbox turns one Ubuntu machine — or one GPU cloud VM — into a governed workspace for AI agents. Sandboxed nests, a hot-reloadable AI firewall, and a web UI instead of forty commands.</p>
+          <div class="actions">
+            <a class="btn btn-primary" href="guide/">Install in 15 minutes</a>
+            <a class="btn btn-secondary" href="/docs/">Read the docs</a>
+            <a class="btn btn-ghost" href="https://github.com/matthias1232/nestbox" target="_blank" rel="noopener noreferrer">View on GitHub<span class="visually-hidden"> (opens in a new tab)</span></a>
+          </div>
+          <p class="compat">Works with <strong>NVIDIA OpenShell</strong>, NemoClaw, OpenClaw and Nemotron.</p>
+        </div>
+
+        <dl class="stats" aria-label="Nestbox at a glance">
+          <div class="stat">
+            <dt>Boot to UI</dt>
+            <dd>1 ISO</dd>
+          </div>
+          <div class="stat">
+            <dt>Policy sections</dt>
+            <dd>4</dd>
+          </div>
+          <div class="stat">
+            <dt>Access roles</dt>
+            <dd>3</dd>
+          </div>
+          <div class="stat">
+            <dt>API contract</dt>
+            <dd>v1</dd>
+          </div>
+        </dl>
+
+        <figure class="hero-media">
+          <img class="hero-img" src="../assets/brand/hero-banner.jpg" alt="Isometric illustration of one appliance cube at the centre of a grid of walled, empty sandbox compartments, with one nest highlighted in amber" width="1376" height="768">
+          <figcaption class="hero-caption">
+            <span class="caption-kicker">One appliance</span>
+            <span>Every nest isolated, every boundary visible.</span>
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section" id="what" aria-labelledby="what-title">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow">What it does</p>
+          <h2 id="what-title">Sandboxes, policy and plumbing — handled.</h2>
+          <p>Running an agent stack is normally forty commands, six config files and a firewall written by hand. Nestbox reduces it to one boot, one web UI and one API, without giving up the isolation that makes agents safe to run at all. <a class="text-link" href="/docs/roadmap/">The roadmap</a> tracks what ships in which phase.</p>
+        </div>
+
+        <ul class="cards feature-grid" role="list">
+          <li class="card feature">
+            <div class="card-top">
+              <span class="icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 3 20 7.5v9L12 21 4 16.5v-9L12 3Z"/>
+                  <path d="m4 7.5 8 4.5 8-4.5M12 12v9"/>
+                </svg>
+              </span>
+              <span class="card-num" aria-hidden="true">01</span>
+            </div>
+            <h3>Nests on demand</h3>
+            <p>Create a sandbox for Claude Code, Hermes Agent, OpenCode, OpenClaw or a custom stack in one click. Start it, stop it, exec in, stream logs, delete it.</p>
+          </li>
+
+          <li class="card feature">
+            <div class="card-top">
+              <span class="icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 3 5 6v5.5c0 4.3 2.9 7.7 7 9.5 4.1-1.8 7-5.2 7-9.5V6l-7-3Z"/>
+                  <path d="m9.5 12 1.8 1.8 3.4-3.6"/>
+                </svg>
+              </span>
+              <span class="card-num" aria-hidden="true">02</span>
+            </div>
+            <h3>The AI firewall</h3>
+            <p>Filesystem, Landlock and process policy are fixed when a nest is created. Network rules are live: change a rule, it applies to the running sandbox, and you can roll it back.</p>
+            <a class="card-link" href="#firewall">See the policy model <span aria-hidden="true">→</span></a>
+          </li>
+
+          <li class="card feature">
+            <div class="card-top">
+              <span class="icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="8.5"/>
+                  <path d="M3.5 12h17M12 3.5c2.4 2.3 3.6 5.2 3.6 8.5s-1.2 6.2-3.6 8.5c-2.4-2.3-3.6-5.2-3.6-8.5S9.6 5.8 12 3.5Z"/>
+                </svg>
+              </span>
+              <span class="card-num" aria-hidden="true">03</span>
+            </div>
+            <h3>Reachable without port forwarding</h3>
+            <p>Every nest gets a hostname and a valid certificate through the traffic container and the WireGuard overlay. No tunnels to babysit, no open ports to remember.</p>
+          </li>
+
+          <li class="card feature">
+            <div class="card-top">
+              <span class="icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M4 7h16v13H4z"/>
+                  <path d="M3 4h18v3H3zM10 11h4"/>
+                </svg>
+              </span>
+              <span class="card-num" aria-hidden="true">04</span>
+            </div>
+            <h3>Backup and restore</h3>
+            <p>Snapshot the controller, gateway, policies, certificates and nest workspaces. Restore the lot, or pull back a single file, from the browser.</p>
+          </li>
+
+          <li class="card feature">
+            <div class="card-top">
+              <span class="icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m8 8-4 4 4 4M16 8l4 4-4 4M14 5l-4 14"/>
+                </svg>
+              </span>
+              <span class="card-num" aria-hidden="true">05</span>
+            </div>
+            <h3>One API behind every button</h3>
+            <p>The UI is a client of the same versioned HTTP API you get: token or session auth, admin, operator and viewer roles, stable error codes, Server-Sent Events.</p>
+          </li>
+
+          <li class="card feature">
+            <div class="card-top">
+              <span class="icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m12 3 9 5-9 5-9-5 9-5Z"/>
+                  <path d="m3 12 9 5 9-5M3 16l9 5 9-5"/>
+                </svg>
+              </span>
+              <span class="card-num" aria-hidden="true">06</span>
+            </div>
+            <h3>Agent packs, not setup guides</h3>
+            <p>Choose a pack and get the nest, provider profile and policy set that make it work. First-party packs cover the common stacks; a custom stack is a pack too.</p>
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="section section-firewall" id="firewall" aria-labelledby="firewall-title">
+      <div class="container">
+        <div class="section-head section-head-split">
+          <div>
+            <p class="eyebrow">The AI firewall</p>
+            <h2 id="firewall-title">Agent traffic, on a short leash.</h2>
+          </div>
+          <p class="section-aside">A sandbox without a network policy is a machine with your API keys and an open route to anywhere. Nestbox gives every nest a policy document — and one place to change it.</p>
+        </div>
+
+        <div class="firewall-grid">
+          <div class="firewall-copy">
+            <p>Each nest carries four policy sections: <strong>filesystem</strong>, <strong>Landlock</strong>, <strong>process</strong> and <strong>network</strong>. They read as one firewall in the UI, and only the network section can hot-reload into a running sandbox. The other boundaries cannot move under a live process — so the UI says so instead of pretending otherwise.</p>
+
+            <ul class="check-list">
+              <li>
+                <span class="check-mark" aria-hidden="true"></span>
+                <span><strong>Only the binaries you name</strong> may use an endpoint. A shell script that calls <code>curl</code> is not that binary, so it is not allowed.</span>
+              </li>
+              <li>
+                <span class="check-mark" aria-hidden="true"></span>
+                <span><strong>Enforced blocks. Audit records and allows.</strong> Shape a rule against real traffic before you tighten it.</span>
+              </li>
+              <li>
+                <span class="check-mark" aria-hidden="true"></span>
+                <span><strong>Every change is diffable.</strong> Compare against the policy the gateway is enforcing, apply, and roll back if the nest disagrees.</span>
+              </li>
+            </ul>
+          </div>
+
+          <figure class="code-panel">
+            <div class="code-head">
+              <span class="code-lang">yaml</span>
+              <span class="code-file">policy.yaml <span class="code-dim">/ nest research-01</span></span>
+              <span class="pill pill-success">hot-reload</span>
+            </div>
+            <pre class="code-pre" tabindex="0" role="region" aria-label="Example network policy YAML with an allow rule for the Anthropic API"><code><span class="tok-key">network_policies</span>:
+  <span class="tok-key">model-api</span>:
+    <span class="tok-key">endpoints</span>:
+      - <span class="tok-key">host</span>: <span class="tok-str">api.anthropic.com</span>
+        <span class="tok-key">port</span>: <span class="tok-num">443</span>
+        <span class="tok-key">protocol</span>: rest
+        <span class="tok-key">enforcement</span>: <span class="tok-accent">enforced</span>
+        <span class="tok-key">access</span>: <span class="tok-success">allow</span>
+        <span class="tok-key">methods</span>: [<span class="tok-str">GET</span>, <span class="tok-str">POST</span>]
+    <span class="tok-key">binaries</span>:
+      - <span class="tok-key">path</span>: <span class="tok-str">/usr/local/bin/claude</span></code></pre>
+            <figcaption class="code-caption">One allow rule: one model endpoint, two methods, one binary.</figcaption>
+          </figure>
+        </div>
+
+        <ol class="workflow" role="list" aria-label="Policy workflow">
+          <li class="workflow-step">
+            <span class="step-num" aria-hidden="true">01</span>
+            <h3>Edit</h3>
+            <p>Structured form or raw YAML.</p>
+          </li>
+          <li class="workflow-step">
+            <span class="step-num" aria-hidden="true">02</span>
+            <h3>Validate</h3>
+            <p>Checked against the schema first.</p>
+          </li>
+          <li class="workflow-step">
+            <span class="step-num" aria-hidden="true">03</span>
+            <h3>Diff</h3>
+            <p>Compared with the effective policy.</p>
+          </li>
+          <li class="workflow-step">
+            <span class="step-num" aria-hidden="true">04</span>
+            <h3>Apply</h3>
+            <p>Hot-reloaded into the nest.</p>
+          </li>
+          <li class="workflow-step">
+            <span class="step-num" aria-hidden="true">05</span>
+            <h3>Roll back</h3>
+            <p>One click back to the last good state.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="section" id="run" aria-labelledby="run-title">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow">Four ways to run it</p>
+          <h2 id="run-title">Same appliance. Four shapes of hardware.</h2>
+          <p>One image covers a cloud GPU, a plain Ubuntu box, a machine with a local GPU and a laptop that only serves the model. Between them, only the provider profile moves — nests, policies and the API stay the same.</p>
+        </div>
+
+        <ol class="cards ways-grid" role="list">
+          <li class="card way">
+            <div class="way-top">
+              <span class="way-num" aria-hidden="true">01</span>
+              <span class="pill">Cloud</span>
+            </div>
+            <h3>Cloud GPU VM</h3>
+            <p>Boot the image on a GPU instance and open the UI. No local hardware to buy, no driver stack to assemble, and the model stays next to the work.</p>
+            <p class="way-meta"><span class="meta-label">You need</span> A GPU instance and the ISO.</p>
+          </li>
+
+          <li class="card way">
+            <div class="way-top">
+              <span class="way-num" aria-hidden="true">02</span>
+              <span class="pill">CPU only</span>
+            </div>
+            <h3>Local box, no GPU</h3>
+            <p>Run the control plane on any Ubuntu machine and point nests at cloud models. Evaluate the workflow before spending on hardware; the policy model is identical.</p>
+            <p class="way-meta"><span class="meta-label">You need</span> Any Ubuntu host, cloud model access.</p>
+          </li>
+
+          <li class="card way">
+            <div class="way-top">
+              <span class="way-num" aria-hidden="true">03</span>
+              <span class="pill">Local GPU</span>
+            </div>
+            <h3>Local box, with GPU</h3>
+            <p>Attach the GPU to a <code>local-nemotron</code> nest. The pack runs vLLM and the provider profile points at localhost; the firewall stays in front of the traffic.</p>
+            <p class="way-meta"><span class="meta-label">You need</span> A supported GPU and enough VRAM.</p>
+          </li>
+
+          <li class="card way">
+            <div class="way-top">
+              <span class="way-num" aria-hidden="true">04</span>
+              <span class="pill">Overlay</span>
+            </div>
+            <h3>Laptop hosts the model</h3>
+            <p>Keep the appliance in the cloud and serve the model from your laptop over WireGuard. The endpoint moves to the overlay; the nest policy does not.</p>
+            <p class="way-meta"><span class="meta-label">You need</span> WireGuard reachability and a model endpoint.</p>
+          </li>
+        </ol>
+
+        <p class="run-note"><span class="run-note-mark" aria-hidden="true">↔</span> Moving between these four changes a provider profile, not a workflow. Start without a GPU if that is what you have.</p>
+      </div>
+    </section>
+
+    <section class="section" id="models" aria-labelledby="models-title">
+      <div class="container">
+        <div class="section-head section-head-split">
+          <div>
+            <p class="eyebrow">Nemotron</p>
+            <h2 id="models-title">Local models, one family.</h2>
+          </div>
+          <p class="section-aside">Only Nemotron ships as the first-party local model. One family means one set of provider profiles, one set of policy profiles and one thing to test. Cloud models remain available through any OpenAI-compatible endpoint.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table class="models">
+            <caption class="visually-hidden">Nemotron models supported by Nestbox, with parameter counts, context length, estimated VRAM and suitable hardware</caption>
+            <thead>
+              <tr>
+                <th scope="col">Model</th>
+                <th scope="col">Parameters</th>
+                <th scope="col">Context</th>
+                <th scope="col">VRAM <span class="th-note">estimate</span></th>
+                <th scope="col">Fits on</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Nemotron Nano 12B v2 VL</th>
+                <td data-label="Parameters">12.6B dense</td>
+                <td data-label="Context">128K</td>
+                <td data-label="VRAM estimate">24–32 GB</td>
+                <td data-label="Fits on">RTX 4090 24 GB, RTX 5090 32 GB</td>
+              </tr>
+              <tr>
+                <th scope="row">Nemotron 3 Nano</th>
+                <td data-label="Parameters">30B total · 3.2B active</td>
+                <td data-label="Context">1M</td>
+                <td data-label="VRAM estimate">32–48 GB</td>
+                <td data-label="Fits on">RTX 5090 32 GB, L40S 48 GB, DGX Spark</td>
+              </tr>
+              <tr>
+                <th scope="row">Nemotron 3 Super</th>
+                <td data-label="Parameters">120B total · 12B active</td>
+                <td data-label="Context">1M</td>
+                <td data-label="VRAM estimate">80 GB</td>
+                <td data-label="Fits on">A100 80 GB, H100 80 GB, RTX PRO 6000 96 GB</td>
+              </tr>
+              <tr>
+                <th scope="row">Nemotron 3 Ultra</th>
+                <td data-label="Parameters">550B total · 55B active</td>
+                <td data-label="Context">1M</td>
+                <td data-label="VRAM estimate">4× 96 GB</td>
+                <td data-label="Fits on">4× RTX PRO 6000, DGX B200, clustered DGX Spark</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="table-note"><span class="table-note-mark" aria-hidden="true">≈</span> VRAM figures are our own estimates, not vendor specifications. Context is the hidden cost: a 1M-token window needs hundreds of GB of KV cache, so cap context on single-GPU deployments. <a class="text-link" href="/docs/claims/">Sources and dates</a>.</p>
+      </div>
+    </section>
+
+    <section class="section" id="api" aria-labelledby="api-title">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow">API</p>
+          <h2 id="api-title">One API behind every button.</h2>
+          <p>Everything you can click is an HTTP call with a stable contract: token or session authentication, admin, operator and viewer roles, one error envelope and Server-Sent Events for live state. The schema is frozen in CI.</p>
+        </div>
+
+        <div class="api-grid">
+          <a class="api-card" href="/docs/api/overview/">
+            <div class="api-top">
+              <span class="api-kicker">Swagger UI</span>
+              <span class="api-arrow" aria-hidden="true">↗</span>
+            </div>
+            <h3>Explore and call it</h3>
+            <p>Authorize with a token and call every endpoint against a running appliance.</p>
+            <code class="api-path">/api/docs/</code>
+          </a>
+
+          <a class="api-card" href="/docs/api/overview/">
+            <div class="api-top">
+              <span class="api-kicker">Redoc</span>
+              <span class="api-arrow" aria-hidden="true">↗</span>
+            </div>
+            <h3>Read the reference</h3>
+            <p>A clean, generated reference with roles, effects and error codes for each operation.</p>
+            <code class="api-path">/api/redoc/</code>
+          </a>
+
+          <a class="api-card" href="/docs/api/overview/">
+            <div class="api-top">
+              <span class="api-kicker">OpenAPI schema</span>
+              <span class="api-arrow" aria-hidden="true">↗</span>
+            </div>
+            <h3>Take the contract</h3>
+            <p>The machine-readable v1 schema, ready for clients, code generation and CI checks.</p>
+            <code class="api-path">/api/schema/v1/</code>
+          </a>
+        </div>
+
+        <p class="api-note">These links open on a running Nestbox appliance. The committed contract also lives in <a class="text-link" href="https://github.com/matthias1232/nestbox/blob/main/contracts/openapi-v1.json">contracts/openapi-v1.json</a>.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <div class="footer-top">
+        <div class="footer-brand">
+          <a class="brand" href="./" aria-label="Nestbox home">
+            <span class="brand-mark">
+              <img src="../assets/brand/icon-1024.jpg" alt="Nestbox app icon: nested cyan squares around an amber core on a dark tile" width="32" height="32">
+            </span>
+            <span class="brand-name">Nestbox</span>
+          </a>
+          <p class="footer-blurb">One bootable Ubuntu appliance for governed AI agent workspaces.</p>
+        </div>
+
+        <nav class="footer-nav" aria-label="Footer">
+          <div class="footer-col">
+            <h2 class="footer-title">Product</h2>
+            <ul class="footer-list">
+              <li><a href="#what">What it does</a></li>
+              <li><a href="#firewall">The AI firewall</a></li>
+              <li><a href="#run">Four ways to run it</a></li>
+              <li><a href="#models">Nemotron models</a></li>
+              <li><a href="#api">API</a></li>
+            </ul>
+          </div>
+
+          <div class="footer-col">
+            <h2 class="footer-title">Documentation</h2>
+            <ul class="footer-list">
+              <li><a href="/docs/">Docs home</a></li>
+              <li><a href="/docs/policies/network-rules/">Network policy rules</a></li>
+              <li><a href="/docs/models/nemotron/">Models and hardware</a></li>
+              <li><a href="/docs/api/overview/">API overview</a></li>
+              <li><a href="/docs/claims/">Claims and sources</a></li>
+            </ul>
+          </div>
+
+          <div class="footer-col">
+            <h2 class="footer-title">Project</h2>
+            <ul class="footer-list">
+              <li><a href="https://github.com/matthias1232/nestbox" target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span></a></li>
+              <li><a href="https://github.com/matthias1232/nestbox/blob/main/LICENSE">Apache-2.0 license</a></li>
+              <li><a href="https://github.com/matthias1232/nestbox/blob/main/CONTRIBUTING.md">Contributing</a></li>
+              <li><a href="https://github.com/matthias1232/nestbox/blob/main/SECURITY.md">Security policy</a></li>
+              <li><a href="https://mmbits.com">mmbits.com</a></li>
+            </ul>
+          </div>
+        </nav>
+      </div>
+
+      <div class="footer-bottom">
+        <p class="disclaimer">Independent community project. Not affiliated with or endorsed by NVIDIA.</p>
+        <p>Maintained by Matthias Binder · mmbits.com</p>
+        <p>Apache-2.0 · Open source</p>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
+    <url>
+        <loc>https://nestbox.mmbits.com/</loc>
+        <lastmod>2026-10-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://nestbox.mmbits.com/"/>
+    </url>
+    <url>
+        <loc>https://nestbox.mmbits.com/claims/</loc>
+        <lastmod>2026-10-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://nestbox.mmbits.com/claims/"/>
+    </url>
+    <url>
+        <loc>https://nestbox.mmbits.com/roadmap/</loc>
+        <lastmod>2026-10-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://nestbox.mmbits.com/roadmap/"/>
+    </url>
+    <url>
+        <loc>https://nestbox.mmbits.com/style-guide/</loc>
+        <lastmod>2026-10-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://nestbox.mmbits.com/style-guide/"/>
+    </url>
+    <url>
+        <loc>https://nestbox.mmbits.com/api/overview/</loc>
+        <lastmod>2026-10-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://nestbox.mmbits.com/api/overview/"/>
+    </url>
+    <url>
+        <loc>https://nestbox.mmbits.com/hardware/dgx-spark/</loc>
+        <lastmod>2026-10-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://nestbox.mmbits.com/hardware/dgx-spark/"/>
+    </url>
+    <url>
+        <loc>https://nestbox.mmbits.com/i18n/coverage/</loc>
+        <lastmod>2026-10-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://nestbox.mmbits.com/i18n/coverage/"/>
+    </url>
+    <url>
+        <loc>https://nestbox.mmbits.com/iso/</loc>
+        <lastmod>2026-10-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://nestbox.mmbits.com/iso/"/>
+    </url>
+    <url>
+        <loc>https://nestbox.mmbits.com/iso/proxmox-test/</loc>
+        <lastmod>2026-10-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://nestbox.mmbits.com/iso/proxmox-test/"/>
+    </url>
+    <url>
+        <loc>https://nestbox.mmbits.com/models/nemotron/</loc>
+        <lastmod>2026-10-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://nestbox.mmbits.com/models/nemotron/"/>
+    </url>
+    <url>
+        <loc>https://nestbox.mmbits.com/policies/network-rules/</loc>
+        <lastmod>2026-10-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://nestbox.mmbits.com/policies/network-rules/"/>
+    </url>
+</urlset>
