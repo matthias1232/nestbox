@@ -247,21 +247,25 @@ cd nestbox
             outbound HTTPS.
           </p>
           <figure class="shot shot-narrow">
-            <a class="zoom" href="../assets/guide/14-console-login.png" title="Open at full resolution"><img src="../assets/guide/14-console-login.png" alt="Ubuntu console login prompt on the installed Nestbox system" width="1280" height="800" loading="lazy"></a>
-            <figcaption>The installed system at the console. Log in as <code>nestbox</code> with the password from the wizard.</figcaption>
+            <a class="zoom" href="../assets/guide/14-console-login.png" title="Open at full resolution"><img src="../assets/guide/14-console-login.png" alt="Console of the installed appliance showing the Nestbox banner with the web UI URL, the admin address and the generated password" width="1280" height="170" loading="lazy"></a>
+            <figcaption>The console after first boot: the appliance prints its URL, the administrator address and the generated password (redacted here). The <code>nestbox</code> login above it is the operating-system account from the wizard.</figcaption>
           </figure>
           <p>Two commands tell you whether it is finished:</p>
           <pre class="code"><code>systemctl status nestbox-firstboot.service
 sudo tail -f /var/log/nestbox/firstboot.log</code></pre>
           <p>
-            The service ends with <code>[nestbox] first boot complete</code> and prints the URL, the administrator
-            address and a generated password. The same password is kept in
-            <code>/var/lib/nestbox/admin-password.txt</code>, readable only by root.
+            The service ends with <code>[nestbox] first boot complete</code>, and the same summary is written to
+            the console once, so you do not have to go looking for it:
           </p>
-          <pre class="code"><code>[nestbox] first boot complete
-[nestbox] web UI: https://192.168.55.210:443/
-[nestbox] admin login: admin@nestbox-a.local
-[nestbox] admin password: …</code></pre>
+          <pre class="code"><code>Nestbox is ready.
+  web UI: https://192.168.55.210:443/
+  admin:    admin@nestbox-a.local
+  password: …
+  password file: /var/lib/nestbox/admin-password.txt</code></pre>
+          <p>
+            The password file is readable by root only. The summary is also in
+            <code>/var/log/nestbox/firstboot.log</code> and in the journal of the unit.
+          </p>
         </section>
 
         <section class="guide-step" id="step-6">

@@ -23,7 +23,7 @@
     
     
       
-        <title>Proxmox test log - Nestbox</title>
+        <title>Proxmox and QEMU test log - Nestbox</title>
       
     
     
@@ -74,7 +74,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#proxmox-test-log" class="md-skip">
+        <a href="#proxmox-and-qemu-test-log" class="md-skip">
           Skip to content
         </a>
       
@@ -110,7 +110,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Proxmox test log
+              Proxmox and QEMU test log
             
           </span>
         </div>
@@ -521,6 +521,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-is-verified" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -532,10 +543,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-open-problem" class="md-nav__link">
+  <a href="#the-four-load-bearing-details" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The open problem
+        The four load-bearing details
       
     </span>
   </a>
@@ -543,10 +554,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#next-steps-in-order-of-likelihood" class="md-nav__link">
+  <a href="#runtime-defects-this-test-found" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Next steps, in order of likelihood
+        Runtime defects this test found
       
     </span>
   </a>
@@ -554,10 +565,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#related-finding" class="md-nav__link">
+  <a href="#reproduce-it-without-proxmox" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Related finding
+        Reproduce it without Proxmox
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#not-covered-yet" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Not covered yet
       
     </span>
   </a>
@@ -584,8 +606,40 @@
   
 
 
-<h1 id="proxmox-test-log">Proxmox test log</h1>
-<p>Environment: Proxmox VE 9.2, node <code>pve02</code>, <code>local-btrfs</code> storage, 8 cores, 400+ GiB free.</p>
+<h1 id="proxmox-and-qemu-test-log">Proxmox and QEMU test log</h1>
+<p>This page records what has actually been executed on hardware, so a reader can tell a verified
+statement from an expectation.</p>
+<h2 id="environment">Environment</h2>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Proxmox VE</td>
+<td>9.2.21, node <code>pve02</code>, <code>local-btrfs</code> for disks, <code>local</code> for ISO images</td>
+</tr>
+<tr>
+<td>QEMU</td>
+<td>11.0.3 (the same binary Proxmox uses)</td>
+</tr>
+<tr>
+<td>Test guest</td>
+<td>4 GB RAM, 2 vCPU, 60 GB disk, VirtIO NIC on a user-mode network with DHCP</td>
+</tr>
+<tr>
+<td>Base image</td>
+<td><code>ubuntu-24.04-live-server-amd64.iso</code></td>
+</tr>
+<tr>
+<td>Nestbox image</td>
+<td><code>nestbox-24.04-slim.iso</code>, 3151 MiB, SHA-256 <code>34c76c4f516526f6c3e5733997c2264892e20e1fedfd1db7c9200ca9beb98db7</code></td>
+</tr>
+</tbody>
+</table>
 <h2 id="what-is-verified">What is verified</h2>
 <table>
 <thead>
@@ -596,94 +650,140 @@
 </thead>
 <tbody>
 <tr>
-<td>Ubuntu 24.04.3 live-server ISO (3.3 GB) download</td>
-<td>ok</td>
-</tr>
-<tr>
 <td>Remaster with <code>xorriso -boot_image any replay</code></td>
-<td>ok, 3151 MiB, El Torito BIOS + UEFI preserved</td>
+<td>ok — El Torito BIOS and UEFI entries preserved</td>
 </tr>
 <tr>
-<td>Seed files embedded (<code>/user-data</code>, <code>/meta-data</code>, <code>/nocloud/autoinstall.yaml</code>)</td>
-<td>ok, readable in the ISO</td>
-</tr>
-<tr>
-<td>Appliance payload embedded (<code>/nestbox.tar.gz</code>)</td>
+<td>Seed embedded (<code>/user-data</code>, <code>/meta-data</code>, <code>/nocloud/*</code>, volume label <code>cidata</code>)</td>
 <td>ok</td>
 </tr>
 <tr>
-<td>GRUB kernel line patched</td>
-<td>ok — verified visually: the VM shows the patched menu entry</td>
-</tr>
-<tr>
-<td>VM boots the remastered ISO</td>
+<td>Payload embedded (<code>/nestbox.tar.gz</code>, 2.3 MB)</td>
 <td>ok</td>
 </tr>
 <tr>
-<td>Unattended installation</td>
-<td><strong>not yet</strong> — the installer falls back to the interactive language screen</td>
+<td>GRUB <code>linux</code> line patched with <code>autoinstall ds=nocloud</code></td>
+<td>ok</td>
+</tr>
+<tr>
+<td>Unattended install, no question asked</td>
+<td>ok — reboot after 236 s</td>
+</tr>
+<tr>
+<td>Installed system boots, <code>cloud-final</code> finishes without failure</td>
+<td>ok</td>
+</tr>
+<tr>
+<td><code>nestbox-firstboot.service</code> present and enabled by the installer</td>
+<td>ok</td>
+</tr>
+<tr>
+<td>First boot installs Docker, writes <code>/etc/nestbox/nestbox.env</code>, creates the certificate</td>
+<td>ok</td>
+</tr>
+<tr>
+<td>Controller image builds inside the guest and starts</td>
+<td>ok — PostgreSQL healthy, controller up</td>
+</tr>
+<tr>
+<td>UI answers on the configured port (443) with the self-signed certificate</td>
+<td>ok — <code>HTTP 302</code> to <code>/accounts/login/</code></td>
+</tr>
+<tr>
+<td>Sign-in with the generated administrator account</td>
+<td>ok</td>
+</tr>
+<tr>
+<td>Dashboard reads the Docker socket</td>
+<td>ok — both containers listed as running</td>
 </tr>
 </tbody>
 </table>
-<h2 id="the-open-problem">The open problem</h2>
-<p>Two independent signals say the kernel does not receive the autoinstall parameter:</p>
+<p>The same sequence was repeated on Proxmox VE with a VM created through the web UI (VM 210, 4 GB,
+2 cores, 60 GB on <code>local-btrfs</code>, ISO attached as <code>ide2</code>), which is the walkthrough in the
+<a href="https://nestbox.mmbits.com/guide/">install guide</a>.</p>
+<h2 id="the-four-load-bearing-details">The four load-bearing details</h2>
+<p>Each of these cost a failed install cycle. They are the reason the build script looks the way it does.</p>
 <ol>
-<li>the installer starts interactively at language selection instead of showing the autoinstall
-   progress screen;</li>
-<li><code>console=ttyS0</code> on the <code>linux</code> line produces no serial output at all, while the same VM writes
-   the installer TUI to the VGA console.</li>
+<li><strong>The autoinstall document must be nested in the seed's <code>user-data</code>.</strong> A sibling
+   <code>autoinstall.yaml</code> on the ISO is ignored and subiquity silently falls back to the interactive
+   installer. The document therefore lives under <code>autoinstall:</code> inside <code>/user-data</code>.</li>
+<li><strong>GRUB ends a command at an unquoted <code>;</code>.</strong> The datasource is passed as <code>ds=nocloud</code> and found
+   through the <code>cidata</code> volume label instead of <code>ds=nocloud;s=/cdrom/nocloud/</code>.</li>
+<li><strong>The payload's late-commands belong in <code>user-data</code> as well</strong>, not in <code>autoinstall.yaml</code>. With
+   them in the wrong file the payload was copied but <code>nestbox-firstboot.service</code> was never enabled.</li>
+<li><strong>The installer must not need a package mirror.</strong> Only <code>openssh-server</code> comes from the ISO pool;
+   everything else is installed on first boot, with retries.</li>
 </ol>
-<p>The GRUB menu entry itself is definitely ours (a probe build renamed it to <code>NESTBOX PROBE ENTRY</code>
-and the VM displayed that name), so the file is read. What fails is either argument passing to the
-kernel or the NoCloud seed lookup.</p>
-<p>Variants tried:</p>
+<p>All late-commands are written as <code>… || true</code>: one failing command must never abort an otherwise
+good install.</p>
+<h2 id="runtime-defects-this-test-found">Runtime defects this test found</h2>
+<p>These only appear after the install, when the controller starts for the first time:</p>
 <table>
 <thead>
 <tr>
-<th>Kernel arguments</th>
-<th>Seed layout</th>
-<th>Result</th>
+<th>Symptom</th>
+<th>Cause</th>
+<th>Fix</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>autoinstall ds=nocloud;s=/cdrom/nocloud/</code></td>
-<td><code>/nocloud/*</code></td>
-<td>interactive</td>
+<td><code>collectstatic</code> fails: <code>KeyError: 'NESTBOX_SECRET_KEY'</code></td>
+<td>the production settings require the runtime secret at image build time</td>
+<td>the build layer passes a throwaway key</td>
 </tr>
 <tr>
-<td><code>autoinstall "ds=nocloud;s=/cdrom/nocloud/"</code></td>
-<td><code>/nocloud/*</code></td>
-<td>interactive</td>
+<td><code>ModuleNotFoundError: unfold</code></td>
+<td>the admin theme was used but never declared</td>
+<td><code>django-unfold</code> is a dependency</td>
 </tr>
 <tr>
-<td><code>autoinstall ds=nocloud</code></td>
-<td><code>/user-data</code>, <code>/meta-data</code> at ISO root, volume label <code>cidata</code></td>
-<td>interactive</td>
+<td><code>ModuleNotFoundError: fido2</code></td>
+<td>allauth's MFA URLs are mounted, but the extra was missing</td>
+<td><code>django-allauth[mfa]</code></td>
 </tr>
 <tr>
-<td>the same plus <code>console=ttyS0</code></td>
-<td>as above</td>
-<td>interactive, no serial output</td>
+<td>gunicorn: <code>PermissionError</code> on <code>key.pem</code></td>
+<td>the container runs as uid 10001, the key was <code>0600 root</code></td>
+<td>first boot hands the pair to 10001</td>
+</tr>
+<tr>
+<td>dashboard: <code>runtime.unavailable</code></td>
+<td>uid 10001 is not in the Docker socket's group</td>
+<td>first boot records the host's Docker GID, compose adds the group</td>
+</tr>
+<tr>
+<td>unstyled sign-in page</td>
+<td>allauth's default templates</td>
+<td>branded <code>account/login.html</code> and <code>account/logout.html</code></td>
 </tr>
 </tbody>
 </table>
-<h2 id="next-steps-in-order-of-likelihood">Next steps, in order of likelihood</h2>
-<ol>
-<li><strong>Use <code>livefs-editor</code></strong> instead of hand-rolled xorriso remastering. It is the tool Ubuntu's own
-   documentation uses for exactly this, and it handles the GRUB environment and the seed path.</li>
-<li><strong>Check subiquity's datasource at runtime</strong>: boot with <code>console=ttyS0</code> once argument passing is
-   solved, then read <code>/var/log/installer/subiquity-server-debug.log</code> from the live session.</li>
-<li><strong>Bypass cloud-init seeding entirely</strong> by baking an <code>autoinstall.yaml</code> into the squashfs and
-   invoking <code>subiquity --autoinstall=/autoinstall.yaml</code> from a custom service.</li>
-<li>Verify that the semicolon is actually reaching the kernel by appending <code>ds=nocloud</code> with an
-   explicit <code>seedfrom=/cdrom/nocloud/</code> instead of the semicolon form.</li>
-</ol>
-<h2 id="related-finding">Related finding</h2>
-<p>A stock Ubuntu 24.04 cloud image does not boot to completion on this host either: it stalls after
-<code>random: crng init done</code>, never brings the NIC up (no frame on the bridge), and never powers the
-guest agent. That is independent of the ISO work and points at the host or the image's kernel, not
-at Nestbox. The ISO installer kernel boots normally on the same host.</p>
+<h2 id="reproduce-it-without-proxmox">Reproduce it without Proxmox</h2>
+<p>Any Linux host with KVM, <code>xorriso</code> and <code>qemu-img</code> can run the same test:</p>
+<div class="highlight"><pre><span></span><code>./scripts/iso/build_iso.sh<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--base<span class="w"> </span>ubuntu-24.04-live-server-amd64.iso<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--out<span class="w">  </span>dist/nestbox-24.04-slim.iso<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--seed<span class="w"> </span>dist/seed<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--payload<span class="w"> </span>dist/nestbox.tar.gz
+
+qemu-img<span class="w"> </span>create<span class="w"> </span>-f<span class="w"> </span>qcow2<span class="w"> </span>/tmp/nestbox.qcow2<span class="w"> </span>60G
+qemu-system-x86_64<span class="w"> </span>-m<span class="w"> </span><span class="m">4096</span><span class="w"> </span>-smp<span class="w"> </span><span class="m">2</span><span class="w"> </span>-cpu<span class="w"> </span>host<span class="w"> </span>-enable-kvm<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-drive<span class="w"> </span><span class="nv">file</span><span class="o">=</span>/tmp/nestbox.qcow2,if<span class="o">=</span>virtio,format<span class="o">=</span>qcow2<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-cdrom<span class="w"> </span>dist/nestbox-24.04-slim.iso<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-display<span class="w"> </span>none<span class="w"> </span>-serial<span class="w"> </span>file:/tmp/install.log<span class="w"> </span>-no-reboot
+</code></pre></div>
+<p>The install is done when <code>/tmp/install.log</code> ends with <code>reboot: Restarting system</code>. Boot the disk
+again, and follow <code>/var/log/nestbox/firstboot.log</code> until it prints <code>[nestbox] first boot complete</code>
+together with the URL and the generated administrator password.</p>
+<h2 id="not-covered-yet">Not covered yet</h2>
+<ul>
+<li>Real hardware, and Proxmox with a physical NIC trunk or VLAN tags.</li>
+<li>Ubuntu 22.04 and 26.04 base images (the seed format is the same, the ISOs are untested).</li>
+<li>ACME certificates; the appliance ships with a self-signed pair and the TLS app has a certbot
+  wrapper, but no public domain has been exercised end to end.</li>
+</ul>
 
 
 
