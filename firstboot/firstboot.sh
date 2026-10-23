@@ -93,6 +93,13 @@ ENV
   NEW_ADMIN=1
 fi
 
+# The installer writes the recipe as 0600 root; the controller reads it as uid 10001 to seed
+# the nests the image was built for.
+if [ -f /etc/nestbox/recipe.json ]; then
+  chown 10001:10001 /etc/nestbox/recipe.json 2>/dev/null || true
+  chmod 640 /etc/nestbox/recipe.json 2>/dev/null || true
+fi
+
 # The controller talks to the host daemon over the mounted socket, so it needs the
 # socket's group id. It changes with the host, hence a refresh on every boot.
 DOCKER_GID=$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 999)
