@@ -15,7 +15,8 @@ from django.conf import settings
 from django.utils import timezone
 
 from apps.api.errors import NotFound, RuntimeUnavailable
-from apps.core.models import Container, Node
+from apps.containers.models import Container
+from apps.core.models import Node
 
 logger = logging.getLogger(__name__)
 

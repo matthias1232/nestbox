@@ -3,6 +3,7 @@ set -eu
 
 python manage.py migrate --noinput
 python manage.py bootstrap
+python manage.py module_state --init
 python manage.py load_packs || true
 python manage.py seed_nests || true
 python manage.py compilemessages --ignore .venv || true

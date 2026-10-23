@@ -54,7 +54,8 @@ from apps.api.serializers import (
 from apps.backups.models import BackupSnapshot, BackupTarget, RestoreJob
 from apps.builds.models import BuildJob, BuildRecipe
 from apps.builds.services import render_all, render_seed
-from apps.core.models import Container, Node, OverlayPeer, Service
+from apps.containers.models import Container, Service
+from apps.core.models import Node, OverlayPeer
 from apps.core.runtime import runtime
 from apps.identity.models import AuditEvent, Profile
 from apps.identity.services import audit, language_catalog

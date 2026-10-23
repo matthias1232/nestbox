@@ -10,7 +10,7 @@ from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_GET
 
 from apps.api.errors import RuntimeUnavailable
-from apps.core.models import Container
+from apps.containers.models import Container
 from apps.core.runtime import runtime
 from apps.identity.models import AuditEvent
 from apps.sandboxes.models import Sandbox

@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from apps.backups.models import BackupSnapshot
 from apps.builds.models import BuildJob
-from apps.core.models import Container
+from apps.containers.models import Container
 from apps.identity.models import AuditEvent
 from apps.network.models import Certificate
 from apps.sandboxes.models import Sandbox

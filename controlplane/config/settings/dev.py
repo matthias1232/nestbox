@@ -1,4 +1,11 @@
 """Development settings: SQLite, DEBUG, no whitenoise manifest."""
+import os
+from pathlib import Path
+
+# Developers and the test suite see every module, whatever the appliance's state file says.
+os.environ.setdefault("NESTBOX_MODULES", "all")
+os.environ.setdefault("NESTBOX_STATE_DIR", str(Path(__file__).resolve().parents[2] / "var"))
+
 from .base import *  # noqa: F403
 
 DEBUG = True

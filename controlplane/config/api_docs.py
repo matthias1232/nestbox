@@ -53,8 +53,8 @@ SPECTACULAR_SETTINGS = {
     "COMPONENT_SPLIT_REQUEST": True,
     "COMPONENT_SPLIT_PATCH": True,
     "ENUM_NAME_OVERRIDES": {
-        "ContainerStateEnum": "apps.core.models.CONTAINER_STATES",
-        "ContainerRoleEnum": "apps.core.models.CONTAINER_ROLES",
+        "ContainerStateEnum": "apps.containers.models.CONTAINER_STATES",
+        "ContainerRoleEnum": "apps.containers.models.CONTAINER_ROLES",
         "SandboxStateEnum": "apps.sandboxes.models.SANDBOX_STATES",
         "BuildStateEnum": "apps.builds.models.BUILD_STATES",
         "BuildProfileEnum": "apps.builds.models.BUILD_PROFILES",

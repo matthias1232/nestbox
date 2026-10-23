@@ -20,10 +20,19 @@ CSRF_TRUSTED_ORIGINS = [
     o for o in os.environ.get("NESTBOX_CSRF_TRUSTED_ORIGINS", "").split(",") if o
 ]
 
+# The module catalog decides which apps are installed at all. The enabled set comes from
+# /var/lib/nestbox/active-modules.json (written by first boot and by the admin) with
+# NESTBOX_MODULES as the seed value. See config/modules.py.
+from config.modules import CATALOG, active_keys  # noqa: E402
+
+NESTBOX_ACTIVE_MODULES = active_keys()
+NESTBOX_MODULE_APPS = [CATALOG[key].app for key in NESTBOX_ACTIVE_MODULES]
+
 INSTALLED_APPS = [
     "unfold",
     "unfold.contrib.filters",
     "unfold.contrib.forms",
+    "unfold.contrib.inlines",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -39,19 +48,7 @@ INSTALLED_APPS = [
     "allauth.account",
     "allauth.mfa",
     "axes",
-    "apps.core",
-    "apps.identity",
-    "apps.openshell",
-    "apps.sandboxes",
-    "apps.policies",
-    "apps.agentpacks",
-    "apps.network",
-    "apps.netconfig",
-    "apps.tls",
-    "apps.builds",
-    "apps.backups",
-    "apps.api",
-]
+] + NESTBOX_MODULE_APPS
 
 # --- admin theme ------------------------------------------------------------------------------
 UNFOLD = {

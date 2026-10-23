@@ -7,7 +7,8 @@ from rest_framework import serializers
 from apps.agentpacks.models import AgentPack
 from apps.backups.models import BackupSnapshot, BackupTarget, RestoreJob
 from apps.builds.models import BuildJob, BuildRecipe
-from apps.core.models import Container, Node, OverlayPeer, Service
+from apps.containers.models import Container, Service
+from apps.core.models import Node, OverlayPeer
 from apps.identity.models import AuditEvent, Profile
 from apps.network.models import Certificate, DnsRecord, NetworkProfile, ProxyRoute
 from apps.openshell.models import Gateway, WorkspaceMapping

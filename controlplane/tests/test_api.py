@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import pytest
-from apps.core.models import Container, Node
+from apps.containers.models import Container
+from apps.core.models import Node
 from apps.policies.models import Policy
 from apps.sandboxes.models import Sandbox
 from django.contrib.auth import get_user_model
