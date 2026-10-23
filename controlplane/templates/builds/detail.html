@@ -1,30 +1,60 @@
 {% extends "base.html" %}
 {% load i18n %}
-{% block title %}Build #{{ job.pk }} · Nestbox{% endblock %}
+{% block title %}{{ recipe.name }} · Nestbox{% endblock %}
 {% block content %}
 <div class="page-head">
-  <h1>{% translate "Build" %} #{{ job.pk }}</h1>
-  <p><span class="badge">{{ job.state }}</span> {{ job.recipe.name }}</p>
+  <h1>{{ recipe.name }}</h1>
+  <p class="muted">{{ recipe.ubuntu_series }} · {{ recipe.profile }} · {{ recipe.ui_url }}</p>
+  <span class="spacer"></span>
+  <a class="btn" href="{% url 'build-wizard' %}">{% translate "New recipe" %}</a>
 </div>
+
+{% if warnings %}
+  <div class="banner">
+    {% for warning in warnings %}<div class="small">• {{ warning }}</div>{% endfor %}
+  </div>
+{% endif %}
+
+{% if job %}<p class="muted small">{% translate "Build" %} #{{ job.pk }} · {{ job.state }}</p>{% endif %}
+
 <div class="grid cols-2">
   <section class="card">
-    <h2>{% translate "Recipe" %}</h2>
+    <h2>{% translate "summary" %}</h2>
     <table>
-      <tr><td class="muted">Ubuntu</td><td>{{ job.recipe.ubuntu_series }}</td></tr>
-      <tr><td class="muted">{% translate "Profile" %}</td><td>{{ job.recipe.profile }}</td></tr>
-      <tr><td class="muted">{% translate "Network" %}</td><td>{{ job.recipe.network_mode }}</td></tr>
-      <tr><td class="muted">{% translate "Hostname" %}</td><td class="mono">{{ job.recipe.hostname }}</td></tr>
-      <tr><td class="muted">{% translate "Locale" %}</td><td>{{ job.recipe.locale }}</td></tr>
+      <tr><td class="muted">{% translate "Hostname" %}</td><td class="mono">{{ recipe.hostname }}</td></tr>
+      <tr><td class="muted">{% translate "UI" %}</td><td class="mono small">{{ recipe.ui_url }}</td></tr>
+      <tr><td class="muted">{% translate "Network" %}</td><td>{{ recipe.network_mode }}{% if recipe.address %} · {{ recipe.address }}{% endif %}</td></tr>
+      <tr><td class="muted">{% translate "DNS" %}</td><td class="mono small">{{ recipe.dns|join:", "|default:"—" }}</td></tr>
+      <tr><td class="muted">{% translate "NTP" %}</td><td>{% if recipe.ntp_enabled %}{{ recipe.ntp_servers|join:", "|default:"vendor default" }}{% else %}{% translate "disabled" %}{% endif %}</td></tr>
+      <tr><td class="muted">{% translate "TLS" %}</td><td>{{ recipe.tls_mode }}{% if recipe.tls_domain %} · {{ recipe.tls_domain }}{% endif %}</td></tr>
     </table>
-    <p class="muted small mt">{% translate "The seed below is rendered deterministically from the recipe and is exactly what the builder consumes." %}</p>
+    <form method="post" action="{% url 'build-recipe' recipe.pk %}" class="mt">{% csrf_token %}
+      <button class="btn primary" type="submit">{% translate "Queue ISO build" %}</button>
+    </form>
   </section>
+  <section class="card">
+    <h2>{% translate "Brev command" %}</h2>
+    <pre class="log">{{ artefacts.brev-command }}</pre>
+  </section>
+</div>
+
+<div class="grid cols-2 mt">
   <section class="card">
     <h2>autoinstall.yaml</h2>
     <pre class="log">{{ seed.autoinstall }}</pre>
   </section>
+  <section class="card">
+    <h2>user-data</h2>
+    <pre class="log">{{ seed.user_data }}</pre>
+  </section>
 </div>
+
 <section class="card mt">
-  <h2>user-data</h2>
-  <pre class="log">{{ seed.user_data }}</pre>
+  <h2>install.sh</h2>
+  <pre class="log">{{ artefacts.install.sh }}</pre>
+</section>
+<section class="card mt">
+  <h2>proxmox-plan.sh</h2>
+  <pre class="log">{{ artefacts.proxmox-plan.sh }}</pre>
 </section>
 {% endblock %}

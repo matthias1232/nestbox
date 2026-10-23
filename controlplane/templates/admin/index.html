@@ -1,0 +1,35 @@
+{% extends "admin/index.html" %}
+{% load static %}
+
+{% block content %}
+<div class="nb-hero">
+  <img src="{% static 'img/admin-hero.jpg' %}" alt="">
+  <div class="nb-hero-text">
+    <strong>Nestbox</strong>
+    <span>One appliance · walled nests · every change audited</span>
+  </div>
+</div>
+
+{% if nestbox_cards %}
+<div class="nb-cards">
+  {% for card in nestbox_cards %}
+    <div class="nb-card">
+      <div class="k">{{ card.label }}</div>
+      <div class="v">{{ card.value }}</div>
+      <div class="h">{{ card.hint }}</div>
+    </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if nestbox_expiring %}
+<div class="nb-card" style="margin-bottom:18px">
+  <div class="k">Certificates expiring within 30 days</div>
+  {% for cert in nestbox_expiring %}
+    <div class="h">{{ cert.fqdn }} — {{ cert.expires_at|date:"Y-m-d" }} ({{ cert.source }})</div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{{ block.super }}
+{% endblock %}

@@ -1,12 +1,39 @@
-"""ISO build UI."""
+"""Image Creator UI: wizard, artefact preview, build queue."""
 from __future__ import annotations
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import get_object_or_404, redirect, render
+from django.views.decorators.http import require_POST
 
 from apps.builds.models import BuildJob, BuildRecipe
-from apps.builds.services import render_seed
+from apps.builds.services import recipe_warnings, render_all, render_seed
+from apps.core.crypto import encrypt
+from apps.network.models import Certificate
+
+
+def _csv(value: str) -> list[str]:
+    return [part.strip() for part in (value or "").split(",") if part.strip()]
+
+
+def _collect_nests(post) -> list[dict]:  # noqa: ANN001
+    nests: list[dict] = []
+    for index in (1, 2, 3):
+        name = (post.get(f"nest_name_{index}") or "").strip()
+        if not name:
+            continue
+        try:
+            port = int(post.get(f"nest_port_{index}") or 8080)
+        except ValueError:
+            port = 8080
+        nests.append(
+            {
+                "name": name,
+                "pack": (post.get(f"nest_pack_{index}") or "").strip(),
+                "port": port,
+            }
+        )
+    return nests
 
 
 @login_required
@@ -28,7 +55,90 @@ def build_list(request):  # noqa: ANN001
 
 
 @login_required
+def build_wizard(request):  # noqa: ANN001
+    if request.method == "POST":
+        name = (request.POST.get("name") or "").strip()
+        if not name:
+            messages.error(request, "A recipe needs a name.")
+            return render(request, "builds/wizard.html", _wizard_context(request))
+        recipe, _ = BuildRecipe.objects.update_or_create(
+            name=name,
+            defaults={
+                "description": request.POST.get("description", ""),
+                "ubuntu_series": request.POST.get("ubuntu_series", "24.04"),
+                "profile": request.POST.get("profile", "slim"),
+                "target": request.POST.get("target", "iso"),
+                "locale": request.POST.get("locale", "en_US.UTF-8"),
+                "keyboard": request.POST.get("keyboard", "us"),
+                "hostname": request.POST.get("hostname", "nestbox"),
+                "username": request.POST.get("username", "nestbox"),
+                "ssh_authorized_keys": [k for k in (request.POST.get("ssh_keys") or "").splitlines() if k.strip()],
+                "admin_email": request.POST.get("admin_email", ""),
+                "force_password_change": request.POST.get("force_password_change") == "on",
+                "install_docker": request.POST.get("install_docker") == "on",
+                "install_openshell": request.POST.get("install_openshell") == "on",
+                "network_mode": request.POST.get("network_mode", "dhcp"),
+                "address": request.POST.get("address", ""),
+                "gateway": request.POST.get("gateway", ""),
+                "dns": _csv(request.POST.get("dns", "")),
+                "dns_domain": request.POST.get("dns_domain", ""),
+                "dns_search": _csv(request.POST.get("dns_search", "")),
+                "ntp_enabled": request.POST.get("ntp_enabled") == "on",
+                "ntp_servers": _csv(request.POST.get("ntp_servers", "")),
+                "ui_port": int(request.POST.get("ui_port") or 443),
+                "admin_port": int(request.POST.get("admin_port") or 443),
+                "tls_mode": request.POST.get("tls_mode", "self_signed"),
+                "tls_domain": request.POST.get("tls_domain", ""),
+                "tls_email": request.POST.get("tls_email", ""),
+                "acme_challenge": request.POST.get("acme_challenge", "http01"),
+                "preseed_nests": _collect_nests(request.POST),
+            },
+        )
+        password = request.POST.get("admin_password") or ""
+        if password:
+            recipe.admin_password_encrypted = encrypt(password)
+            recipe.save(update_fields=["admin_password_encrypted"])
+        cert_id = request.POST.get("certificate")
+        if cert_id:
+            recipe.certificate = Certificate.objects.filter(pk=cert_id).first()
+            recipe.save(update_fields=["certificate"])
+        messages.success(request, f"Recipe {recipe.name} saved.")
+        return redirect("build-detail", pk=recipe.pk)
+    return render(request, "builds/wizard.html", _wizard_context(request))
+
+
+def _wizard_context(request) -> dict:  # noqa: ANN001
+    from apps.agentpacks.models import AgentPack
+
+    return {
+        "packs": AgentPack.objects.all(),
+        "certificates": Certificate.objects.all(),
+        "warnings": [],
+    }
+
+
+@login_required
 def build_detail(request, pk: int):  # noqa: ANN001
-    job = get_object_or_404(BuildJob, pk=pk)
-    seed = render_seed(job.recipe)
-    return render(request, "builds/detail.html", {"job": job, "seed": seed})
+    job = get_object_or_404(BuildJob, pk=pk) if BuildJob.objects.filter(pk=pk).exists() else None
+    recipe = job.recipe if job else get_object_or_404(BuildRecipe, pk=pk)
+    artefacts = render_all(recipe)
+    return render(
+        request,
+        "builds/detail.html",
+        {
+            "job": job,
+            "recipe": recipe,
+            "artefacts": artefacts,
+            "warnings": recipe_warnings(recipe),
+            "seed": render_seed(recipe),
+        },
+    )
+
+
+@require_POST
+@login_required
+def recipe_build(request, pk: int):  # noqa: ANN001
+    recipe = get_object_or_404(BuildRecipe, pk=pk)
+    job = BuildJob.objects.create(recipe=recipe, state="queued")
+    messages.success(request, f"Build #{job.pk} queued.")
+    return redirect("build-detail", pk=job.pk)

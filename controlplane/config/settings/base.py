@@ -21,6 +21,9 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 
 INSTALLED_APPS = [
+    "unfold",
+    "unfold.contrib.filters",
+    "unfold.contrib.forms",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -43,10 +46,67 @@ INSTALLED_APPS = [
     "apps.policies",
     "apps.agentpacks",
     "apps.network",
+    "apps.netconfig",
+    "apps.tls",
     "apps.builds",
     "apps.backups",
     "apps.api",
 ]
+
+# --- admin theme ------------------------------------------------------------------------------
+UNFOLD = {
+    "SITE_TITLE": "Nestbox",
+    "SITE_HEADER": "Nestbox",
+    "SITE_SUBHEADER": "AI agent appliance",
+    "SITE_URL": "/",
+    "SITE_SYMBOL": "deployed_code",
+    "SHOW_HISTORY": True,
+    "SHOW_VIEW_ON_SITE": True,
+    "DASHBOARD_CALLBACK": "apps.core.admin_dashboard.dashboard_callback",
+    "BORDER_RADIUS": "10px",
+    "COLORS": {
+        "primary": {
+            "50": "236 254 255",
+            "100": "207 250 254",
+            "200": "165 243 252",
+            "300": "103 232 249",
+            "400": "34 211 238",
+            "500": "6 182 212",
+            "600": "8 145 178",
+            "700": "14 116 144",
+            "800": "21 94 117",
+            "900": "22 78 99",
+            "950": "8 51 68",
+        },
+    },
+    "STYLES": ["css/admin.css"],
+    "NAVIGATION": [
+        {"title": "Operate", "separator": True, "items": [
+            {"title": "Dashboard", "icon": "dashboard", "link": "/"},
+            {"title": "Containers", "icon": "deployed_code", "link": "/admin/core/container/"},
+            {"title": "Nests", "icon": "inventory_2", "link": "/admin/sandboxes/sandbox/"},
+            {"title": "Templates", "icon": "dashboard_customize", "link": "/admin/sandboxes/sandboxtemplate/"},
+        ]},
+        {"title": "Govern", "separator": True, "items": [
+            {"title": "Policies", "icon": "policy", "link": "/admin/policies/policy/"},
+            {"title": "Network rules", "icon": "lan", "link": "/admin/policies/networkrule/"},
+            {"title": "Certificates", "icon": "verified_user", "link": "/admin/network/certificate/"},
+            {"title": "Network profiles", "icon": "settings_ethernet", "link": "/admin/network/networkprofile/"},
+        ]},
+        {"title": "Build", "separator": True, "items": [
+            {"title": "Recipes", "icon": "build", "link": "/admin/builds/buildrecipe/"},
+            {"title": "Jobs", "icon": "pending_actions", "link": "/admin/builds/buildjob/"},
+            {"title": "Agent packs", "icon": "extension", "link": "/admin/agentpacks/agentpack/"},
+        ]},
+        {"title": "Platform", "separator": True, "items": [
+            {"title": "Gateway", "icon": "hub", "link": "/admin/openshell/gateway/"},
+            {"title": "Backups", "icon": "backup", "link": "/admin/backups/backuptarget/"},
+            {"title": "Audit", "icon": "history", "link": "/admin/identity/auditevent/"},
+            {"title": "Users", "icon": "group", "link": "/admin/auth/user/"},
+            {"title": "API docs", "icon": "api", "link": "/api/docs/"},
+        ]},
+    ],
+}
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",

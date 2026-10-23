@@ -28,6 +28,8 @@ urlpatterns = [
     path("policies/", policy_views.policy_list, name="policies"),
     path("policies/<int:pk>/", policy_views.policy_detail, name="policy-detail"),
     path("builds/", build_views.build_list, name="builds"),
+    path("builds/new/", build_views.build_wizard, name="build-wizard"),
+    path("builds/<int:pk>/build/", build_views.recipe_build, name="build-recipe"),
     path("builds/<int:pk>/", build_views.build_detail, name="build-detail"),
     # Streaming
     path("stream/containers/", core_views.container_stream, name="stream-containers"),

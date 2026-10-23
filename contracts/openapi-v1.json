@@ -1565,6 +1565,43 @@
                 "x-effect": "destructive"
             }
         },
+        "/api/v1/builds/recipes/{id}/preview/": {
+            "get": {
+                "operationId": "recipesPreviewGet",
+                "summary": "Render every artefact for this recipe",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "A unique integer value identifying this build recipe.",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "builds"
+                ],
+                "security": [
+                    {
+                        "tokenAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "ISO seed, install.sh, brev setup, proxmox plan, manifest"
+                    }
+                },
+                "x-roles": [
+                    "admin"
+                ],
+                "x-effect": "read"
+            }
+        },
         "/api/v1/builds/recipes/{id}/seed/": {
             "get": {
                 "operationId": "recipesSeedGet",
@@ -1907,6 +1944,64 @@
                     "admin"
                 ],
                 "x-effect": "destructive"
+            }
+        },
+        "/api/v1/certificates/{id}/renew/": {
+            "post": {
+                "operationId": "certificatesRenewPost",
+                "summary": "Issue or renew a certificate",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "A unique integer value identifying this certificate.",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "network"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CertificateRequest"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CertificateRequest"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CertificateRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "tokenAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Renewal result with a stable error code on failure."
+                    }
+                },
+                "x-roles": [
+                    "admin",
+                    "operator"
+                ],
+                "x-effect": "write"
             }
         },
         "/api/v1/containers/": {
@@ -7149,13 +7244,33 @@
                         "type": "integer",
                         "readOnly": true
                     },
+                    "ui_url": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "warnings": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "readOnly": true
+                    },
                     "name": {
                         "type": "string",
                         "maxLength": 120
                     },
+                    "description": {
+                        "type": "string"
+                    },
                     "ubuntu_series": {
+                        "enum": [
+                            "22.04",
+                            "24.04",
+                            "26.04"
+                        ],
                         "type": "string",
-                        "maxLength": 20
+                        "description": "* `22.04` - 22.04\n* `24.04` - 24.04\n* `26.04` - 26.04",
+                        "x-spec-enum-id": "d62a8369873ec9a9"
                     },
                     "profile": {
                         "enum": [
@@ -7165,6 +7280,17 @@
                         "type": "string",
                         "description": "* `slim` - slim\n* `offline` - offline",
                         "x-spec-enum-id": "7e5f3485f3a2f131"
+                    },
+                    "target": {
+                        "enum": [
+                            "iso",
+                            "cloud_init",
+                            "brev",
+                            "proxmox"
+                        ],
+                        "type": "string",
+                        "description": "* `iso` - iso\n* `cloud_init` - cloud_init\n* `brev` - brev\n* `proxmox` - proxmox",
+                        "x-spec-enum-id": "155a5e4c7418aa3a"
                     },
                     "locale": {
                         "type": "string",
@@ -7183,7 +7309,20 @@
                         "maxLength": 60
                     },
                     "ssh_authorized_keys": {},
+                    "admin_email": {
+                        "type": "string",
+                        "maxLength": 200
+                    },
+                    "force_password_change": {
+                        "type": "boolean"
+                    },
                     "packages": {},
+                    "install_docker": {
+                        "type": "boolean"
+                    },
+                    "install_openshell": {
+                        "type": "boolean"
+                    },
                     "network_mode": {
                         "enum": [
                             "dhcp",
@@ -7202,8 +7341,57 @@
                         "maxLength": 64
                     },
                     "dns": {},
-                    "tls": {},
-                    "proxy": {},
+                    "dns_domain": {
+                        "type": "string",
+                        "maxLength": 255
+                    },
+                    "dns_search": {},
+                    "ntp_enabled": {
+                        "type": "boolean"
+                    },
+                    "ntp_servers": {},
+                    "ui_port": {
+                        "type": "integer",
+                        "maximum": 9223372036854775807,
+                        "minimum": 0,
+                        "format": "int64"
+                    },
+                    "admin_port": {
+                        "type": "integer",
+                        "maximum": 9223372036854775807,
+                        "minimum": 0,
+                        "format": "int64"
+                    },
+                    "tls_mode": {
+                        "enum": [
+                            "self_signed",
+                            "letsencrypt",
+                            "upload"
+                        ],
+                        "type": "string",
+                        "description": "* `self_signed` - self_signed\n* `letsencrypt` - letsencrypt\n* `upload` - upload",
+                        "x-spec-enum-id": "045fa37d3028fa2f"
+                    },
+                    "tls_domain": {
+                        "type": "string",
+                        "maxLength": 255
+                    },
+                    "tls_email": {
+                        "type": "string",
+                        "maxLength": 200
+                    },
+                    "acme_challenge": {
+                        "enum": [
+                            "http01",
+                            "dns01"
+                        ],
+                        "type": "string",
+                        "description": "* `http01` - http01\n* `dns01` - dns01",
+                        "x-spec-enum-id": "ba3378450d401ae4"
+                    },
+                    "preseed_nests": {
+                        "description": "[{\"name\": \"hermes-01\", \"pack\": \"hermes-agent\", \"port\": 8080}]"
+                    },
                     "created_at": {
                         "type": "string",
                         "format": "date-time",
@@ -7214,6 +7402,10 @@
                         "format": "date-time",
                         "readOnly": true
                     },
+                    "certificate": {
+                        "type": "integer",
+                        "nullable": true
+                    },
                     "preseed_sandbox": {
                         "type": "integer",
                         "nullable": true
@@ -7223,7 +7415,9 @@
                     "created_at",
                     "id",
                     "name",
-                    "updated_at"
+                    "ui_url",
+                    "updated_at",
+                    "warnings"
                 ]
             },
             "BuildRecipeRequest": {
@@ -7234,10 +7428,18 @@
                         "minLength": 1,
                         "maxLength": 120
                     },
+                    "description": {
+                        "type": "string"
+                    },
                     "ubuntu_series": {
+                        "enum": [
+                            "22.04",
+                            "24.04",
+                            "26.04"
+                        ],
                         "type": "string",
-                        "minLength": 1,
-                        "maxLength": 20
+                        "description": "* `22.04` - 22.04\n* `24.04` - 24.04\n* `26.04` - 26.04",
+                        "x-spec-enum-id": "d62a8369873ec9a9"
                     },
                     "profile": {
                         "enum": [
@@ -7247,6 +7449,17 @@
                         "type": "string",
                         "description": "* `slim` - slim\n* `offline` - offline",
                         "x-spec-enum-id": "7e5f3485f3a2f131"
+                    },
+                    "target": {
+                        "enum": [
+                            "iso",
+                            "cloud_init",
+                            "brev",
+                            "proxmox"
+                        ],
+                        "type": "string",
+                        "description": "* `iso` - iso\n* `cloud_init` - cloud_init\n* `brev` - brev\n* `proxmox` - proxmox",
+                        "x-spec-enum-id": "155a5e4c7418aa3a"
                     },
                     "locale": {
                         "type": "string",
@@ -7269,7 +7482,24 @@
                         "maxLength": 60
                     },
                     "ssh_authorized_keys": {},
+                    "admin_email": {
+                        "type": "string",
+                        "maxLength": 200
+                    },
+                    "admin_password_encrypted": {
+                        "type": "string",
+                        "writeOnly": true
+                    },
+                    "force_password_change": {
+                        "type": "boolean"
+                    },
                     "packages": {},
+                    "install_docker": {
+                        "type": "boolean"
+                    },
+                    "install_openshell": {
+                        "type": "boolean"
+                    },
                     "network_mode": {
                         "enum": [
                             "dhcp",
@@ -7288,8 +7518,61 @@
                         "maxLength": 64
                     },
                     "dns": {},
-                    "tls": {},
-                    "proxy": {},
+                    "dns_domain": {
+                        "type": "string",
+                        "maxLength": 255
+                    },
+                    "dns_search": {},
+                    "ntp_enabled": {
+                        "type": "boolean"
+                    },
+                    "ntp_servers": {},
+                    "ui_port": {
+                        "type": "integer",
+                        "maximum": 9223372036854775807,
+                        "minimum": 0,
+                        "format": "int64"
+                    },
+                    "admin_port": {
+                        "type": "integer",
+                        "maximum": 9223372036854775807,
+                        "minimum": 0,
+                        "format": "int64"
+                    },
+                    "tls_mode": {
+                        "enum": [
+                            "self_signed",
+                            "letsencrypt",
+                            "upload"
+                        ],
+                        "type": "string",
+                        "description": "* `self_signed` - self_signed\n* `letsencrypt` - letsencrypt\n* `upload` - upload",
+                        "x-spec-enum-id": "045fa37d3028fa2f"
+                    },
+                    "tls_domain": {
+                        "type": "string",
+                        "maxLength": 255
+                    },
+                    "tls_email": {
+                        "type": "string",
+                        "maxLength": 200
+                    },
+                    "acme_challenge": {
+                        "enum": [
+                            "http01",
+                            "dns01"
+                        ],
+                        "type": "string",
+                        "description": "* `http01` - http01\n* `dns01` - dns01",
+                        "x-spec-enum-id": "ba3378450d401ae4"
+                    },
+                    "preseed_nests": {
+                        "description": "[{\"name\": \"hermes-01\", \"pack\": \"hermes-agent\", \"port\": 8080}]"
+                    },
+                    "certificate": {
+                        "type": "integer",
+                        "nullable": true
+                    },
                     "preseed_sandbox": {
                         "type": "integer",
                         "nullable": true
@@ -7314,36 +7597,68 @@
                         "type": "string",
                         "maxLength": 120
                     },
+                    "source": {
+                        "enum": [
+                            "internal_ca",
+                            "letsencrypt",
+                            "upload"
+                        ],
+                        "type": "string",
+                        "description": "* `internal_ca` - internal_ca\n* `letsencrypt` - letsencrypt\n* `upload` - upload",
+                        "x-spec-enum-id": "094f0b866ab11d53"
+                    },
                     "status": {
                         "enum": [
                             "valid",
                             "expiring",
                             "expired",
-                            "revoked"
+                            "revoked",
+                            "pending",
+                            "failed"
                         ],
                         "type": "string",
-                        "description": "* `valid` - valid\n* `expiring` - expiring\n* `expired` - expired\n* `revoked` - revoked",
-                        "x-spec-enum-id": "82e573da689d1b13"
+                        "description": "* `valid` - valid\n* `expiring` - expiring\n* `expired` - expired\n* `revoked` - revoked\n* `pending` - pending\n* `failed` - failed",
+                        "x-spec-enum-id": "50fa03b3a917bae9",
+                        "readOnly": true
                     },
                     "expires_at": {
                         "type": "string",
                         "format": "date-time",
                         "nullable": true
                     },
+                    "days_left": {
+                        "type": "integer",
+                        "nullable": true,
+                        "readOnly": true
+                    },
                     "cert_pem": {
                         "type": "string"
                     },
+                    "chain_pem": {
+                        "type": "string"
+                    },
+                    "last_error": {
+                        "type": "string",
+                        "maxLength": 400
+                    },
                     "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true
+                    },
+                    "updated_at": {
                         "type": "string",
                         "format": "date-time",
                         "readOnly": true
                     }
                 },
                 "required": [
-                    "cert_pem",
                     "created_at",
+                    "days_left",
                     "fqdn",
-                    "id"
+                    "id",
+                    "status",
+                    "updated_at"
                 ]
             },
             "CertificateRequest": {
@@ -7358,16 +7673,15 @@
                         "type": "string",
                         "maxLength": 120
                     },
-                    "status": {
+                    "source": {
                         "enum": [
-                            "valid",
-                            "expiring",
-                            "expired",
-                            "revoked"
+                            "internal_ca",
+                            "letsencrypt",
+                            "upload"
                         ],
                         "type": "string",
-                        "description": "* `valid` - valid\n* `expiring` - expiring\n* `expired` - expired\n* `revoked` - revoked",
-                        "x-spec-enum-id": "82e573da689d1b13"
+                        "description": "* `internal_ca` - internal_ca\n* `letsencrypt` - letsencrypt\n* `upload` - upload",
+                        "x-spec-enum-id": "094f0b866ab11d53"
                     },
                     "expires_at": {
                         "type": "string",
@@ -7375,19 +7689,22 @@
                         "nullable": true
                     },
                     "cert_pem": {
-                        "type": "string",
-                        "minLength": 1
+                        "type": "string"
+                    },
+                    "chain_pem": {
+                        "type": "string"
                     },
                     "key_pem_encrypted": {
                         "type": "string",
-                        "writeOnly": true,
-                        "minLength": 1
+                        "writeOnly": true
+                    },
+                    "last_error": {
+                        "type": "string",
+                        "maxLength": 400
                     }
                 },
                 "required": [
-                    "cert_pem",
-                    "fqdn",
-                    "key_pem_encrypted"
+                    "fqdn"
                 ]
             },
             "Container": {
@@ -8907,10 +9224,18 @@
                         "minLength": 1,
                         "maxLength": 120
                     },
+                    "description": {
+                        "type": "string"
+                    },
                     "ubuntu_series": {
+                        "enum": [
+                            "22.04",
+                            "24.04",
+                            "26.04"
+                        ],
                         "type": "string",
-                        "minLength": 1,
-                        "maxLength": 20
+                        "description": "* `22.04` - 22.04\n* `24.04` - 24.04\n* `26.04` - 26.04",
+                        "x-spec-enum-id": "d62a8369873ec9a9"
                     },
                     "profile": {
                         "enum": [
@@ -8920,6 +9245,17 @@
                         "type": "string",
                         "description": "* `slim` - slim\n* `offline` - offline",
                         "x-spec-enum-id": "7e5f3485f3a2f131"
+                    },
+                    "target": {
+                        "enum": [
+                            "iso",
+                            "cloud_init",
+                            "brev",
+                            "proxmox"
+                        ],
+                        "type": "string",
+                        "description": "* `iso` - iso\n* `cloud_init` - cloud_init\n* `brev` - brev\n* `proxmox` - proxmox",
+                        "x-spec-enum-id": "155a5e4c7418aa3a"
                     },
                     "locale": {
                         "type": "string",
@@ -8942,7 +9278,24 @@
                         "maxLength": 60
                     },
                     "ssh_authorized_keys": {},
+                    "admin_email": {
+                        "type": "string",
+                        "maxLength": 200
+                    },
+                    "admin_password_encrypted": {
+                        "type": "string",
+                        "writeOnly": true
+                    },
+                    "force_password_change": {
+                        "type": "boolean"
+                    },
                     "packages": {},
+                    "install_docker": {
+                        "type": "boolean"
+                    },
+                    "install_openshell": {
+                        "type": "boolean"
+                    },
                     "network_mode": {
                         "enum": [
                             "dhcp",
@@ -8961,8 +9314,61 @@
                         "maxLength": 64
                     },
                     "dns": {},
-                    "tls": {},
-                    "proxy": {},
+                    "dns_domain": {
+                        "type": "string",
+                        "maxLength": 255
+                    },
+                    "dns_search": {},
+                    "ntp_enabled": {
+                        "type": "boolean"
+                    },
+                    "ntp_servers": {},
+                    "ui_port": {
+                        "type": "integer",
+                        "maximum": 9223372036854775807,
+                        "minimum": 0,
+                        "format": "int64"
+                    },
+                    "admin_port": {
+                        "type": "integer",
+                        "maximum": 9223372036854775807,
+                        "minimum": 0,
+                        "format": "int64"
+                    },
+                    "tls_mode": {
+                        "enum": [
+                            "self_signed",
+                            "letsencrypt",
+                            "upload"
+                        ],
+                        "type": "string",
+                        "description": "* `self_signed` - self_signed\n* `letsencrypt` - letsencrypt\n* `upload` - upload",
+                        "x-spec-enum-id": "045fa37d3028fa2f"
+                    },
+                    "tls_domain": {
+                        "type": "string",
+                        "maxLength": 255
+                    },
+                    "tls_email": {
+                        "type": "string",
+                        "maxLength": 200
+                    },
+                    "acme_challenge": {
+                        "enum": [
+                            "http01",
+                            "dns01"
+                        ],
+                        "type": "string",
+                        "description": "* `http01` - http01\n* `dns01` - dns01",
+                        "x-spec-enum-id": "ba3378450d401ae4"
+                    },
+                    "preseed_nests": {
+                        "description": "[{\"name\": \"hermes-01\", \"pack\": \"hermes-agent\", \"port\": 8080}]"
+                    },
+                    "certificate": {
+                        "type": "integer",
+                        "nullable": true
+                    },
                     "preseed_sandbox": {
                         "type": "integer",
                         "nullable": true
@@ -8981,16 +9387,15 @@
                         "type": "string",
                         "maxLength": 120
                     },
-                    "status": {
+                    "source": {
                         "enum": [
-                            "valid",
-                            "expiring",
-                            "expired",
-                            "revoked"
+                            "internal_ca",
+                            "letsencrypt",
+                            "upload"
                         ],
                         "type": "string",
-                        "description": "* `valid` - valid\n* `expiring` - expiring\n* `expired` - expired\n* `revoked` - revoked",
-                        "x-spec-enum-id": "82e573da689d1b13"
+                        "description": "* `internal_ca` - internal_ca\n* `letsencrypt` - letsencrypt\n* `upload` - upload",
+                        "x-spec-enum-id": "094f0b866ab11d53"
                     },
                     "expires_at": {
                         "type": "string",
@@ -8998,13 +9403,18 @@
                         "nullable": true
                     },
                     "cert_pem": {
-                        "type": "string",
-                        "minLength": 1
+                        "type": "string"
+                    },
+                    "chain_pem": {
+                        "type": "string"
                     },
                     "key_pem_encrypted": {
                         "type": "string",
-                        "writeOnly": true,
-                        "minLength": 1
+                        "writeOnly": true
+                    },
+                    "last_error": {
+                        "type": "string",
+                        "maxLength": 400
                     }
                 }
             },

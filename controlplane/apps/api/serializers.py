@@ -9,7 +9,7 @@ from apps.backups.models import BackupSnapshot, BackupTarget, RestoreJob
 from apps.builds.models import BuildJob, BuildRecipe
 from apps.core.models import Container, Node, OverlayPeer, Service
 from apps.identity.models import AuditEvent, Profile
-from apps.network.models import Certificate, DnsRecord, ProxyRoute
+from apps.network.models import Certificate, DnsRecord, NetworkProfile, ProxyRoute
 from apps.openshell.models import Gateway, WorkspaceMapping
 from apps.policies.models import (
     FilesystemRule,
@@ -185,11 +185,29 @@ class WorkspaceMappingSerializer(serializers.ModelSerializer):
 
 
 class CertificateSerializer(serializers.ModelSerializer):
+    days_left = serializers.SerializerMethodField()
+
     class Meta:
         model = Certificate
-        fields = ["id", "fqdn", "issuer", "status", "expires_at", "cert_pem", "key_pem_encrypted", "created_at"]
-        read_only_fields = ["created_at", "updated_at"]
+        fields = [
+            "id", "fqdn", "issuer", "source", "status", "expires_at", "days_left",
+            "cert_pem", "chain_pem", "key_pem_encrypted", "last_error",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = ["created_at", "updated_at", "status"]
         extra_kwargs = {"key_pem_encrypted": {"write_only": True}}
+
+    def get_days_left(self, obj: Certificate) -> int | None:
+        from apps.tls.services import days_left
+
+        return days_left(obj)
+
+
+class NetworkProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NetworkProfile
+        fields = "__all__"
+        read_only_fields = ["created_at", "updated_at", "last_applied_at", "last_good_yaml"]
 
 
 class DnsRecordSerializer(serializers.ModelSerializer):
@@ -214,10 +232,19 @@ class OverlayPeerSerializer(serializers.ModelSerializer):
 
 
 class BuildRecipeSerializer(serializers.ModelSerializer):
+    ui_url = serializers.CharField(read_only=True)
+    warnings = serializers.SerializerMethodField()
+
     class Meta:
         model = BuildRecipe
         fields = "__all__"
         read_only_fields = ["created_at", "updated_at"]
+        extra_kwargs = {"admin_password_encrypted": {"write_only": True}}
+
+    def get_warnings(self, obj: BuildRecipe) -> list[str]:
+        from apps.builds.services import recipe_warnings
+
+        return recipe_warnings(obj)
 
 
 class BuildJobSerializer(serializers.ModelSerializer):

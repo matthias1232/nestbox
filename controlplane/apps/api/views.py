@@ -34,6 +34,7 @@ from apps.api.serializers import (
     FilesystemRuleSerializer,
     GatewaySerializer,
     LanguageSerializer,
+    NetworkProfileSerializer,
     NetworkRuleSerializer,
     NodeSerializer,
     OverlayPeerSerializer,
@@ -52,12 +53,12 @@ from apps.api.serializers import (
 )
 from apps.backups.models import BackupSnapshot, BackupTarget, RestoreJob
 from apps.builds.models import BuildJob, BuildRecipe
-from apps.builds.services import render_seed
+from apps.builds.services import render_all, render_seed
 from apps.core.models import Container, Node, OverlayPeer, Service
 from apps.core.runtime import runtime
 from apps.identity.models import AuditEvent, Profile
 from apps.identity.services import audit, language_catalog
-from apps.network.models import Certificate, DnsRecord, ProxyRoute
+from apps.network.models import Certificate, DnsRecord, NetworkProfile, ProxyRoute
 from apps.openshell.models import Gateway, WorkspaceMapping
 from apps.policies.models import FilesystemRule, NetworkRule, Policy, ProcessRule
 from apps.policies.services import (
@@ -364,6 +365,67 @@ class CertificateViewSet(viewsets.ModelViewSet):
     serializer_class = CertificateSerializer
     permission_classes = [OperatorOnly]
 
+    @extend_schema(
+        tags=["network"],
+        summary="Issue or renew a certificate",
+        responses={200: OpenApiResponse(description="Renewal result with a stable error code on failure.")},
+    )
+    @action(detail=True, methods=["post"])
+    def renew(self, request, pk=None):  # noqa: ANN001
+        from apps.tls.services import refresh_status, request_letsencrypt
+
+        cert = self.get_object()
+        refresh_status(cert)
+        if cert.source == "letsencrypt":
+            return Response(
+                request_letsencrypt(
+                    cert,
+                    email=request.data.get("email", ""),
+                    challenge=request.data.get("challenge", "http01"),
+                )
+            )
+        from apps.tls.services import issue_self_signed, store_certificate
+
+        pair = issue_self_signed(cert.fqdn)
+        store_certificate(cert.fqdn, source="internal_ca", cert_pem=pair.cert_pem,
+                          key_pem=pair.key_pem, issuer="Nestbox internal CA")
+        return Response({"ok": True, "certificate": cert.fqdn, "source": "internal_ca"})
+
+
+class NetworkProfileViewSet(viewsets.ModelViewSet):
+    queryset = NetworkProfile.objects.all()
+    serializer_class = NetworkProfileSerializer
+    permission_classes = [AdminOnly]
+
+    @extend_schema(
+        tags=["network"],
+        summary="Plan a network change: diff, critical fields and risks",
+        responses={200: OpenApiResponse(description="Changes, risk text and the rendered netplan.")},
+    )
+    @action(detail=True, methods=["get"])
+    def plan(self, request, pk=None):  # noqa: ANN001
+        from apps.netconfig.services import plan_change, render_diff
+
+        profile = self.get_object()
+        return Response({**plan_change(profile).as_dict(), "diff": render_diff(profile)})
+
+    @extend_schema(
+        tags=["network"],
+        summary="Apply with a rollback watchdog",
+        responses={200: OpenApiResponse(description="Applied or refused, with the reason.")},
+    )
+    @action(detail=True, methods=["post"])
+    def apply(self, request, pk=None):  # noqa: ANN001
+        from apps.netconfig.services import apply as apply_profile
+
+        result = apply_profile(
+            self.get_object(),
+            confirm_hostname=request.data.get("confirm_hostname", ""),
+            dry_run=bool(request.data.get("dry_run", False)),
+        )
+        audit(request.user, "other", "network_profile", pk, result["code"])
+        return Response(result)
+
 
 class DnsRecordViewSet(viewsets.ModelViewSet):
     queryset = DnsRecord.objects.all()
@@ -397,6 +459,15 @@ class BuildRecipeViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["get"], url_path="seed")
     def seed(self, request, pk=None):  # noqa: ANN001
         return Response(render_seed(self.get_object()))
+
+    @extend_schema(
+        tags=["builds"],
+        summary="Render every artefact for this recipe",
+        responses={200: OpenApiResponse(description="ISO seed, install.sh, brev setup, proxmox plan, manifest")},
+    )
+    @action(detail=True, methods=["get"], url_path="preview")
+    def preview(self, request, pk=None):  # noqa: ANN001
+        return Response(render_all(self.get_object()))
 
 
 class BuildJobViewSet(viewsets.ModelViewSet):

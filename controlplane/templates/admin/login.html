@@ -1,0 +1,13 @@
+{% extends "admin/login.html" %}
+{% load static %}
+{% block content %}
+<div class="nb-hero">
+  <img src="{% static 'img/admin-hero.jpg' %}" alt="">
+  <div class="nb-hero-text">
+    <strong>Nestbox</strong>
+    <span>Governed AI agent appliance · OpenShell sandboxes · AI firewall</span>
+  </div>
+</div>
+{{ block.super }}
+<p class="nb-disclaimer">Independent community project. Not affiliated with or endorsed by NVIDIA.</p>
+{% endblock %}
