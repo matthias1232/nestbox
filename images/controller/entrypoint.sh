@@ -4,6 +4,7 @@ set -eu
 python manage.py migrate --noinput
 python manage.py bootstrap
 python manage.py load_packs || true
+python manage.py seed_nests || true
 python manage.py compilemessages --ignore .venv || true
 
 # The appliance terminates TLS in gunicorn: first boot writes a self-signed pair (or the

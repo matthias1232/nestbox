@@ -51,6 +51,9 @@ class Sandbox(models.Model):
     )
     agent_pack_key = models.CharField(max_length=60, blank=True)
     state = models.CharField(max_length=20, choices=SANDBOX_STATES, default="pending")
+    port = models.PositiveIntegerField(
+        default=0, help_text="Published port for this nest; 0 means the gateway assigns one."
+    )
     overlay_ip = models.GenericIPAddressField(protocol="IPv4", null=True, blank=True)
     image = models.CharField(max_length=300, blank=True)
     last_error = models.CharField(max_length=500, blank=True)
@@ -69,4 +72,5 @@ class Sandbox(models.Model):
 
     @property
     def url_host(self) -> str:
-        return f"{self.name}.apps.localhost"
+        host = f"{self.name}.apps.localhost"
+        return f"{host}:{self.port}" if self.port else host

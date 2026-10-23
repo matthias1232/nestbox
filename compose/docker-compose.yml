@@ -34,7 +34,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - data:/var/lib/nestbox
-      - /etc/nestbox/tls:/etc/nestbox/tls:ro
+      - /etc/nestbox:/etc/nestbox:ro
     depends_on:
       db:
         condition: service_healthy
