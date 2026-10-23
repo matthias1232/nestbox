@@ -29,7 +29,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):  # noqa: ANN002, ANN003
         path = Path(options["recipe"])
         if not path.is_file():
-            self.stdout.write("no recipe at %s, nothing to preseed" % path)
+            self.stdout.write(f"no recipe at {path}, nothing to preseed")
             return
 
         try:

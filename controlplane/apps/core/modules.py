@@ -5,10 +5,10 @@ the operator wants, and writes the state file that the next process start reads.
 """
 from __future__ import annotations
 
+from config.modules import CATALOG, ModuleSpec, active_keys, resolve, state_file, write_state
 from django.conf import settings
 
 from apps.core.models import ModuleState
-from config.modules import CATALOG, ModuleSpec, active_keys, resolve, state_file, write_state
 
 
 def catalog_dict() -> dict[str, ModuleSpec]:

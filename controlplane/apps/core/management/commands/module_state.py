@@ -1,12 +1,10 @@
 """Inspect and drive the module switches from the command line or first boot."""
 from __future__ import annotations
 
-from pathlib import Path
-
+from config.modules import active_keys, state_file
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.core import modules as runtime
-from config.modules import active_keys, state_file
 
 
 class Command(BaseCommand):

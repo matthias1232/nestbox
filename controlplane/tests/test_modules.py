@@ -20,13 +20,13 @@ def state_dir(tmp_path, monkeypatch):
 
 def test_resolve_closes_the_dependency_graph():
     assert catalog.resolve(["policies"]) == (
-        "core", "api", "containers", "sandboxes", "policies",
+        "core", "api", "identity", "containers", "sandboxes", "policies",
     )
-    assert catalog.resolve(["core"]) == ("core", "api")
+    assert catalog.resolve(["core"]) == ("core", "api", "identity")
 
 
 def test_unknown_keys_are_ignored_and_always_on_stays():
-    assert catalog.resolve(["does-not-exist"]) == ("core", "api")
+    assert catalog.resolve(["does-not-exist"]) == ("core", "api", "identity")
 
 
 def test_state_file_wins_over_the_environment(state_dir, monkeypatch):

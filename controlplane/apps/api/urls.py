@@ -1,38 +1,33 @@
-"""API v1 routes."""
-from django.urls import path
-from rest_framework.routers import DefaultRouter
+"""API v1: composed from the active modules.
 
-from apps.api import views
+Every module owns its router in ``apps.<module>.api``. This file only decides which of them are
+mounted, so switching a module off removes its endpoints from the API, the schema and the docs.
+"""
+from __future__ import annotations
 
-router = DefaultRouter()
-router.register("nodes", views.NodeViewSet, basename="node")
-router.register("containers", views.ContainerViewSet, basename="container")
-router.register("services", views.ServiceViewSet, basename="service")
-router.register("templates", views.SandboxTemplateViewSet, basename="template")
-router.register("sandboxes", views.SandboxViewSet, basename="sandbox")
-router.register("policies", views.PolicyViewSet, basename="policy")
-router.register("network-rules", views.NetworkRuleViewSet, basename="network-rule")
-router.register("filesystem-rules", views.FilesystemRuleViewSet, basename="filesystem-rule")
-router.register("process-rules", views.ProcessRuleViewSet, basename="process-rule")
-router.register("agent-packs", views.AgentPackViewSet, basename="agent-pack")
-router.register("gateways", views.GatewayViewSet, basename="gateway")
-router.register("workspaces", views.WorkspaceMappingViewSet, basename="workspace")
-router.register("certificates", views.CertificateViewSet, basename="certificate")
-router.register("dns-records", views.DnsRecordViewSet, basename="dns-record")
-router.register("proxy-routes", views.ProxyRouteViewSet, basename="proxy-route")
-router.register("peers", views.OverlayPeerViewSet, basename="peer")
-router.register("builds/recipes", views.BuildRecipeViewSet, basename="build-recipe")
-router.register("builds/jobs", views.BuildJobViewSet, basename="build-job")
-router.register("backups/targets", views.BackupTargetViewSet, basename="backup-target")
-router.register("backups/snapshots", views.BackupSnapshotViewSet, basename="backup-snapshot")
-router.register("backups/restores", views.RestoreJobViewSet, basename="restore-job")
-router.register("audit", views.AuditEventViewSet, basename="audit")
-router.register("users", views.UserViewSet, basename="user")
+import importlib
+from collections.abc import Iterable
 
-urlpatterns = [
-    path("system/", views.SystemView.as_view(), name="system"),
-    path("me/", views.MeView.as_view(), name="me"),
-    path("identity/tokens/", views.TokenCreateView.as_view(), name="token-create"),
-    path("identity/languages/", views.LanguageListView.as_view(), name="languages"),
-    *router.urls,
-]
+from config.modules import CATALOG
+from django.conf import settings
+
+
+def build_api_urls(active_keys: Iterable[str]) -> list:
+    urls: list = []
+    seen: set[str] = set()
+    for key in active_keys:
+        spec = CATALOG.get(key)
+        if spec is None or spec.app in seen:
+            continue
+        seen.add(spec.app)
+        try:
+            module = importlib.import_module(f"{spec.app}.api")
+        except ModuleNotFoundError as exc:  # a module without an API is fine
+            if exc.name not in {f"{spec.app}.api", spec.app}:
+                raise
+            continue
+        urls.extend(getattr(module, "urlpatterns", []))
+    return urls
+
+
+urlpatterns = build_api_urls(settings.NESTBOX_ACTIVE_MODULES)

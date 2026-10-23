@@ -62,6 +62,7 @@ CATALOG: dict[str, ModuleSpec] = {
         category="Core",
         icon="badge",
         requires=("core",),
+        toggleable=False,
         order=10,
         api_prefix="identity",
     ),
@@ -189,7 +190,7 @@ CATALOG: dict[str, ModuleSpec] = {
 }
 
 #: Installed regardless of the state file: without them there is no request handling at all.
-ALWAYS_ON: tuple[str, ...] = ("core", "api")
+ALWAYS_ON: tuple[str, ...] = ("core", "api", "identity")
 
 DEFAULT_STATE_DIR = "/var/lib/nestbox"
 
