@@ -254,14 +254,18 @@ cd nestbox
           <pre class="code"><code>systemctl status nestbox-firstboot.service
 sudo tail -f /var/log/nestbox/firstboot.log</code></pre>
           <p>
-            The service ends with <code>[nestbox] first boot complete</code> and prints the URL, the administrator
-            address and a generated password. The same password is kept in
-            <code>/var/lib/nestbox/admin-password.txt</code>, readable only by root.
+            The service ends with <code>[nestbox] first boot complete</code>, and the same summary is written to
+            the console once, so you do not have to go looking for it:
           </p>
-          <pre class="code"><code>[nestbox] first boot complete
-[nestbox] web UI: https://192.168.55.210:443/
-[nestbox] admin login: admin@nestbox-a.local
-[nestbox] admin password: …</code></pre>
+          <pre class="code"><code>Nestbox is ready.
+  web UI: https://192.168.55.210:443/
+  admin:    admin@nestbox-a.local
+  password: …
+  password file: /var/lib/nestbox/admin-password.txt</code></pre>
+          <p>
+            The password file is readable by root only. The summary is also in
+            <code>/var/log/nestbox/firstboot.log</code> and in the journal of the unit.
+          </p>
         </section>
 
         <section class="guide-step" id="step-6">
