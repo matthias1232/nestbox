@@ -116,7 +116,10 @@ cd nestbox
             <code>VM.Allocate</code> and <code>Datastore.AllocateSpace</code> on the target node.
           </p>
           <figure class="shot shot-small">
-            <a class="zoom" href="../assets/guide/01-proxmox-login.png" title="Open at full resolution"><img src="../assets/guide/01-proxmox-login.png" alt="Proxmox VE login dialog with user name, password and realm fields" width="840" height="440" loading="lazy"></a>
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="frame-title">Proxmox VE · sign in</span></div>
+              <a class="zoom" href="../assets/guide/01-proxmox-login.png" title="Open at full resolution"><img src="../assets/guide/01-proxmox-login.png" alt="Proxmox VE login dialog with user name, password and realm fields" width="820" height="420"></a>
+            </div>
             <figcaption>The Proxmox VE login. The realm stays <code>Linux PAM</code> for a local <code>root</code> account.</figcaption>
           </figure>
 
@@ -126,7 +129,10 @@ cd nestbox
             <code>local:iso/nestbox-24.04-slim.iso</code>.
           </p>
           <figure class="shot">
-            <a class="zoom" href="../assets/guide/02-proxmox-datacenter.png" title="Open at full resolution"><img src="../assets/guide/02-proxmox-datacenter.png" alt="Proxmox datacenter view listing nodes, virtual machines and storages" width="1600" height="1000" loading="lazy"></a>
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="frame-title">Proxmox VE · datacenter</span></div>
+              <a class="zoom" href="../assets/guide/02-proxmox-datacenter.png" title="Open at full resolution"><img src="../assets/guide/02-proxmox-datacenter.png" alt="Proxmox datacenter view listing nodes, virtual machines and storages" width="1600" height="1000"></a>
+            </div>
             <figcaption>The datacenter view. The <code>local</code> storage holds ISO images, <code>local-btrfs</code> holds the disks.</figcaption>
           </figure>
 
@@ -135,7 +141,10 @@ cd nestbox
             that <code>local</code> has room for a 3.1 GB image before the upload starts.
           </p>
           <figure class="shot">
-            <a class="zoom" href="../assets/guide/03-proxmox-node-summary.png" title="Open at full resolution"><img src="../assets/guide/03-proxmox-node-summary.png" alt="Node summary for pve02 with storage and guest list" width="1600" height="1000" loading="lazy"></a>
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="frame-title">Proxmox VE · node pve02</span></div>
+              <a class="zoom" href="../assets/guide/03-proxmox-node-summary.png" title="Open at full resolution"><img src="../assets/guide/03-proxmox-node-summary.png" alt="Node summary for pve02 with storage and guest list" width="1600" height="1000"></a>
+            </div>
             <figcaption>Node <code>pve02</code> with its guests and storages. Nothing has to be installed on the node itself.</figcaption>
           </figure>
         </section>
@@ -149,12 +158,18 @@ cd nestbox
             image, and your disk storage.
           </p>
           <figure class="shot">
-            <a class="zoom" href="../assets/guide/04-proxmox-create-vm.png" title="Open at full resolution"><img src="../assets/guide/04-proxmox-create-vm.png" alt="Create VM dialog, General tab, with node pve02, VM ID 210 and the name nestbox-a" width="1960" height="1160" loading="lazy"></a>
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="frame-title">Create VM · General</span></div>
+              <a class="zoom" href="../assets/guide/04-proxmox-create-vm.png" title="Open at full resolution"><img src="../assets/guide/04-proxmox-create-vm.png" alt="Create VM dialog, General tab, with node pve02, VM ID 210 and the name nestbox-a" width="1660" height="1260"></a>
+            </div>
             <figcaption><strong>General:</strong> node <code>pve02</code>, VM ID <code>210</code>, name <code>nestbox-a</code>.</figcaption>
           </figure>
 
           <figure class="shot">
-            <a class="zoom" href="../assets/guide/05-proxmox-create-vm-os.png" title="Open at full resolution"><img src="../assets/guide/05-proxmox-create-vm-os.png" alt="Create VM dialog, OS tab, with Use CD/DVD disc image file selected and the Nestbox ISO chosen" width="1960" height="1160" loading="lazy"></a>
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="frame-title">Create VM · OS</span></div>
+              <a class="zoom" href="../assets/guide/05-proxmox-create-vm-os.png" title="Open at full resolution"><img src="../assets/guide/05-proxmox-create-vm-os.png" alt="Create VM dialog, OS tab, with Use CD/DVD disc image file selected and the Nestbox ISO chosen" width="1660" height="1260"></a>
+            </div>
             <figcaption><strong>OS:</strong> “Use CD/DVD disc image file (iso)”, storage <code>local</code>, ISO image
               <code>nestbox-24.04-slim.iso</code>, Guest OS <code>Linux</code> / <code>7.x - 2.6 Kernel</code>.</figcaption>
           </figure>
@@ -164,7 +179,10 @@ cd nestbox
             and UEFI mode, and the installer sets up a BIOS-bootable disk.
           </p>
           <figure class="shot">
-            <a class="zoom" href="../assets/guide/06-proxmox-create-vm-system.png" title="Open at full resolution"><img src="../assets/guide/06-proxmox-create-vm-system.png" alt="Create VM dialog, System tab, with SeaBIOS and VirtIO SCSI single" width="1960" height="1160" loading="lazy"></a>
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="frame-title">Create VM · System</span></div>
+              <a class="zoom" href="../assets/guide/06-proxmox-create-vm-system.png" title="Open at full resolution"><img src="../assets/guide/06-proxmox-create-vm-system.png" alt="Create VM dialog, System tab, with SeaBIOS and VirtIO SCSI single" width="1660" height="1260"></a>
+            </div>
             <figcaption><strong>System:</strong> SeaBIOS, VirtIO SCSI single, no TPM. Nothing to change.</figcaption>
           </figure>
 
@@ -174,17 +192,26 @@ cd nestbox
             Next. 60 GB leaves room for the controller image, the PostgreSQL volume and a few nests.
           </p>
           <figure class="shot">
-            <a class="zoom" href="../assets/guide/07-proxmox-create-vm-disks.png" title="Open at full resolution"><img src="../assets/guide/07-proxmox-create-vm-disks.png" alt="Create VM dialog, Disks tab, showing SCSI bus, storage and disk size" width="1960" height="1160" loading="lazy"></a>
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="frame-title">Create VM · Disks</span></div>
+              <a class="zoom" href="../assets/guide/07-proxmox-create-vm-disks.png" title="Open at full resolution"><img src="../assets/guide/07-proxmox-create-vm-disks.png" alt="Create VM dialog, Disks tab, showing SCSI bus, storage and disk size" width="1660" height="1260"></a>
+            </div>
             <figcaption><strong>Disks:</strong> check the bus (SCSI), the storage and the size. The disk is thin-provisioned.</figcaption>
           </figure>
 
           <figure class="shot">
-            <a class="zoom" href="../assets/guide/08-proxmox-create-vm-cpu.png" title="Open at full resolution"><img src="../assets/guide/08-proxmox-create-vm-cpu.png" alt="Create VM dialog, CPU tab, with two cores and one socket" width="1960" height="1160" loading="lazy"></a>
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="frame-title">Create VM · CPU</span></div>
+              <a class="zoom" href="../assets/guide/08-proxmox-create-vm-cpu.png" title="Open at full resolution"><img src="../assets/guide/08-proxmox-create-vm-cpu.png" alt="Create VM dialog, CPU tab, with two cores and one socket" width="1660" height="1260"></a>
+            </div>
             <figcaption><strong>CPU:</strong> 2 cores are enough for the controller and the first nest.</figcaption>
           </figure>
 
           <figure class="shot">
-            <a class="zoom" href="../assets/guide/09-proxmox-create-vm-memory.png" title="Open at full resolution"><img src="../assets/guide/09-proxmox-create-vm-memory.png" alt="Create VM dialog, Memory tab, with 4096 MiB" width="1960" height="1160" loading="lazy"></a>
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="frame-title">Create VM · Memory</span></div>
+              <a class="zoom" href="../assets/guide/09-proxmox-create-vm-memory.png" title="Open at full resolution"><img src="../assets/guide/09-proxmox-create-vm-memory.png" alt="Create VM dialog, Memory tab, with 4096 MiB" width="1660" height="1260"></a>
+            </div>
             <figcaption><strong>Memory:</strong> 4096 MiB. The controller peaks around 700 MB while it builds its image.</figcaption>
           </figure>
 
@@ -194,12 +221,18 @@ cd nestbox
             the Proxmox firewall fight over the same chains.
           </p>
           <figure class="shot">
-            <a class="zoom" href="../assets/guide/10-proxmox-create-vm-network.png" title="Open at full resolution"><img src="../assets/guide/10-proxmox-create-vm-network.png" alt="Create VM dialog, Network tab, with VirtIO on vmbr0" width="1960" height="1160" loading="lazy"></a>
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="frame-title">Create VM · Network</span></div>
+              <a class="zoom" href="../assets/guide/10-proxmox-create-vm-network.png" title="Open at full resolution"><img src="../assets/guide/10-proxmox-create-vm-network.png" alt="Create VM dialog, Network tab, with VirtIO on vmbr0" width="1660" height="1260"></a>
+            </div>
             <figcaption><strong>Network:</strong> VirtIO, bridge <code>vmbr0</code>, no VLAN tag.</figcaption>
           </figure>
 
           <figure class="shot">
-            <a class="zoom" href="../assets/guide/11-proxmox-create-vm-confirm.png" title="Open at full resolution"><img src="../assets/guide/11-proxmox-create-vm-confirm.png" alt="Create VM dialog, Confirm tab, summarising all settings" width="1960" height="1160" loading="lazy"></a>
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="frame-title">Create VM · Confirm</span></div>
+              <a class="zoom" href="../assets/guide/11-proxmox-create-vm-confirm.png" title="Open at full resolution"><img src="../assets/guide/11-proxmox-create-vm-confirm.png" alt="Create VM dialog, Confirm tab, summarising all settings" width="1660" height="1260"></a>
+            </div>
             <figcaption><strong>Confirm:</strong> one last look before <strong>Finish</strong>.</figcaption>
           </figure>
 
@@ -208,7 +241,10 @@ cd nestbox
             the two lines that matter: the CD/DVD drive pointing at the ISO, and the disk on the storage you picked.
           </p>
           <figure class="shot">
-            <a class="zoom" href="../assets/guide/12-proxmox-vm-hardware.png" title="Open at full resolution"><img src="../assets/guide/12-proxmox-vm-hardware.png" alt="Hardware tab of the new VM showing memory, CD/DVD drive with the Nestbox ISO and a 60 GB disk on local-btrfs" width="1990" height="600" loading="lazy"></a>
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="frame-title">VM 210 · Hardware</span></div>
+              <a class="zoom" href="../assets/guide/12-proxmox-vm-hardware.png" title="Open at full resolution"><img src="../assets/guide/12-proxmox-vm-hardware.png" alt="Hardware tab of the new VM showing memory, CD/DVD drive with the Nestbox ISO and a 60 GB disk on local-btrfs" width="1990" height="600"></a>
+            </div>
             <figcaption><strong>Hardware:</strong> 4.00 GiB, 2 cores, <code>ide2</code> with the ISO, <code>scsi0</code> on
               <code>local-btrfs</code>, and a VirtIO NIC on <code>vmbr0</code>.</figcaption>
           </figure>
@@ -223,7 +259,10 @@ cd nestbox
             Expect a reboot after five to seven minutes.
           </p>
           <figure class="shot shot-narrow">
-            <a class="zoom" href="../assets/guide/13-installer-progress.png" title="Open at full resolution"><img src="../assets/guide/13-installer-progress.png" alt="Ubuntu installer console showing curtin steps while installing the system" width="1280" height="800" loading="lazy"></a>
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="frame-title">Installer · console log</span></div>
+              <a class="zoom" href="../assets/guide/13-installer-progress.png" title="Open at full resolution"><img src="../assets/guide/13-installer-progress.png" alt="Ubuntu installer console showing curtin steps while installing the system" width="1280" height="800"></a>
+            </div>
             <figcaption>The installer's own progress log. No prompt appears; the answer file covers storage, users and the payload.</figcaption>
           </figure>
           <p>
@@ -247,7 +286,10 @@ cd nestbox
             outbound HTTPS.
           </p>
           <figure class="shot shot-narrow">
-            <a class="zoom" href="../assets/guide/14-console-login.png" title="Open at full resolution"><img src="../assets/guide/14-console-login.png" alt="Console of the installed appliance showing the Nestbox banner with the web UI URL, the admin address and the generated password" width="1280" height="170" loading="lazy"></a>
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="frame-title">Console · first boot</span></div>
+              <a class="zoom" href="../assets/guide/14-console-login.png" title="Open at full resolution"><img src="../assets/guide/14-console-login.png" alt="Console of the installed appliance showing the Nestbox banner with the web UI URL, the admin address and the generated password" width="1280" height="170"></a>
+            </div>
             <figcaption>The console after first boot: the appliance prints its URL, the administrator address and the generated password (redacted here). The <code>nestbox</code> login above it is the operating-system account from the wizard.</figcaption>
           </figure>
           <p>Two commands tell you whether it is finished:</p>
@@ -276,7 +318,10 @@ sudo tail -f /var/log/nestbox/firstboot.log</code></pre>
             yet — so the browser warns once. Accept it for this host and continue.
           </p>
           <figure class="shot">
-            <a class="zoom" href="../assets/guide/15-nestbox-login.png" title="Open at full resolution"><img src="../assets/guide/15-nestbox-login.png" alt="Nestbox sign-in page with email and password fields" width="1600" height="1000" loading="lazy"></a>
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="frame-title">Nestbox · sign in</span></div>
+              <a class="zoom" href="../assets/guide/15-nestbox-login.png" title="Open at full resolution"><img src="../assets/guide/15-nestbox-login.png" alt="Nestbox sign-in page with email and password fields" width="1600" height="1000"></a>
+            </div>
             <figcaption>The controller's sign-in page, served over HTTPS with the appliance certificate.</figcaption>
           </figure>
           <p>
@@ -284,7 +329,10 @@ sudo tail -f /var/log/nestbox/firstboot.log</code></pre>
             node, the running containers, the packs you can start and the API schema.
           </p>
           <figure class="shot">
-            <a class="zoom" href="../assets/guide/16-nestbox-dashboard.png" title="Open at full resolution"><img src="../assets/guide/16-nestbox-dashboard.png" alt="Nestbox dashboard with node health, containers and quick actions" width="1600" height="1000" loading="lazy"></a>
+            <div class="frame">
+              <div class="frame-bar" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="frame-title">Nestbox · dashboard</span></div>
+              <a class="zoom" href="../assets/guide/16-nestbox-dashboard.png" title="Open at full resolution"><img src="../assets/guide/16-nestbox-dashboard.png" alt="Nestbox dashboard with node health, containers and quick actions" width="1600" height="1000"></a>
+            </div>
             <figcaption>The dashboard on a freshly installed appliance: one node, one controller, no nests yet.</figcaption>
           </figure>
         </section>
