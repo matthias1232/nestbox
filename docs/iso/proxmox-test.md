@@ -11,7 +11,8 @@ statement from an expectation.
 | QEMU | 11.0.3 (the same binary Proxmox uses) |
 | Test guest | 4 GB RAM, 2 vCPU, 60 GB disk, VirtIO NIC on a user-mode network with DHCP |
 | Base image | `ubuntu-24.04-live-server-amd64.iso` |
-| Nestbox image | `nestbox-24.04-slim.iso`, 3151 MiB, SHA-256 `34c76c4f516526f6c3e5733997c2264892e20e1fedfd1db7c9200ca9beb98db7` |
+| Nestbox image | `nestbox-24.04-slim.iso`, 3151 MiB, SHA-256 `42e63947a526491ebc5351b5e64869859d9c120147ec2a8df2d9c26800081a00` |
+| Creator image | built from a recipe made in the Image Creator: hostname `nestbox-ct`, UI port 8443, self-signed TLS, one preseeded nest |
 
 ## What is verified
 
@@ -29,6 +30,9 @@ statement from an expectation.
 | UI answers on the configured port (443) with the self-signed certificate | ok — `HTTP 302` to `/accounts/login/` |
 | Sign-in with the generated administrator account | ok |
 | Dashboard reads the Docker socket | ok — both containers listed as running |
+| Creator settings reach the installed system | ok — hostname `nestbox-ct`, UI on `:8443`, certificate CN `nestbox-ct.local` |
+| Preseeded nest appears without manual work | ok — `hermes-01` on port 8080, `https://hermes-01.apps.localhost:8080/` |
+| Stack survives a reboot without first boot | ok — `restart: unless-stopped`, UI back after 302, nest still there |
 
 The same sequence was repeated on Proxmox VE with a VM created through the web UI (VM 210, 4 GB,
 2 cores, 60 GB on `local-btrfs`, ISO attached as `ide2`), which is the walkthrough in the
@@ -63,6 +67,8 @@ These only appear after the install, when the controller starts for the first ti
 | gunicorn: `PermissionError` on `key.pem` | the container runs as uid 10001, the key was `0600 root` | first boot hands the pair to 10001 |
 | dashboard: `runtime.unavailable` | uid 10001 is not in the Docker socket's group | first boot records the host's Docker GID, compose adds the group |
 | unstyled sign-in page | allauth's default templates | branded `account/login.html` and `account/logout.html` |
+| `seed_nests` fails: `PermissionError` on `recipe.json` | the installer writes it `0600 root`, the controller runs as uid 10001 | first boot hands the file to 10001 |
+| one reboot leaves the appliance without a controller | neither service had a restart policy | `restart: unless-stopped` |
 
 ## Reproduce it without Proxmox
 
