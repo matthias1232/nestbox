@@ -24,7 +24,9 @@ plugins:
   - i18n:
       default_language: en
       languages:
-        en: English
+        - locale: en
+          name: English
+          default: true
 markdown_extensions:
   - admonition
   - tables

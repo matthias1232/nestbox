@@ -131,9 +131,25 @@ UI_HOST=$(hostname -I | awk '{print $1}')
 touch "$STATE/.firstboot-done"
 echo "[nestbox] first boot complete"
 echo "[nestbox] web UI: $SCHEME://$UI_HOST:$UI_PORT/"
-if [ "${NEW_ADMIN:-0}" = "1" ]; then
-  echo "[nestbox] admin login: $ADMIN_EMAIL"
-  echo "[nestbox] admin password: $ADMIN_PASSWORD"
-  echo "[nestbox] the same password is stored in $STATE/admin-password.txt"
-fi
+
+BANNER=$(mktemp)
+{
+  echo
+  echo "Nestbox is ready."
+  echo "  web UI: $SCHEME://$UI_HOST:$UI_PORT/"
+  if [ "${NEW_ADMIN:-0}" = "1" ]; then
+    echo "  admin:    $ADMIN_EMAIL"
+    echo "  password: $ADMIN_PASSWORD"
+    echo "  password file: $STATE/admin-password.txt"
+  fi
+  echo
+} > "$BANNER"
+
+# The unit logs to the journal; the summary also goes to the console so whoever sits in
+# front of the machine or its Proxmox console sees the URL and the first password.
+cat "$BANNER" >> /var/log/nestbox/firstboot.log || true
+cat "$BANNER" > /dev/console 2>/dev/null || true
+cat "$BANNER" > /dev/tty1 2>/dev/null || true
+rm -f "$BANNER"
+
 
