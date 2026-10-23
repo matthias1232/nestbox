@@ -11,8 +11,8 @@ statement from an expectation.
 | QEMU | 11.0.3 (the same binary Proxmox uses) |
 | Test guest | 4 GB RAM, 2 vCPU, 60 GB disk, VirtIO NIC on a user-mode network with DHCP |
 | Base image | `ubuntu-24.04-live-server-amd64.iso` |
-| Nestbox image | `nestbox-24.04-slim.iso`, 3151 MiB, SHA-256 `42e63947a526491ebc5351b5e64869859d9c120147ec2a8df2d9c26800081a00` |
-| Creator image | built from a recipe made in the Image Creator: hostname `nestbox-ct`, UI port 8443, self-signed TLS, one preseeded nest |
+| Nestbox image | `nestbox-24.04-slim.iso`, 3151 MiB, SHA-256 `34c76c4f516526f6c3e5733997c2264892e20e1fedfd1db7c9200ca9beb98db7` |
+| Creator image | `nestbox-ct.iso`, 3151 MiB, SHA-256 `42e63947a526491ebc5351b5e64869859d9c120147ec2a8df2d9c26800081a00`: a recipe made in the Image Creator, hostname `nestbox-ct`, UI port 8443, self-signed TLS, one preseeded nest |
 
 ## What is verified
 
