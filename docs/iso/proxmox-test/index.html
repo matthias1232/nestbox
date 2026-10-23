@@ -636,7 +636,11 @@ statement from an expectation.</p>
 </tr>
 <tr>
 <td>Nestbox image</td>
-<td><code>nestbox-24.04-slim.iso</code>, 3151 MiB, SHA-256 <code>34c76c4f516526f6c3e5733997c2264892e20e1fedfd1db7c9200ca9beb98db7</code></td>
+<td><code>nestbox-24.04-slim.iso</code>, 3151 MiB, SHA-256 <code>42e63947a526491ebc5351b5e64869859d9c120147ec2a8df2d9c26800081a00</code></td>
+</tr>
+<tr>
+<td>Creator image</td>
+<td>built from a recipe made in the Image Creator: hostname <code>nestbox-ct</code>, UI port 8443, self-signed TLS, one preseeded nest</td>
 </tr>
 </tbody>
 </table>
@@ -696,6 +700,18 @@ statement from an expectation.</p>
 <tr>
 <td>Dashboard reads the Docker socket</td>
 <td>ok — both containers listed as running</td>
+</tr>
+<tr>
+<td>Creator settings reach the installed system</td>
+<td>ok — hostname <code>nestbox-ct</code>, UI on <code>:8443</code>, certificate CN <code>nestbox-ct.local</code></td>
+</tr>
+<tr>
+<td>Preseeded nest appears without manual work</td>
+<td>ok — <code>hermes-01</code> on port 8080, <code>https://hermes-01.apps.localhost:8080/</code></td>
+</tr>
+<tr>
+<td>Stack survives a reboot without first boot</td>
+<td>ok — <code>restart: unless-stopped</code>, UI back after 302, nest still there</td>
 </tr>
 </tbody>
 </table>
@@ -757,6 +773,16 @@ good install.</p>
 <td>unstyled sign-in page</td>
 <td>allauth's default templates</td>
 <td>branded <code>account/login.html</code> and <code>account/logout.html</code></td>
+</tr>
+<tr>
+<td><code>seed_nests</code> fails: <code>PermissionError</code> on <code>recipe.json</code></td>
+<td>the installer writes it <code>0600 root</code>, the controller runs as uid 10001</td>
+<td>first boot hands the file to 10001</td>
+</tr>
+<tr>
+<td>one reboot leaves the appliance without a controller</td>
+<td>neither service had a restart policy</td>
+<td><code>restart: unless-stopped</code></td>
 </tr>
 </tbody>
 </table>
