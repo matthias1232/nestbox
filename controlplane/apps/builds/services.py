@@ -16,18 +16,12 @@ import yaml
 from apps.builds.models import BuildRecipe
 from apps.core.crypto import decrypt
 
-BASE_PACKAGES = [
-    "openssh-server",
-    "ca-certificates",
-    "curl",
-    "jq",
-    "wireguard-tools",
-    "chrony",
-    "fail2ban",
-    "unattended-upgrades",
-]
+# The installer must not depend on a package mirror: one failed apt download aborts the whole
+# unattended install. Only packages that exist on the ISO itself go here; everything else is
+# installed on first boot, where a failure is visible and retryable instead of fatal.
+BASE_PACKAGES = ["openssh-server"]
 
-DOCKER_PACKAGES = ["docker.io", "docker-compose-v2"]
+DOCKER_PACKAGES: list[str] = []
 
 FIRSTBOOT_UNIT = "nestbox-firstboot.service"
 
@@ -155,10 +149,12 @@ def _crypt_hash(password: str) -> str:
 
 def render_autoinstall(recipe: BuildRecipe) -> dict[str, Any]:
     packages = list(dict.fromkeys([*BASE_PACKAGES, *(DOCKER_PACKAGES if recipe.install_docker else []), *recipe.packages]))
+    # A failing late-command aborts the whole install, so each one is explicitly non-fatal: a
+    # missing unit or an absent optional package must never cost the operator an installation run.
     late = [
-        "curtin in-target -- systemctl enable docker" if recipe.install_docker else "true",
-        f"curtin in-target -- systemctl enable {FIRSTBOOT_UNIT}",
-        "curtin in-target -- timedatectl set-timezone UTC",
+        "curtin in-target -- sh -c 'systemctl enable docker 2>/dev/null || true'",
+        f"curtin in-target -- sh -c 'systemctl enable {FIRSTBOOT_UNIT} 2>/dev/null || true'",
+        "curtin in-target -- sh -c 'timedatectl set-timezone UTC || true'",
     ]
     doc: dict[str, Any] = {
         "version": 1,
@@ -257,14 +253,24 @@ def render_cloud_init(recipe: BuildRecipe) -> dict[str, Any]:
 
 
 def render_seed(recipe: BuildRecipe) -> dict[str, str]:
-    """NoCloud seed files, ready for /cdrom/nocloud/ on the ISO."""
-    autoinstall = yaml.safe_dump(render_autoinstall(recipe), sort_keys=False)
-    user_data = "#cloud-config\n" + yaml.safe_dump(render_cloud_init(recipe), sort_keys=False)
+    """NoCloud seed files, ready for /cdrom/nocloud/ on the ISO.
+
+    subiquity reads the autoinstall document from the seed's ``user-data`` under the
+    ``autoinstall:`` key. A separate ``autoinstall.yaml`` next to it is not enough: cloud-init
+    accepts the user-data, subiquity finds no autoinstall section, and the installer silently
+    falls back to the interactive TUI. The target's own cloud-config travels as
+    ``autoinstall.user-data``, which subiquity applies to the installed system.
+    """
+    document = render_autoinstall(recipe)
+    document["user-data"] = render_cloud_init(recipe)
+
+    user_data = "#cloud-config\n" + yaml.safe_dump({"autoinstall": document}, sort_keys=False)
+    autoinstall = yaml.safe_dump(document, sort_keys=False)
     meta_data = yaml.safe_dump(
         {"instance-id": f"nestbox-{recipe.pk}-{recipe.updated_at:%Y%m%d%H%M%S}", "local-hostname": recipe.hostname},
         sort_keys=False,
     )
-    digest = hashlib.sha256((autoinstall + user_data).encode()).hexdigest()
+    digest = hashlib.sha256(user_data.encode()).hexdigest()
     return {
         "autoinstall.yaml": autoinstall,
         "user-data": user_data,

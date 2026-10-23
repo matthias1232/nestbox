@@ -1,8 +1,8 @@
 #!/bin/bash
 # Nestbox first boot.
 #
-# Applies the network configuration recorded in /etc/nestbox/recipe.json, brings up the
-# container stack, registers the gateway seed and writes a self-check report the UI can show.
+# Runs once, after the unattended install: installs the runtime packages with retries, applies the
+# network configuration, starts the stack and writes a self-check report the UI can show.
 set -euo pipefail
 
 RECIPE=/etc/nestbox/recipe.json
@@ -14,9 +14,19 @@ exec > >(tee -a "$LOG") 2>&1
 echo "[nestbox] first boot starting"
 test -f "$RECIPE" || { echo "[nestbox] no recipe, nothing to do"; exit 0; }
 
-json() { python3 -c "import json,sys;d=json.load(open('$RECIPE'));print($1)"; }
+json() { python3 -c "import json;d=json.load(open('$RECIPE'));print($1)"; }
 
-MODE=$(json "d.get('network_mode','dhcp')")
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n + 1))
+    [ "$n" -ge 5 ] && { echo "[nestbox] giving up after $n attempts: $*"; return 1; }
+    echo "[nestbox] retry $n: $*"
+    sleep $((n * 5))
+  done
+}
+
+MODE=$(json "d.get('network',{}).get('mode','dhcp')")
 echo "[nestbox] network mode: $MODE"
 
 if [ "$MODE" = "dhcp" ]; then
@@ -29,9 +39,9 @@ network:
       dhcp4: true
 YAML
 else
-  ADDRESS=$(json "d.get('address','')")
-  GATEWAY=$(json "d.get('gateway','')")
-  DNS=$(json "' '.join(d.get('dns',['1.1.1.1']))")
+  ADDRESS=$(json "d.get('network',{}).get('address','')")
+  GATEWAY=$(json "d.get('network',{}).get('gateway','')")
+  DNS=$(json "' '.join(d.get('network',{}).get('dns') or ['1.1.1.1'])")
   cat > /etc/netplan/10-nestbox.yaml <<YAML
 network:
   version: 2
@@ -48,26 +58,34 @@ fi
 chmod 600 /etc/netplan/10-nestbox.yaml
 netplan apply || echo "[nestbox] netplan apply failed; review /etc/netplan/10-nestbox.yaml"
 
-echo "[nestbox] starting container stack"
-if [ -f /opt/nestbox/compose/docker-compose.yml ]; then
-  docker compose -f /opt/nestbox/compose/docker-compose.yml up -d
-else
-  echo "[nestbox] compose file not present; skipping stack start"
-fi
+echo "[nestbox] installing runtime packages"
+export DEBIAN_FRONTEND=noninteractive
+retry apt-get update -qq || true
+retry apt-get install -y -qq ca-certificates curl jq git chrony docker.io docker-compose-v2 || \
+  echo "[nestbox] package installation incomplete; the controller may not start"
 
-# Gateway seed: the controller registers the local gateway as the system gateway.
-if [ -f /etc/openshell/gateways/local/metadata.json ]; then
-  echo "[nestbox] gateway seed present"
-else
-  echo "[nestbox] no gateway seed; nests will be recorded as pending until one is registered"
-fi
+systemctl enable --now chrony || true
+systemctl enable --now docker || true
 
 PROFILE=$(json "d.get('profile','slim')")
+echo "[nestbox] starting the stack (profile $PROFILE)"
+if [ -f /opt/nestbox/compose/docker-compose.yml ]; then
+  if [ -f /etc/nestbox/nestbox.env ]; then
+    retry docker compose --env-file /etc/nestbox/nestbox.env -f /opt/nestbox/compose/docker-compose.yml up -d --build
+  else
+    retry docker compose -f /opt/nestbox/compose/docker-compose.yml up -d --build
+  fi
+else
+  echo "[nestbox] compose file missing at /opt/nestbox/compose/docker-compose.yml"
+fi
+
 {
   echo "# Nestbox self-check"
   echo
   echo "- profile: $PROFILE"
   echo "- network: $MODE"
+  echo "- hostname: $(hostname)"
+  echo "- addresses: $(hostname -I)"
   echo "- generated: $(date -u +%FT%TZ)"
   echo "- containers: $(docker ps -q 2>/dev/null | wc -l)"
 } > "$STATE/self-check.md"
