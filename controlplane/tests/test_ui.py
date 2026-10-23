@@ -52,3 +52,28 @@ def test_sandbox_detail_lists_pack(logged_in):  # noqa: ANN001
     response = logged_in.get("/sandboxes/hermes-01/")
     assert response.status_code == 200
     assert b"hermes-01" in response.content
+
+
+def test_build_detail_shows_the_seed_and_offers_a_bundle(logged_in):  # noqa: ANN001
+    import io
+    import zipfile
+
+    from apps.builds.models import BuildRecipe
+
+    recipe = BuildRecipe.objects.create(
+        name="ui-recipe", hostname="nestbox-ui", admin_email="ops@example.test",
+        ui_port=8443, tls_domain="nestbox-ui.local",
+        preseed_nests=[{"name": "hermes-01", "pack": "hermes-agent", "port": 8080}],
+    )
+
+    page = logged_in.get(f"/builds/{recipe.pk}/")
+    assert page.status_code == 200
+    body = page.content.decode()
+    assert "autoinstall" in body
+    assert "nestbox-ui" in body
+
+    bundle = logged_in.get(f"/builds/{recipe.pk}/bundle/")
+    assert bundle.status_code == 200
+    assert bundle["Content-Type"] == "application/zip"
+    names = zipfile.ZipFile(io.BytesIO(bundle.content)).namelist()
+    assert {"seed/autoinstall.yaml", "seed/user-data", "seed/meta-data", "install.sh"} <= set(names)

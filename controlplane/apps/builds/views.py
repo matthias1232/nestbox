@@ -1,8 +1,13 @@
 """Image Creator UI: wizard, artefact preview, build queue."""
 from __future__ import annotations
 
+import io
+import json
+import zipfile
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
@@ -142,3 +147,54 @@ def recipe_build(request, pk: int):  # noqa: ANN001
     job = BuildJob.objects.create(recipe=recipe, state="queued")
     messages.success(request, f"Build #{job.pk} queued.")
     return redirect("build-detail", pk=job.pk)
+
+
+@login_required
+def recipe_bundle(request, pk: int):  # noqa: ANN001
+    """Download everything the ISO builder needs, as one zip.
+
+    The appliance has no Ubuntu base ISO on disk, so the creator cannot remaster by itself; it hands
+    the operator a bundle that `scripts/iso/build_iso.sh --seed <dir>` consumes unchanged.
+    """
+    recipe = get_object_or_404(BuildRecipe, pk=pk)
+    seed = render_seed(recipe)
+    artefacts = render_all(recipe)
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, body in seed.items():
+            archive.writestr(f"seed/{name}", body)
+        for name, body in artefacts.items():
+            if isinstance(body, str):  # "seed" and "warnings" are not files
+                archive.writestr(name, body)
+        archive.writestr(
+            "warnings.txt",
+            "\n".join(f"- {w}" for w in recipe_warnings(recipe)) or "no warnings\n",
+        )
+        archive.writestr(
+            "README.txt",
+            "Build the image with:\n\n"
+            "  scripts/iso/build_iso.sh --base ubuntu-24.04-live-server-amd64.iso \\\n"
+            f"    --out nestbox-{recipe.hostname}.iso --seed seed --payload nestbox.tar.gz\n",
+        )
+        archive.writestr(
+            "recipe.json",
+            json.dumps(
+                {
+                    "name": recipe.name,
+                    "hostname": recipe.hostname,
+                    "ubuntu_series": recipe.ubuntu_series,
+                    "profile": recipe.profile,
+                    "ui_port": recipe.ui_port,
+                    "tls_mode": recipe.tls_mode,
+                    "tls_domain": recipe.tls_domain,
+                    "network_mode": recipe.network_mode,
+                    "preseed_nests": recipe.preseed_nests,
+                },
+                indent=2,
+            ),
+        )
+
+    response = HttpResponse(buffer.getvalue(), content_type="application/zip")
+    response["Content-Disposition"] = f'attachment; filename="nestbox-{recipe.name}.zip"'
+    return response
