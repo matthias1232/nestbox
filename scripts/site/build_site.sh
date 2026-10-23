@@ -24,9 +24,13 @@ cp "$ROOT/site/index.html" "$ROOT/site/styles.css" "$OUT/"
 cp "$ROOT/site/guide/index.html" "$ROOT/site/guide/guide.css" "$OUT/guide/"
 
 cp -r "$ROOT/assets/brand" "$OUT/assets/brand"
-if [ -d "$ROOT/site/assets/guide" ]; then
-  mkdir -p "$OUT/assets/guide"
-  cp "$ROOT"/site/assets/guide/*.png "$OUT/assets/guide/" 2>/dev/null || true
+if [ -d "$ROOT/site/assets" ]; then
+  for dir in "$ROOT"/site/assets/*/; do
+    [ -d "$dir" ] || continue
+    name="$(basename "$dir")"
+    mkdir -p "$OUT/assets/$name"
+    cp "$dir"* "$OUT/assets/$name/" 2>/dev/null || true
+  done
 fi
 
 printf '%s\n' "$DOMAIN" > "$OUT/CNAME"

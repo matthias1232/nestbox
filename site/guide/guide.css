@@ -181,10 +181,7 @@
 .shot img {
   width: 100%;
   height: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: #0E1526;
-  box-shadow: 0 18px 44px rgba(3, 7, 18, 0.55);
+  display: block;
 }
 
 .zoom {
@@ -194,17 +191,13 @@
   transition: transform 160ms ease, box-shadow 160ms ease;
 }
 
-.zoom:hover img,
-.zoom:focus-visible img {
-  border-color: rgba(34, 211, 238, 0.55);
-  box-shadow: 0 22px 52px rgba(3, 7, 18, 0.7);
-}
+.zoom:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 
 .shot-narrow img {
   max-width: 100%;
 }
 
-.shot-small .zoom {
+.shot-small .frame {
   max-width: 520px;
 }
 
