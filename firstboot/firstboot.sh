@@ -93,6 +93,15 @@ ENV
   NEW_ADMIN=1
 fi
 
+# The controller talks to the host daemon over the mounted socket, so it needs the
+# socket's group id. It changes with the host, hence a refresh on every boot.
+DOCKER_GID=$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 999)
+if grep -q '^NESTBOX_DOCKER_GID=' "$ENV_FILE" 2>/dev/null; then
+  sed -i "s/^NESTBOX_DOCKER_GID=.*/NESTBOX_DOCKER_GID=$DOCKER_GID/" "$ENV_FILE"
+else
+  printf 'NESTBOX_DOCKER_GID=%s\n' "$DOCKER_GID" >> "$ENV_FILE"
+fi
+
 if [ "$TLS_MODE" != "none" ] && [ ! -s "$TLS_DIR/cert.pem" ]; then
   echo "[nestbox] creating a self-signed certificate for ${TLS_DOMAIN:-$(hostname)}"
   CERT_IP=$(hostname -I | awk '{print $1}')
