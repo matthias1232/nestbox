@@ -28,15 +28,20 @@ FIRSTBOOT_UNIT = "nestbox-firstboot.service"
 # network
 # ---------------------------------------------------------------------------------------------
 def render_netplan(recipe: BuildRecipe) -> dict[str, Any]:
-    iface = "primary"
+    # Ubuntu server releases do not promise a stable NIC name (ens18, enp1s0,
+    # eth0, ...).  A literal ``primary`` interface works in neither a fresh
+    # VM nor bare metal.  Match the first conventional Ethernet device and
+    # give it a deterministic config ID instead.
+    iface = "all-ethernet"
     if recipe.network_mode == "dhcp":
-        ethernet: dict[str, Any] = {"dhcp4": True, "optional": True}
+        ethernet: dict[str, Any] = {"match": {"name": "en*"}, "dhcp4": True, "optional": True}
         if recipe.dns:
             ethernet["nameservers"] = {"addresses": recipe.dns}
         if recipe.dns_search:
             ethernet.setdefault("nameservers", {})["search"] = recipe.dns_search
     else:
         ethernet = {
+            "match": {"name": "en*"},
             "dhcp4": False,
             "addresses": [recipe.address or "192.168.1.10/24"],
             "routes": [{"to": "default", "via": recipe.gateway or "192.168.1.1"}],

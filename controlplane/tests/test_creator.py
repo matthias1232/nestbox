@@ -50,10 +50,11 @@ def test_autoinstall_reflects_network_and_ntp(recipe: BuildRecipe):  # noqa: ANN
     recipe.ntp_enabled = False
     recipe.save()
     doc = render_autoinstall(recipe)
-    primary = doc["network"]["ethernets"]["primary"]
-    assert primary["dhcp4"] is False
-    assert primary["addresses"] == ["10.0.0.5/24"]
-    assert primary["nameservers"]["addresses"] == ["10.0.0.2"]
+    ethernet = doc["network"]["ethernets"]["all-ethernet"]
+    assert ethernet["dhcp4"] is False
+    assert ethernet["match"] == {"name": "en*"}
+    assert ethernet["addresses"] == ["10.0.0.5/24"]
+    assert ethernet["nameservers"]["addresses"] == ["10.0.0.2"]
 
 
 def test_port_conflict_is_reported(recipe: BuildRecipe):  # noqa: ANN001

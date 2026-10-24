@@ -13,7 +13,9 @@ def test_dhcp_recipe_renders_autoinstall():  # noqa: ANN201
     doc = render_autoinstall(recipe)
     assert doc["version"] == 1
     assert doc["identity"]["hostname"] == "nestbox"
-    assert doc["network"]["ethernets"]["primary"]["dhcp4"] is True
+    ethernet = doc["network"]["ethernets"]["all-ethernet"]
+    assert ethernet["dhcp4"] is True
+    assert ethernet["match"] == {"name": "en*"}
     # Only packages present on the ISO: a failed mirror download must not abort the install.
     assert "openssh-server" in doc["packages"]
     assert not any("docker" in pkg for pkg in doc["packages"])
@@ -29,10 +31,11 @@ def test_static_recipe_renders_netplan():  # noqa: ANN201
         dns=["10.0.0.2", "1.1.1.1"],
     )
     doc = render_autoinstall(recipe)
-    primary = doc["network"]["ethernets"]["primary"]
-    assert primary["dhcp4"] is False
-    assert primary["addresses"] == ["10.0.0.5/24"]
-    assert primary["nameservers"]["addresses"] == ["10.0.0.2", "1.1.1.1"]
+    ethernet = doc["network"]["ethernets"]["all-ethernet"]
+    assert ethernet["dhcp4"] is False
+    assert ethernet["match"] == {"name": "en*"}
+    assert ethernet["addresses"] == ["10.0.0.5/24"]
+    assert ethernet["nameservers"]["addresses"] == ["10.0.0.2", "1.1.1.1"]
 
 
 def test_seed_is_stable():  # noqa: ANN201
