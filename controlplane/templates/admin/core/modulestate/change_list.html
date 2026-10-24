@@ -1,0 +1,45 @@
+{% extends "admin/change_list.html" %}
+{% load i18n unfold %}
+
+{% block content %}
+  <div class="flex flex-col gap-6 mb-8">
+    {% component "unfold/components/card.html" with title="Module state" %}
+      <div class="grid grid-cols-1 gap-4 text-sm sm:grid-cols-3">
+        <div>
+          <div class="text-subtle">{% trans "Running now" %}</div>
+          <div class="mt-1 font-medium">
+            {{ nestbox_running_modules|length }} {% trans "modules" %}
+          </div>
+        </div>
+        <div>
+          <div class="text-subtle">{% trans "Desired after restart" %}</div>
+          <div class="mt-1 font-medium">
+            {{ nestbox_desired_modules|length }} {% trans "modules" %}
+          </div>
+        </div>
+        <div>
+          <div class="text-subtle">{% trans "Restart" %}</div>
+          <div class="mt-1 font-medium">
+            {% if nestbox_pending_restart %}
+              {% trans "Required" %}
+            {% else %}
+              {% trans "Not required" %}
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <p class="mt-4 max-w-3xl text-sm text-subtle">
+        {% trans "The switch is an operator intent, not proof that the gateway has applied it. Select modules and use the actions below. Direct fields are read-only on purpose." %}
+      </p>
+
+      {% if not nestbox_restart_available %}
+        <p class="mt-2 text-sm text-subtle">
+          {% trans "The controller cannot reach the container runtime from this session; restart it manually after changing modules." %}
+        </p>
+      {% endif %}
+    {% endcomponent %}
+  </div>
+
+  {{ block.super }}
+{% endblock %}

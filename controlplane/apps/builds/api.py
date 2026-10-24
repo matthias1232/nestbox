@@ -76,8 +76,8 @@ class BuildRecipeViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         tags=["builds"],
-        summary="Render every artefact for this recipe",
-        responses={200: OpenApiResponse(description="ISO seed, install.sh, brev setup, proxmox plan, manifest")},
+        summary="Render the ISO seed and manifest for this recipe",
+        responses={200: OpenApiResponse(description="NoCloud seed, manifest and warnings")},
     )
     @action(detail=True, methods=["get"], url_path="preview")
     def preview(self, request, pk=None):  # noqa: ANN001
@@ -86,7 +86,7 @@ class BuildRecipeViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         tags=["builds"],
-        summary="Download the seed bundle (seed files, scripts, manifest) as a zip",
+        summary="Download the ISO seed bundle (seed files, manifest) as a zip",
         responses={200: OpenApiResponse(description="application/zip")},
     )
     @action(detail=True, methods=["get"], url_path="bundle")

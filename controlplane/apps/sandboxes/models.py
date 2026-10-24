@@ -54,6 +54,11 @@ class Sandbox(models.Model):
     port = models.PositiveIntegerField(
         default=0, help_text="Published port for this nest; 0 means the gateway assigns one."
     )
+    spec = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Werte der aktiven Module, z. B. Netzwerk-Defaults und Policy-Zuordnung.",
+    )
     overlay_ip = models.GenericIPAddressField(protocol="IPv4", null=True, blank=True)
     image = models.CharField(max_length=300, blank=True)
     last_error = models.CharField(max_length=500, blank=True)

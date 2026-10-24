@@ -1,13 +1,15 @@
-{% extends "admin/login.html" %}
-{% load static %}
+{% extends "unfold/layouts/unauthenticated.html" %}
+{% load i18n static unfold %}
+
+{% block title %}{% translate "Sign in" %} | Nestbox{% endblock %}
+
 {% block content %}
-<div class="nb-hero">
-  <img src="{% static 'img/admin-hero.jpg' %}" alt="">
-  <div class="nb-hero-text">
-    <strong>Nestbox</strong>
-    <span>Governed AI agent appliance · OpenShell sandboxes · AI firewall</span>
-  </div>
-</div>
-{{ block.super }}
-<p class="nb-disclaimer">Independent community project. Not affiliated with or endorsed by NVIDIA.</p>
+  {% include "unfold/helpers/unauthenticated_title.html" with title="Nestbox" subtitle="Sign in to the appliance" %}
+  <p class="mb-6 text-sm text-subtle">
+    {% translate "This appliance uses the shared account sign-in. Continue to the account page to authenticate." %}
+  </p>
+  {% component "unfold/components/button.html" with href="/accounts/login/?next=/admin/" variant="primary" class="w-full" %}
+    {% translate "Continue to sign in" %}
+    <span class="material-symbols-outlined relative right-0 text-sm transition-all group-hover:-right-1">arrow_forward</span>
+  {% endcomponent %}
 {% endblock %}

@@ -52,3 +52,33 @@ def test_seed_carries_autoinstall_inside_user_data():  # noqa: ANN201
     assert seed["user-data"].startswith("#cloud-config")
     assert "\nautoinstall:" in seed["user-data"]
     assert "user-data:" in seed["user-data"]  # the target's cloud-config travels nested
+
+
+def test_builds_render_only_iso_artefacts():  # noqa: ANN201
+    """Deployment renderers live in provisioning; builds must not grow into a second copy."""
+    from apps.builds import services
+
+    for name in ("render_install_script", "render_brev_setup", "render_proxmox_plan"):
+        assert not hasattr(services, name)
+
+    recipe = BuildRecipe.objects.create(name="iso-only", network_mode="dhcp")
+    artefacts = services.render_all(recipe)
+    assert set(artefacts) == {"seed", "manifest.json", "warnings"}
+    assert set(artefacts["seed"]) == {"autoinstall.yaml", "user-data", "meta-data", "sha256"}
+
+
+def test_launch_queues_a_job_without_claiming_success():  # noqa: ANN201
+    from apps.builds.models import BuildJob
+    from django.contrib.auth import get_user_model
+    from rest_framework.test import APIClient
+
+    admin = get_user_model().objects.create_superuser("build-admin", "build@example.test", "x")
+    recipe = BuildRecipe.objects.create(name="queued-build", network_mode="dhcp")
+
+    client = APIClient()
+    client.force_authenticate(admin)
+    response = client.post("/api/v1/builds/jobs/launch/", {"recipe": recipe.pk}, format="json")
+
+    assert response.status_code == 201
+    assert response.json()["state"] == "queued"
+    assert BuildJob.objects.get(pk=response.json()["id"]).state == "queued"

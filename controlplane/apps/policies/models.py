@@ -30,6 +30,18 @@ FILESYSTEM_MODES = [
     ("read_write", "read_write"),
 ]
 
+LANDLOCK_COMPATIBILITY = [
+    ("best_effort", "best_effort"),
+    ("strict", "strict"),
+]
+
+#: ``structured`` writes the document from the rule rows; ``raw`` takes the document as written and
+#: only derives rows for display. The YAML column is always what the gateway receives.
+YAML_SOURCES = [
+    ("structured", "structured"),
+    ("raw", "raw"),
+]
+
 
 class Policy(models.Model):
     name = models.CharField(max_length=100, unique=True)
@@ -41,6 +53,7 @@ class Policy(models.Model):
         on_delete=models.CASCADE,
         related_name="policies",
     )
+    yaml_source = models.CharField(max_length=12, choices=YAML_SOURCES, default="structured")
     yaml_text = models.TextField(blank=True)
     structured = models.JSONField(default=dict, blank=True)
     version = models.PositiveIntegerField(default=1)
@@ -121,3 +134,36 @@ class ProcessRule(models.Model):
 
     def __str__(self) -> str:
         return f"process({self.run_as_user})"
+
+
+class LandlockRule(models.Model):
+    """How strictly the sandbox is fenced in; set at nest creation, not hot-reloadable."""
+
+    policy = models.OneToOneField(Policy, on_delete=models.CASCADE, related_name="landlock")
+    compatibility = models.CharField(
+        max_length=20, choices=LANDLOCK_COMPATIBILITY, default="best_effort"
+    )
+    include_workdir = models.BooleanField(
+        default=True, help_text="Den Arbeitsordner des Agenten mit einschließen."
+    )
+
+    def __str__(self) -> str:
+        return f"landlock({self.compatibility})"
+
+
+class PolicyTemplate(models.Model):
+    """A starting point for people who do not want to author a policy from nothing."""
+
+    name = models.CharField(max_length=100, unique=True)
+    description = models.CharField(max_length=300, blank=True)
+    document = models.JSONField(
+        default=dict, blank=True, help_text="Vollständiges Policy-Dokument als JSON."
+    )
+    is_builtin = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return self.name

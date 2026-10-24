@@ -1,10 +1,23 @@
-import contextlib
+"""Agent pack catalog: what the image can install, not what is running."""
+from __future__ import annotations
 
 from django.contrib import admin
+from unfold.admin import ModelAdmin
 
-from apps.agentpacks import models
+from apps.agentpacks.models import AgentPack
 
-for name, obj in vars(models).items():
-    if isinstance(obj, type) and hasattr(obj, "_meta") and not obj._meta.abstract:
-        with contextlib.suppress(admin.sites.AlreadyRegistered):
-            admin.site.register(obj)
+
+@admin.register(AgentPack)
+class AgentPackAdmin(ModelAdmin):
+    list_display = ["name", "key", "vendor", "version", "requires_gpu", "is_builtin", "updated_at"]
+    list_filter = ["requires_gpu", "is_builtin", "vendor"]
+    search_fields = ["name", "key", "vendor", "description"]
+    readonly_fields = ["updated_at"]
+    list_filter_submit = True
+    fieldsets = [
+        ("Identity", {"fields": ["key", "name", "vendor", "version", "description", "docs_url"]}),
+        ("Runtime", {"fields": ["image_ref", "entrypoint", "ports", "env_slots", "healthcheck"]}),
+        ("Policy and resources", {"fields": ["policy_profile", "requires_gpu", "is_builtin"]}),
+        ("Install", {"fields": ["install"]}),
+        ("Metadata", {"fields": ["updated_at"]}),
+    ]

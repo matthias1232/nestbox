@@ -10,10 +10,28 @@ Precedence: state file > ``NESTBOX_MODULES`` > every module in the catalog.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+
+
+class ModuleError(ValueError):
+    """A module request cannot be satisfied."""
+
+
+class UnknownModule(ModuleError):
+    """A key is not part of the catalog that was baked into this image."""
+
+
+class ModuleNotToggleable(ModuleError):
+    """The module is always on, or otherwise fixed by the image."""
+
+
+class DependencyError(ModuleError):
+    """Enabling or disabling a module would leave the dependency graph inconsistent."""
 
 
 @dataclass(frozen=True)
@@ -35,8 +53,8 @@ CATALOG: dict[str, ModuleSpec] = {
     "core": ModuleSpec(
         key="core",
         app="apps.core",
-        title="Kern",
-        description="Auth, Knoten, Health, Modul-Registry und die Komposition der API.",
+        title="Core",
+        description="Authentication, nodes, health, the module registry and API composition.",
         category="Core",
         icon="hub",
         toggleable=False,
@@ -45,8 +63,8 @@ CATALOG: dict[str, ModuleSpec] = {
     "api": ModuleSpec(
         key="api",
         app="apps.api",
-        title="API-Infrastruktur",
-        description="DRF-Grundlagen: Auth, Rollen, Fehlerformat, Schema und die API-Dokumentation.",
+        title="API infrastructure",
+        description="DRF foundations: auth, roles, error format, schema and API documentation.",
         category="Core",
         icon="api",
         requires=("core",),
@@ -57,8 +75,8 @@ CATALOG: dict[str, ModuleSpec] = {
     "identity": ModuleSpec(
         key="identity",
         app="apps.identity",
-        title="Identität",
-        description="Benutzer, Rollen, Profile und das Audit-Log.",
+        title="Identity",
+        description="Users, roles, profiles and the audit log.",
         category="Core",
         icon="badge",
         requires=("core",),
@@ -70,8 +88,8 @@ CATALOG: dict[str, ModuleSpec] = {
         key="containers",
         app="apps.containers",
         title="Container",
-        description="Container und Dienste, wie sie die Laufzeit meldet, samt Aktionen.",
-        category="Betrieb",
+        description="Containers and services as the runtime reports them, including actions.",
+        category="Operations",
         icon="dns",
         requires=("core",),
         order=20,
@@ -80,9 +98,9 @@ CATALOG: dict[str, ModuleSpec] = {
     "sandboxes": ModuleSpec(
         key="sandboxes",
         app="apps.sandboxes",
-        title="Nester",
-        description="Sandboxen, Vorlagen und die Konfiguration, die ein Nest mitbekommt.",
-        category="Betrieb",
+        title="Nests",
+        description="Sandboxes, templates and the configuration a nest receives.",
+        category="Operations",
         icon="grid_view",
         requires=("core", "containers"),
         order=30,
@@ -91,9 +109,9 @@ CATALOG: dict[str, ModuleSpec] = {
     "agentpacks": ModuleSpec(
         key="agentpacks",
         app="apps.agentpacks",
-        title="Agent-Packs",
-        description="Die mitgelieferten Agenten (Hermes, OpenClaw, Coding-Agent …) als Katalog.",
-        category="Betrieb",
+        title="Agent packs",
+        description="The bundled agents (Hermes, OpenClaw, coding agent, ...) as a catalog.",
+        category="Operations",
         icon="deployed_code",
         requires=("core",),
         order=40,
@@ -103,8 +121,8 @@ CATALOG: dict[str, ModuleSpec] = {
         key="openshell",
         app="apps.openshell",
         title="OpenShell",
-        description="Gateways, Workspace-Zuordnungen und die Anbindung an die Sandbox-Laufzeit.",
-        category="Betrieb",
+        description="Gateways, workspace assignments and the binding to the sandbox runtime.",
+        category="Operations",
         icon="shield",
         requires=("core",),
         order=45,
@@ -114,8 +132,8 @@ CATALOG: dict[str, ModuleSpec] = {
         key="policies",
         app="apps.policies",
         title="Policies",
-        description="Die KI-Firewall: Netzwerk, Dateisystem, Prozesse und Landlock als Regeln.",
-        category="Sicherheit",
+        description="The AI firewall: network, filesystem, processes and Landlock as rules.",
+        category="Security",
         icon="policy",
         requires=("sandboxes",),
         order=50,
@@ -124,9 +142,9 @@ CATALOG: dict[str, ModuleSpec] = {
     "network": ModuleSpec(
         key="network",
         app="apps.network",
-        title="Netzwerk",
-        description="Zertifikate, DNS-Einträge, Proxy-Routen und Overlay-Peers.",
-        category="Infrastruktur",
+        title="Network",
+        description="Certificates, DNS records, proxy routes and overlay peers.",
+        category="Infrastructure",
         icon="lan",
         requires=("core",),
         order=60,
@@ -136,8 +154,8 @@ CATALOG: dict[str, ModuleSpec] = {
         key="tls",
         app="apps.tls",
         title="TLS",
-        description="Interne CA, Zertifikatslebenszyklus und die ACME-Anbindung.",
-        category="Infrastruktur",
+        description="Internal CA, certificate lifecycle and the ACME integration.",
+        category="Infrastructure",
         icon="lock",
         requires=("network",),
         order=61,
@@ -146,9 +164,9 @@ CATALOG: dict[str, ModuleSpec] = {
     "netconfig": ModuleSpec(
         key="netconfig",
         app="apps.netconfig",
-        title="Netzkonfiguration",
-        description="Netzwerkänderungen prüfen und sicher anwenden (netplan, DNS, NTP).",
-        category="Infrastruktur",
+        title="Network configuration",
+        description="Validate and safely apply network changes (netplan, DNS, NTP).",
+        category="Infrastructure",
         icon="settings_ethernet",
         requires=("core",),
         order=62,
@@ -157,9 +175,9 @@ CATALOG: dict[str, ModuleSpec] = {
     "builds": ModuleSpec(
         key="builds",
         app="apps.builds",
-        title="ISO-Builds",
-        description="Rezepte und Jobs, die ein installierbares ISO erzeugen — und nur das.",
-        category="Lieferkette",
+        title="ISO builds",
+        description="Recipes and jobs that produce an installable ISO - and nothing else.",
+        category="Supply chain",
         icon="album",
         requires=("core", "sandboxes", "network"),
         order=70,
@@ -169,8 +187,8 @@ CATALOG: dict[str, ModuleSpec] = {
         key="provisioning",
         app="apps.provisioning",
         title="Provisioning",
-        description="Cloud-init, Brev-Setup und der Proxmox-Plan zu einem Rezept.",
-        category="Lieferkette",
+        description="Cloud-init, Brev setup and the Proxmox plan for a recipe.",
+        category="Supply chain",
         icon="rocket_launch",
         requires=("builds",),
         order=71,
@@ -180,8 +198,8 @@ CATALOG: dict[str, ModuleSpec] = {
         key="backups",
         app="apps.backups",
         title="Backups",
-        description="Ziele, Snapshots und Wiederherstellungen der Appliance.",
-        category="Betrieb",
+        description="Targets, snapshots and restores of the appliance.",
+        category="Operations",
         icon="backup",
         requires=("core",),
         order=80,
@@ -226,23 +244,83 @@ def _from_file() -> list[str] | None:
     return None
 
 
-def resolve(keys: list[str] | tuple[str, ...]) -> tuple[str, ...]:
-    """Add always-on modules and close the dependency graph over the given keys."""
+def resolve(
+    keys: list[str] | tuple[str, ...], *, strict: bool = False
+) -> tuple[str, ...]:
+    """Add always-on modules and close the dependency graph over the given keys.
+
+    A state file can outlive the image that wrote it, so unknown keys are ignored by default:
+    dropping a module from the catalog must not stop the controller from booting. Activation
+    paths pass ``strict=True`` and get an :class:`UnknownModule` instead.
+    """
+    unknown = sorted(set(keys) - set(CATALOG))
+    if unknown and strict:
+        raise UnknownModule("unknown module(s): " + ", ".join(unknown))
+
     wanted = {key for key in keys if key in CATALOG} | set(ALWAYS_ON)
-    changed = True
-    while changed:
-        changed = False
-        for key in tuple(wanted):
-            for dependency in CATALOG[key].requires:
-                if dependency not in wanted:
-                    wanted.add(dependency)
-                    changed = True
+    pending = list(wanted)
+    while pending:
+        key = pending.pop()
+        if key not in CATALOG:
+            raise DependencyError(f"module {key!r} is required but not in the catalog")
+        for dependency in CATALOG[key].requires:
+            if dependency not in wanted:
+                wanted.add(dependency)
+                pending.append(dependency)
+
     return tuple(sorted(wanted, key=lambda key: (CATALOG[key].order, key)))
+
+
+def _order(keys: set[str]) -> tuple[str, ...]:
+    return tuple(sorted(keys, key=lambda key: (CATALOG[key].order, key)))
+
+
+def validate_activation(keys: list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    """Check a complete, already resolved set before it is written anywhere.
+
+    Unknown modules and missing requirements are errors here: unlike startup, an operator
+    action must not silently change the meaning of the request.
+    """
+    wanted = set(keys)
+    unknown = sorted(wanted - set(CATALOG))
+    if unknown:
+        raise UnknownModule("unknown module(s): " + ", ".join(unknown))
+
+    missing_always_on = [key for key in ALWAYS_ON if key not in wanted]
+    if missing_always_on:
+        raise DependencyError(
+            "always-on module(s) must stay enabled: " + ", ".join(missing_always_on)
+        )
+
+    for key in _order(wanted):
+        missing = [dependency for dependency in CATALOG[key].requires if dependency not in wanted]
+        if missing:
+            raise DependencyError(
+                f"module {key!r} requires " + ", ".join(repr(dep) for dep in missing)
+            )
+    return _order(wanted)
+
+
+def dependents(key: str) -> tuple[str, ...]:
+    """Modules that name ``key`` as a direct requirement."""
+    return _order({entry.key for entry in CATALOG.values() if key in entry.requires})
 
 
 def requested_keys() -> list[str]:
     """The modules somebody asked for, before dependency resolution."""
-    return _from_file() or _from_env() or list(CATALOG)
+    stored = _from_file()
+    if stored is not None:
+        return stored
+    seeded = _from_env()
+    if seeded is not None:
+        return seeded
+    return list(CATALOG)
+
+
+def seed_keys() -> tuple[str, ...]:
+    """What first boot uses when no state file exists: ``NESTBOX_MODULES`` or everything."""
+    seeded = _from_env()
+    return resolve(seeded if seeded is not None else list(CATALOG))
 
 
 def active_keys() -> tuple[str, ...]:
@@ -251,16 +329,46 @@ def active_keys() -> tuple[str, ...]:
 
 
 def write_state(keys: list[str] | tuple[str, ...]) -> tuple[str, ...]:
-    """Persist the effective set; returns it after resolution."""
+    """Persist the effective set atomically; returns it after resolution.
+
+    The state file is the boot contract, so a half-written file is worse than no change at
+    all: write a unique temporary file in the same directory, fsync it, then ``os.replace``.
+    A reader either sees the old file or the new one, never a truncated mixture.
+    """
     effective = resolve(keys)
     directory = state_dir()
     directory.mkdir(parents=True, exist_ok=True)
     target = state_file()
-    temporary = target.with_suffix(".json.tmp")
-    temporary.write_text(
-        json.dumps({"modules": list(effective)}, indent=2) + "\n", encoding="utf-8"
+    payload = json.dumps({"version": 1, "modules": list(effective)}, indent=2) + "\n"
+
+    descriptor, temporary = tempfile.mkstemp(
+        dir=directory, prefix=f".{target.name}.", suffix=".tmp"
     )
-    temporary.replace(target)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(temporary)
+        raise
+
+    # Make the rename durable too. Not every filesystem supports fsync on a directory.
+    try:
+        directory_fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        directory_fd = None
+    if directory_fd is not None:
+        try:
+            os.fsync(directory_fd)
+        except OSError:
+            pass
+        finally:
+            os.close(directory_fd)
+
     return effective
 
 

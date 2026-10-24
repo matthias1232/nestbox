@@ -38,6 +38,7 @@ class SandboxSerializer(serializers.ModelSerializer):
             "agent_pack_key",
             "state",
             "port",
+            "spec",
             "overlay_ip",
             "image",
             "last_error",

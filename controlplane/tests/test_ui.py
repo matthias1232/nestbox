@@ -63,7 +63,7 @@ def test_api_docs_render():  # noqa: ANN001
     assert http.get("/api/schema/").status_code == 200
 
 
-def test_recipe_bundle_is_an_api_action(admin_user):  # noqa: ANN001
+def test_recipe_bundle_is_an_iso_api_action(admin_user):  # noqa: ANN001
     recipe = BuildRecipe.objects.create(
         name="ui-recipe", hostname="nestbox-ui", admin_email="ops@example.test",
         ui_port=8443, tls_domain="nestbox-ui.local",
@@ -77,4 +77,5 @@ def test_recipe_bundle_is_an_api_action(admin_user):  # noqa: ANN001
     assert response.status_code == 200
     assert response["Content-Type"] == "application/zip"
     names = zipfile.ZipFile(io.BytesIO(response.content)).namelist()
-    assert {"seed/autoinstall.yaml", "seed/user-data", "seed/meta-data", "install.sh"} <= set(names)
+    assert {"seed/autoinstall.yaml", "seed/user-data", "seed/meta-data", "manifest.json"} <= set(names)
+    assert "install.sh" not in names  # deployment artefacts belong to the provisioning module

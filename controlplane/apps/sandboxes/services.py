@@ -13,10 +13,14 @@ from apps.sandboxes.models import Sandbox, SandboxTemplate
 
 @transaction.atomic
 def create_sandbox(*, user, name: str, template: SandboxTemplate | None = None,
-                   agent_pack_key: str = "", workspace: str = "default", image: str = "") -> Sandbox:
+                   agent_pack_key: str = "", workspace: str = "default", image: str = "",
+                   port: int = 0, spec: dict | None = None) -> Sandbox:
     if Sandbox.objects.filter(name=name).exists():
         raise Conflict(f"A nest named {name!r} already exists.", code="sandbox.name_taken")
 
+    from apps.core.nest_sections import validate_spec
+
+    configuration = validate_spec(spec or {})
     pack_key = agent_pack_key or (template.agent_pack_key if template else "")
     sandbox = Sandbox.objects.create(
         name=name,
@@ -25,6 +29,8 @@ def create_sandbox(*, user, name: str, template: SandboxTemplate | None = None,
         workspace=workspace,
         image=image or (template.agent_pack_key if template else ""),
         state="pending",
+        port=port,
+        spec=configuration,
         created_by=user,
     )
     result = get_adapter().create_sandbox(

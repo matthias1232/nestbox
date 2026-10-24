@@ -1,16 +1,9 @@
-"""The Image Creator: one recipe, four artefacts, honest warnings."""
+"""The Image Creator: one recipe, an ISO seed and honest warnings."""
 from __future__ import annotations
 
 import pytest
 from apps.builds.models import BuildRecipe
-from apps.builds.services import (
-    recipe_warnings,
-    render_autoinstall,
-    render_brev_setup,
-    render_install_script,
-    render_proxmox_plan,
-    render_seed,
-)
+from apps.builds.services import recipe_warnings, render_autoinstall, render_seed
 from apps.core.crypto import decrypt, encrypt
 from django.contrib.auth import get_user_model
 from rest_framework.authtoken.models import Token
@@ -63,31 +56,6 @@ def test_autoinstall_reflects_network_and_ntp(recipe: BuildRecipe):  # noqa: ANN
     assert primary["nameservers"]["addresses"] == ["10.0.0.2"]
 
 
-def test_brev_script_is_user_facing_and_uses_sudo(recipe: BuildRecipe):  # noqa: ANN001
-    script = render_brev_setup(recipe)
-    assert script.startswith("#!/usr/bin/env bash")
-    assert "sudo apt-get" in script
-    assert "hermes-01" in script
-    assert "8080" in script
-    assert "docker compose" in script
-
-
-def test_install_script_embeds_netplan(recipe: BuildRecipe):  # noqa: ANN001
-    recipe.network_mode = "dhcp"
-    recipe.save()
-    script = render_install_script(recipe)
-    assert "/etc/netplan/10-nestbox.yaml" in script
-    assert "dhcp4: true" in script
-
-
-def test_proxmox_plan_creates_a_vm_with_the_iso(recipe: BuildRecipe):  # noqa: ANN001
-    plan = render_proxmox_plan(recipe, vmid=201, node="pve02")
-    assert "qm create" in plan
-    assert "--memory 4096" in plan
-    assert "nestbox-24.04-slim.iso" in plan
-    assert "pve02" in plan
-
-
 def test_port_conflict_is_reported(recipe: BuildRecipe):  # noqa: ANN001
     recipe.ui_port = 8080
     recipe.save()
@@ -101,7 +69,7 @@ def test_upload_mode_without_certificate_warns(recipe: BuildRecipe):  # noqa: AN
     assert any("certificate" in w.lower() for w in recipe_warnings(recipe))
 
 
-def test_preview_endpoint_returns_every_artefact(recipe: BuildRecipe):  # noqa: ANN001
+def test_preview_endpoint_returns_the_iso_artefacts(recipe: BuildRecipe):  # noqa: ANN001
     user = get_user_model().objects.create_superuser("admin", "a@example.test", "x")
     client = APIClient()
     token, _ = Token.objects.get_or_create(user=user)
@@ -109,6 +77,8 @@ def test_preview_endpoint_returns_every_artefact(recipe: BuildRecipe):  # noqa: 
     response = client.get(f"/api/v1/builds/recipes/{recipe.pk}/preview/")
     assert response.status_code == 200
     body = response.json()
-    for key in ("seed", "install.sh", "brev-setup.sh", "proxmox-plan.sh", "manifest.json"):
-        assert key in body
+    assert set(body) == {"seed", "manifest.json", "warnings"}
     assert body["seed"]["autoinstall.yaml"]
+    # Deployment artefacts belong to the provisioning module, not to an ISO build.
+    assert "install.sh" not in body
+    assert "proxmox-plan.sh" not in body

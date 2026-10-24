@@ -1,4 +1,4 @@
-"""Render a recipe's artefacts to disk, for CI and for the ISO builder."""
+"""Render a recipe's ISO seed and manifest to disk, for CI and for the ISO builder."""
 from __future__ import annotations
 
 import json
@@ -11,7 +11,7 @@ from apps.builds.services import recipe_warnings, render_all, render_seed
 
 
 class Command(BaseCommand):
-    help = "Render every artefact of a recipe into a directory."
+    help = "Render the ISO seed and manifest of a recipe into a directory."
 
     def add_arguments(self, parser):  # noqa: ANN001
         parser.add_argument("recipe", help="Recipe name")
@@ -33,8 +33,7 @@ class Command(BaseCommand):
         warnings = recipe_warnings(recipe)
         if not options["seed_only"]:
             artefacts = render_all(recipe)
-            for name in ("install.sh", "brev-setup.sh", "brev-command.txt", "proxmox-plan.sh", "manifest.json"):
-                (out / name).write_text(artefacts[name], encoding="utf-8")
+            (out / "manifest.json").write_text(artefacts["manifest.json"], encoding="utf-8")
             (out / "warnings.json").write_text(json.dumps(warnings, indent=2), encoding="utf-8")
 
         self.stdout.write(self.style.SUCCESS(f"rendered {recipe.name} -> {out}"))

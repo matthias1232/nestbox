@@ -1,0 +1,53 @@
+{% extends "admin/base_site.html" %}
+{% load i18n unfold %}
+
+{% block title %}{{ title }} | {{ site_title }}{% endblock %}
+
+{% block breadcrumbs %}
+  <div class="px-4 lg:px-8">
+    <div class="flex flex-wrap items-center gap-2 text-sm text-subtle">
+      <a class="hover:text-primary-600" href="{% url 'admin:index' %}">{% translate "Home" %}</a>
+      <span>/</span>
+      <a class="hover:text-primary-600" href="{% url 'admin:containers_container_changelist' %}">{% translate "Containers" %}</a>
+      <span>/</span>
+      <a class="hover:text-primary-600" href="{% url 'admin:containers_container_change' container.pk %}">{{ container.name }}</a>
+      <span>/</span>
+      <span>{% translate "Logs" %}</span>
+    </div>
+  </div>
+{% endblock %}
+
+{% block content %}
+  <div class="flex flex-col gap-6">
+    {% component "unfold/components/card.html" with title=container.name %}
+      <div class="flex flex-wrap items-center gap-4 text-sm text-subtle">
+        <span>{% translate "State" %}: {{ container.state }}</span>
+        <span>{% translate "Health" %}: {{ container.health|default:"unknown" }}</span>
+        <span>{% translate "Image" %}: {{ container.image|default:"—" }}</span>
+      </div>
+    {% endcomponent %}
+
+    {% if error %}
+      {% component "unfold/components/card.html" with title="Logs unavailable" %}
+        <p class="text-sm text-subtle">{{ error }}</p>
+      {% endcomponent %}
+    {% else %}
+      {% component "unfold/components/card.html" with title="Recent log output" %}
+        {% if logs %}
+          <pre class="overflow-x-auto rounded-default bg-base-50 p-4 text-xs leading-relaxed dark:bg-base-800">{{ logs }}</pre>
+        {% else %}
+          <p class="text-sm text-subtle">{% translate "The container has not written any log lines." %}</p>
+        {% endif %}
+      {% endcomponent %}
+    {% endif %}
+
+    <div class="flex flex-row gap-3">
+      {% component "unfold/components/button.html" with href=request.path variant="default" %}
+        {% translate "Refresh" %}
+      {% endcomponent %}
+      {% component "unfold/components/button.html" with href=container_url variant="secondary" %}
+        {% translate "Back to container" %}
+      {% endcomponent %}
+    </div>
+  </div>
+{% endblock %}
