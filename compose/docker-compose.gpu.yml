@@ -1,0 +1,30 @@
+# Optional local GPU inference profile.  It is never started by the base stack.
+# Requires NVIDIA Container Toolkit (or Docker Desktop GPU support in WSL2).
+services:
+  vllm:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
+    profiles: ["gpu"]
+    restart: unless-stopped
+    command:
+      - --model
+      - ${VLLM_MODEL:-nvidia/Nemotron-3-Nano-30B-A3B}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+    ports:
+      - "${VLLM_PORT:-8001}:8000"
+    volumes:
+      - model-cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  model-cache:

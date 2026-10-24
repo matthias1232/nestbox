@@ -64,6 +64,29 @@ Open <http://127.0.0.1:8000/> and sign in. The API lives at `/api/v1/`, Swagger 
 Without Docker or an OpenShell gateway the UI still runs: the container map reports
 `runtime.unavailable` and nests are recorded as `pending` instead of pretending to be running.
 
+## Portable runtime foundation
+
+The repository now separates the controller from the optional runtime profile:
+
+- `docker compose up -d --build` starts the controller and PostgreSQL.
+- `docker compose --profile runtime up -d --build` additionally starts the official OpenShell
+  Docker gateway on port `8080`; it uses the host Docker socket to create sandbox workloads.
+- `scripts/bootstrap/ubuntu.sh`, `wsl2.sh`, and `brev.sh` prepare a clean Ubuntu host, WSL2, or
+  a Brev startup instance from this repository.
+- `scripts/nemoclaw/onboard.sh` is the explicit, provider-safe step that creates the real
+  NemoClaw/OpenClaw sandbox after a provider has been selected in `/etc/nestbox/provider.env`.
+- `deploy/kubernetes/` is the Kubernetes controller contract; install the official OpenShell Helm
+  chart alongside it and pass its service endpoint through a Secret.
+
+The foundation supports OpenAI-compatible local vLLM/NIM/llama.cpp endpoints as well as hosted
+providers. Secrets stay outside Git and Compose manifests. See the example provider file in
+`compose/provider.env.example`.
+
+For a GPU host (native Ubuntu, GPU-enabled WSL2, or a GPU VM), start a local OpenAI-compatible
+vLLM endpoint with `docker compose -f compose/docker-compose.yml -f compose/docker-compose.gpu.yml
+--profile runtime --profile gpu up -d`. Configure NemoClaw with `NEMOCLAW_PROVIDER=custom` and
+`NEMOCLAW_ENDPOINT_URL=http://host.openshell.internal:8001/v1` in the local provider file.
+
 ## Architecture
 
 ```mermaid

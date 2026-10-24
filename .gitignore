@@ -18,6 +18,9 @@ media/
 # Environment
 .env
 .env.local
+compose/.env.runtime
+compose/provider.env
+compose/.env.gpu
 
 # Editors
 .idea/

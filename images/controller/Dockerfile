@@ -21,6 +21,8 @@ COPY --chown=nestbox:nestbox controlplane ./controlplane
 COPY --chown=nestbox:nestbox packs ./packs
 COPY --chown=nestbox:nestbox docs ./docs
 COPY --chown=nestbox:nestbox images/controller/entrypoint.sh /app/images/controller/entrypoint.sh
+RUN sed -i 's/\r$//' /app/images/controller/entrypoint.sh \
+    && chmod 0755 /app/images/controller/entrypoint.sh
 USER nestbox
 WORKDIR /app/controlplane
 # collectstatic only needs the settings to import; the runtime secret is injected by compose.
