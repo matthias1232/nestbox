@@ -93,11 +93,16 @@ doc = yaml.safe_load(open(seed, encoding="utf-8")) or {}
 auto = doc.get("autoinstall") or {}
 late = [cmd for cmd in (auto.get("late-commands") or []) if "nestbox" not in str(cmd)]
 late += [
-    "cp /cdrom/nestbox.tar.gz /target/opt/nestbox.tar.gz",
-    "curtin in-target -- bash -c 'mkdir -p /opt/nestbox && tar -xzf /opt/nestbox.tar.gz -C /opt/nestbox --strip-components=1 && rm -f /opt/nestbox.tar.gz'",
-    "curtin in-target -- bash -c 'install -Dm755 /opt/nestbox/firstboot/firstboot.sh /usr/local/lib/nestbox/firstboot.sh'",
-    "curtin in-target -- bash -c 'install -Dm644 /opt/nestbox/firstboot/nestbox-firstboot.service /etc/systemd/system/nestbox-firstboot.service'",
-    "curtin in-target -- bash -c 'systemctl enable nestbox-firstboot.service'",
+    # These run after curtin has mounted the target under /target.  Do not
+    # nest `curtin in-target` here: subiquity has already passed each element
+    # to curtin, and a second wrapper caused the payload to be skipped on
+    # Ubuntu 24.04.
+    "mkdir -p /target/opt/nestbox",
+    "tar -xzf /cdrom/nestbox.tar.gz -C /target/opt/nestbox --strip-components=1",
+    "chmod 0755 /target/opt/nestbox/firstboot/firstboot.sh",
+    "install -Dm755 /target/opt/nestbox/firstboot/firstboot.sh /target/usr/local/lib/nestbox/firstboot.sh",
+    "install -Dm644 /target/opt/nestbox/firstboot/nestbox-firstboot.service /target/etc/systemd/system/nestbox-firstboot.service",
+    "curtin in-target -- systemctl enable nestbox-firstboot.service",
 ]
 auto["late-commands"] = late
 doc["autoinstall"] = auto
