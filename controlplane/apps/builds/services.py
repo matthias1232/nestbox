@@ -172,6 +172,11 @@ def render_autoinstall(recipe: BuildRecipe) -> dict[str, Any]:
         "network": render_netplan(recipe),
         "storage": {"layout": {"name": "direct"}},
         "packages": packages,
+        # Do not run unattended upgrades in the installer environment. It
+        # makes an otherwise offline-capable image depend on mirrors and can
+        # keep the first boot waiting indefinitely. The appliance installs its
+        # runtime dependencies with bounded retries in firstboot instead.
+        "updates": "none",
         "late-commands": late,
         "shutdown": "reboot",
     }
