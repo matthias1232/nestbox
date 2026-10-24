@@ -113,6 +113,10 @@ print("payload late-commands injected into user-data")
 PY_U
   # keep the standalone copy in sync for reference
   cp "$WORK/nocloud/user-data" "$WORK/nocloud/autoinstall.yaml"
+  # The booted installer reads the seed at the ISO root through `ds=nocloud`.
+  # Keep that copy in sync too; otherwise it silently sees the original
+  # late-commands and never installs the Nestbox payload.
+  cp "$WORK/nocloud/user-data" "$WORK/user-data"
 fi
 
 echo "[iso] remastering"
