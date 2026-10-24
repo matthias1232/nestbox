@@ -6,6 +6,7 @@ lazily and only when the module is active.
 """
 from __future__ import annotations
 
+from config.admin_navigation import quickstart
 from django.urls import reverse
 from django.utils import timezone
 
@@ -112,6 +113,9 @@ def dashboard_callback(request, context):  # noqa: ANN001, ANN201
         {
             "nestbox_cards": cards,
             "nestbox_expiring": expiring,
+            "nestbox_quickstart": quickstart(
+                key for key in ("containers", "sandboxes", "policies") if is_active(key)
+            ),
             "nestbox_pending_restart": pending_restart(),
         }
     )

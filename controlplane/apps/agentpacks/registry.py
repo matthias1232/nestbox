@@ -47,6 +47,8 @@ def load_packs(directory: Path | None = None, *, mark_builtin: bool = True) -> t
             "ports": data.get("ports", []),
             "env_slots": data.get("env", []),
             "healthcheck": data.get("healthcheck", {}),
+            "browser": data.get("browser", {}),
+            "defaults": data.get("defaults", {}),
             "policy_profile": data.get("policy_profile", "coding-agent"),
             "requires_gpu": bool(data.get("requires_gpu", False)),
             "image_ref": data.get("image", ""),

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from django.contrib.auth.models import Group
+from django.core.exceptions import ValidationError
 from django.db import models
 
 AUTH_MODES = [
@@ -36,6 +37,22 @@ class Gateway(models.Model):
 
     def __str__(self) -> str:
         return self.name
+
+    def clean(self) -> None:
+        """Keep the stored gateway configuration internally consistent.
+
+        Credential material is intentionally optional while a gateway is being
+        registered, but an mTLS gateway must not be marked active without a
+        complete operator credential set.
+        """
+        if self.auth_mode == "mtls" and self.is_active:
+            missing = [
+                field
+                for field in ("ca_pem", "client_cert_pem", "client_key_pem")
+                if not getattr(self, field)
+            ]
+            if missing:
+                raise ValidationError({field: "Required for an active mTLS gateway." for field in missing})
 
 
 class WorkspaceMapping(models.Model):

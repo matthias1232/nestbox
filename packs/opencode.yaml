@@ -10,6 +10,11 @@ install:
   spec: "https://opencode.ai/install"
   verified: true
 entrypoint: ["opencode"]
+browser:
+  available: false
+  reason: "OpenCode is terminal-first."
+defaults:
+  workspace: default
 ports: []
 env:
   - slot: OPENCODE_API_KEY

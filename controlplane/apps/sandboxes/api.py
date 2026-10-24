@@ -13,8 +13,9 @@ from rest_framework.routers import DefaultRouter
 
 from apps.api.permissions import OperatorOnly
 from apps.identity.services import audit
+from apps.agentpacks.models import AgentPack
 from apps.sandboxes.models import Sandbox, SandboxTemplate
-from apps.sandboxes.services import create_sandbox, stop_sandbox
+from apps.sandboxes.services import create_sandbox, start_sandbox, stop_sandbox
 
 
 class SandboxTemplateSerializer(serializers.ModelSerializer):
@@ -39,6 +40,8 @@ class SandboxSerializer(serializers.ModelSerializer):
             "state",
             "port",
             "spec",
+            "configuration",
+            "policy",
             "overlay_ip",
             "image",
             "last_error",
@@ -53,6 +56,13 @@ class SandboxSerializer(serializers.ModelSerializer):
 
     def get_url(self, obj: Sandbox) -> str:
         return f"https://{obj.url_host}/"
+
+    def validate_configuration(self, value):  # noqa: ANN001
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Configuration must be an object.")
+        if {key.lower() for key in value} & {"mount", "mounts", "volumes"}:
+            raise serializers.ValidationError("Mount configuration is not supported.")
+        return value
 
 
 class SandboxTemplateViewSet(viewsets.ModelViewSet):
@@ -89,12 +99,32 @@ class SandboxViewSet(viewsets.ModelViewSet):
     @extend_schema(tags=["sandboxes"], summary="Start a stopped nest", request=None)
     @action(detail=True, methods=["post"])
     def start(self, request, name=None):  # noqa: ANN001
-        sandbox = Sandbox.objects.get(name=name)
-        sandbox.state = "running"
-        sandbox.last_error = ""
-        sandbox.save(update_fields=["state", "last_error", "updated_at"])
+        sandbox = start_sandbox(name)
         audit(request.user, "sandbox.start", "sandbox", name, f"started {name}")
         return Response(SandboxSerializer(sandbox).data)
+
+    @extend_schema(tags=["sandboxes"], summary="Configuration and policy choices for guided nest creation")
+    @action(detail=False, methods=["get"], url_path="guided")
+    def guided(self, request):  # noqa: ANN001
+        packs = AgentPack.objects.all().order_by("name")
+        return Response(
+            {
+                "packs": [
+                    {
+                        "key": pack.key,
+                        "name": pack.name,
+                        "description": pack.description,
+                        "browser": pack.browser,
+                        "defaults": pack.defaults,
+                        "image": pack.image_ref,
+                        "policy_profile": pack.policy_profile,
+                    }
+                    for pack in packs
+                ],
+                "configuration": {"mounts_supported": False},
+                "start_requirement": "Assign an active policy before starting a nest.",
+            }
+        )
 
     @extend_schema(tags=["sandboxes"], summary="Services and reachable URLs of a nest")
     @action(detail=True, methods=["get"])

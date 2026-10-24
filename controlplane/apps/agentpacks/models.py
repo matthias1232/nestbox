@@ -15,6 +15,8 @@ class AgentPack(models.Model):
     ports = models.JSONField(default=list, blank=True)
     env_slots = models.JSONField(default=list, blank=True)
     healthcheck = models.JSONField(default=dict, blank=True)
+    browser = models.JSONField(default=dict, blank=True)
+    defaults = models.JSONField(default=dict, blank=True)
     policy_profile = models.CharField(max_length=60, default="coding-agent")
     requires_gpu = models.BooleanField(default=False)
     image_ref = models.CharField(max_length=300, blank=True)

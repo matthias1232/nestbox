@@ -11,6 +11,11 @@ install:
   spec: "@anthropic-ai/claude-code@latest"
   verified: true
 entrypoint: ["claude"]
+browser:
+  available: false
+  reason: "Claude Code is terminal-first."
+defaults:
+  workspace: default
 ports: []
 env:
   - slot: ANTHROPIC_API_KEY

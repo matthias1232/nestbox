@@ -59,6 +59,19 @@ class Sandbox(models.Model):
         blank=True,
         help_text="Werte der aktiven Module, z. B. Netzwerk-Defaults und Policy-Zuordnung.",
     )
+    configuration = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Pack configuration selected for this nest. Mounts are not supported.",
+    )
+    policy = models.ForeignKey(
+        "policies.Policy",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="assigned_sandboxes",
+        help_text="Policy that must be applied before this nest can be started.",
+    )
     overlay_ip = models.GenericIPAddressField(protocol="IPv4", null=True, blank=True)
     image = models.CharField(max_length=300, blank=True)
     last_error = models.CharField(max_length=500, blank=True)

@@ -11,7 +11,9 @@ ExecStart=/usr/local/lib/nestbox/firstboot.sh
 RemainAfterExit=yes
 StandardOutput=journal
 StandardError=journal
-TimeoutStartSec=900
+# A fresh appliance can need to pull both the controller and OpenShell gateway
+# images before it can present the first-login experience.
+TimeoutStartSec=1800
 
 [Install]
 WantedBy=multi-user.target

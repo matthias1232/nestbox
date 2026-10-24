@@ -135,7 +135,7 @@ class SandboxAdmin(ModelAdmin):
 
     def get_fieldsets(self, request, obj=None):  # noqa: ANN001, ARG002
         fieldsets = [
-            ("Nest", {"fields": ["name", "workspace", "template", "agent_pack_key", "port", "image"]}),
+            ("Nest", {"fields": ["name", "workspace", "template", "agent_pack_key", "port", "image", "policy", "configuration"]}),
         ]
         for section in sections():
             fieldsets.append(
@@ -210,6 +210,8 @@ class SandboxAdmin(ModelAdmin):
             image=obj.image,
             port=obj.port,
             spec=obj.spec if isinstance(obj.spec, dict) else {},
+            configuration=obj.configuration if isinstance(obj.configuration, dict) else {},
+            policy=obj.policy,
         )
         # Desired configuration is controller-owned. Persist it even when a minimal gateway
         # adapter ignores the optional kwargs, without performing a second lifecycle call.

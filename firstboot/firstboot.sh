@@ -132,14 +132,21 @@ fi
 SCHEME=http
 if [ -s "$TLS_DIR/cert.pem" ]; then SCHEME=https; fi
 
-echo "[nestbox] starting the stack (profile $PROFILE, port $UI_PORT)"
+echo "[nestbox] starting the appliance stack (profile $PROFILE, port $UI_PORT)"
 if [ -f /opt/nestbox/compose/docker-compose.yml ]; then
-  retry docker compose --env-file "$ENV_FILE" -f /opt/nestbox/compose/docker-compose.yml up -d --build
+  # The gateway and its OpenShell state initialiser are intentionally in the
+  # runtime profile so developer-only controller starts remain lightweight.
+  # A booted appliance, however, must always bring up the complete local
+  # runtime: the guided first-run experience assumes OpenShell is available.
+  retry docker compose --env-file "$ENV_FILE" -f /opt/nestbox/compose/docker-compose.yml \
+    --profile runtime up -d --build
 else
   echo "[nestbox] compose file missing at /opt/nestbox/compose/docker-compose.yml"
 fi
 
 UI_HOST=$(hostname -I | awk '{print $1}')
+CONTROLLER_STATE=$(docker inspect --format '{{.State.Status}}' nestbox-controller-1 2>/dev/null || echo unavailable)
+GATEWAY_STATE=$(docker inspect --format '{{.State.Status}}' nestbox-gateway-1 2>/dev/null || echo unavailable)
 
 {
   echo "# Nestbox self-check"
@@ -149,6 +156,8 @@ UI_HOST=$(hostname -I | awk '{print $1}')
   echo "- hostname: $(hostname)"
   echo "- addresses: $(hostname -I)"
   echo "- ui: $SCHEME://$UI_HOST:$UI_PORT/"
+  echo "- controller: $CONTROLLER_STATE"
+  echo "- openshell gateway: $GATEWAY_STATE"
   echo "- generated: $(date -u +%FT%TZ)"
   echo "- containers: $(docker ps -q 2>/dev/null | wc -l)"
 } > "$STATE/self-check.md"
@@ -156,12 +165,14 @@ UI_HOST=$(hostname -I | awk '{print $1}')
 touch "$STATE/.firstboot-done"
 echo "[nestbox] first boot complete"
 echo "[nestbox] web UI: $SCHEME://$UI_HOST:$UI_PORT/"
+echo "[nestbox] controller: $CONTROLLER_STATE; OpenShell gateway: $GATEWAY_STATE"
 
 BANNER=$(mktemp)
 {
   echo
   echo "Nestbox is ready."
   echo "  web UI: $SCHEME://$UI_HOST:$UI_PORT/"
+  echo "  OpenShell gateway: $GATEWAY_STATE"
   if [ "${NEW_ADMIN:-0}" = "1" ]; then
     echo "  admin:    $ADMIN_EMAIL"
     echo "  password: $ADMIN_PASSWORD"
@@ -176,5 +187,4 @@ cat "$BANNER" >> /var/log/nestbox/firstboot.log || true
 cat "$BANNER" > /dev/console 2>/dev/null || true
 cat "$BANNER" > /dev/tty1 2>/dev/null || true
 rm -f "$BANNER"
-
 

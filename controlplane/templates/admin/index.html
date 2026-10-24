@@ -28,6 +28,20 @@
       </div>
     {% endif %}
 
+    {% if nestbox_quickstart %}
+      {% component "unfold/components/card.html" with title="Quick start" %}
+        <div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {% for step in nestbox_quickstart %}
+            <a href="{{ step.url }}" class="rounded-md border border-base-200 p-4 transition hover:bg-base-50 dark:border-base-800 dark:hover:bg-base-900">
+              <p class="font-medium text-font-important-light dark:text-font-important-dark">{{ step.title }}</p>
+              <p class="mt-1 text-sm text-subtle">{{ step.description }}</p>
+              <p class="mt-3 text-sm font-medium text-primary-600 dark:text-primary-400">{{ step.action }} &rarr;</p>
+            </a>
+          {% endfor %}
+        </div>
+      {% endcomponent %}
+    {% endif %}
+
     {% if nestbox_expiring %}
       {% component "unfold/components/card.html" with title="Certificates expiring within 30 days" %}
         <div class="flex flex-col gap-2">

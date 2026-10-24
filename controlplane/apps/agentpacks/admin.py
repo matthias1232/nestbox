@@ -17,6 +17,7 @@ class AgentPackAdmin(ModelAdmin):
     fieldsets = [
         ("Identity", {"fields": ["key", "name", "vendor", "version", "description", "docs_url"]}),
         ("Runtime", {"fields": ["image_ref", "entrypoint", "ports", "env_slots", "healthcheck"]}),
+        ("Browser and defaults", {"fields": ["browser", "defaults"]}),
         ("Policy and resources", {"fields": ["policy_profile", "requires_gpu", "is_builtin"]}),
         ("Install", {"fields": ["install"]}),
         ("Metadata", {"fields": ["updated_at"]}),

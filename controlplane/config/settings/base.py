@@ -23,6 +23,7 @@ CSRF_TRUSTED_ORIGINS = [
 # The module catalog decides which apps are installed at all. The enabled set comes from
 # /var/lib/nestbox/active-modules.json (written by first boot and by the admin) with
 # NESTBOX_MODULES as the seed value. See config/modules.py.
+from config.admin_navigation import navigation  # noqa: E402
 from config.modules import CATALOG, active_keys  # noqa: E402
 
 NESTBOX_ACTIVE_MODULES = active_keys()
@@ -78,32 +79,7 @@ UNFOLD = {
         },
     },
     "STYLES": ["css/admin.css"],
-    "NAVIGATION": [
-        {"title": "Operate", "separator": True, "items": [
-            {"title": "Dashboard", "icon": "dashboard", "link": "/"},
-            {"title": "Containers", "icon": "deployed_code", "link": "/admin/core/container/"},
-            {"title": "Nests", "icon": "inventory_2", "link": "/admin/sandboxes/sandbox/"},
-            {"title": "Templates", "icon": "dashboard_customize", "link": "/admin/sandboxes/sandboxtemplate/"},
-        ]},
-        {"title": "Govern", "separator": True, "items": [
-            {"title": "Policies", "icon": "policy", "link": "/admin/policies/policy/"},
-            {"title": "Network rules", "icon": "lan", "link": "/admin/policies/networkrule/"},
-            {"title": "Certificates", "icon": "verified_user", "link": "/admin/network/certificate/"},
-            {"title": "Network profiles", "icon": "settings_ethernet", "link": "/admin/network/networkprofile/"},
-        ]},
-        {"title": "Build", "separator": True, "items": [
-            {"title": "Recipes", "icon": "build", "link": "/admin/builds/buildrecipe/"},
-            {"title": "Jobs", "icon": "pending_actions", "link": "/admin/builds/buildjob/"},
-            {"title": "Agent packs", "icon": "extension", "link": "/admin/agentpacks/agentpack/"},
-        ]},
-        {"title": "Platform", "separator": True, "items": [
-            {"title": "Gateway", "icon": "hub", "link": "/admin/openshell/gateway/"},
-            {"title": "Backups", "icon": "backup", "link": "/admin/backups/backuptarget/"},
-            {"title": "Audit", "icon": "history", "link": "/admin/identity/auditevent/"},
-            {"title": "Users", "icon": "group", "link": "/admin/auth/user/"},
-            {"title": "API docs", "icon": "api", "link": "/api/docs/"},
-        ]},
-    ],
+    "NAVIGATION": navigation(NESTBOX_ACTIVE_MODULES),
 }
 
 MIDDLEWARE = [
