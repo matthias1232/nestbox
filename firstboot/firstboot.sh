@@ -67,6 +67,37 @@ retry apt-get install -y -qq ca-certificates curl jq git chrony openssl docker.i
 systemctl enable --now chrony || true
 systemctl enable --now docker || true
 
+# Install only the guest integration that matches the hardware we actually
+# booted on.  This keeps physical appliances free of hypervisor daemons while
+# making the image immediately manageable in Proxmox/KVM and VMware.
+VIRTUALIZATION=$(systemd-detect-virt 2>/dev/null || true)
+case "$VIRTUALIZATION" in
+  kvm|qemu)
+    echo "[nestbox] detected $VIRTUALIZATION; installing QEMU guest agent"
+    retry apt-get install -y -qq qemu-guest-agent || \
+      echo "[nestbox] QEMU guest agent installation failed"
+    systemctl enable --now qemu-guest-agent.service 2>/dev/null || true
+    ;;
+  vmware)
+    echo "[nestbox] detected VMware; installing Open VM Tools"
+    retry apt-get install -y -qq open-vm-tools || \
+      echo "[nestbox] Open VM Tools installation failed"
+    systemctl enable --now open-vm-tools.service 2>/dev/null || true
+    ;;
+  microsoft|hyperv)
+    # Ubuntu ships Hyper-V integration daemons with this virtual package.
+    echo "[nestbox] detected Hyper-V; installing guest integration tools"
+    retry apt-get install -y -qq linux-tools-virtual || \
+      echo "[nestbox] Hyper-V guest tools installation failed"
+    ;;
+  none|"" )
+    echo "[nestbox] physical hardware detected; no guest agent installed"
+    ;;
+  *)
+    echo "[nestbox] virtualization '$VIRTUALIZATION' detected; no dedicated guest agent required"
+    ;;
+esac
+
 PROFILE=$(json "d.get('profile','slim')")
 UI_PORT=$(json "d.get('ports',{}).get('ui',443)")
 TLS_MODE=$(json "d.get('tls',{}).get('mode','self_signed')")
@@ -187,4 +218,3 @@ cat "$BANNER" >> /var/log/nestbox/firstboot.log || true
 cat "$BANNER" > /dev/console 2>/dev/null || true
 cat "$BANNER" > /dev/tty1 2>/dev/null || true
 rm -f "$BANNER"
-
