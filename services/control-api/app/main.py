@@ -1,14 +1,27 @@
+import os
+import json
 from datetime import datetime, UTC
 from uuid import uuid4
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 app = FastAPI(title="Nestbox Control API", version="0.1.0")
-state = {"sandboxes": {}, "models": {}, "policies": {}, "mounts": {}, "events": [], "artifacts": {}, "registries": {}}
+STATE_PATH = os.getenv("NESTBOX_STATE_PATH", "/data/state.json")
+DEFAULT_STATE = {"sandboxes": {}, "models": {}, "policies": {}, "mounts": {}, "events": [], "artifacts": {}, "registries": {}}
+def load_state():
+    try:
+        with open(STATE_PATH, encoding="utf-8") as handle: return json.load(handle)
+    except FileNotFoundError: return DEFAULT_STATE.copy()
+def save_state():
+    os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
+    temporary = STATE_PATH + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as handle: json.dump(state, handle)
+    os.replace(temporary, STATE_PATH)
+state = load_state()
 tools = [{"id":"git","kind":"package"},{"id":"github","kind":"mcp"},{"id":"web-research","kind":"mcp"}]
 def stamp(): return datetime.now(UTC).isoformat()
 def audit(kind, subject, detail=None):
     value={"id":str(uuid4()),"time":stamp(),"kind":kind,"subject":subject,"detail":detail or {}}
-    state["events"].append(value); return value
+    state["events"].append(value); save_state(); return value
 class Sandbox(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     runtime: str = "custom"
