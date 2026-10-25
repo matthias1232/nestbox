@@ -4,7 +4,7 @@
 
 <p align="center"><b>Your private AI operations center.</b><br>Open-source, self-hosted infrastructure for governed AI agents, local models and protected OCI applications.</p>
 
-<p align="center"><a href="https://nestbox.mmbits.com/">🌐 Visit the Nestbox website</a> · <a href="#capabilities">Capabilities</a> · <a href="#quickstart">Quickstart</a> · <a href="docs/">Docs</a></p>
+<p align="center"><a href="https://nestbox.mmbits.com/">🌐 Visit the Nestbox website</a> · <a href="https://buymeacoffee.com/matthias1232">☕ Buy me a coffee</a> · <a href="#capabilities">Capabilities</a> · <a href="#quickstart">Quickstart</a> · <a href="docs/">Docs</a></p>
 
 > **Built in public.** Nestbox started at Dev Community Day Berlin. The local recipe and seed-bundle flow works today; the Control Center, policy editor, model lifecycle and remote builds are active development work.
 >
