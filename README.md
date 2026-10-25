@@ -1,194 +1,59 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/hero-banner.jpg">
-    <img src="assets/brand/hero-banner.jpg" alt="Nestbox — one appliance emitting a grid of isolated, walled sandboxes" width="100%">
-  </picture>
-</p>
+<p align="center"><img src="assets/brand/operations-center.jpg" alt="Nestbox private AI operations center" width="100%"></p>
 
 <h1 align="center">Nestbox</h1>
 
-<p align="center"><b>Run OpenShell sandboxes, NemoClaw blueprints and OpenClaw agents from one web UI —
-on NVIDIA DGX Spark, on a GPU cloud VM, or on a plain Ubuntu box with cloud models.</b></p>
+<p align="center"><b>Your private AI operations center.</b><br>Open-source, self-hosted infrastructure for governed AI agents, local models and protected OCI applications.</p>
 
-<p align="center">
-  <a href="#quickstart">Quickstart</a> ·
-  <a href="#what-it-does">What it does</a> ·
-  <a href="#the-ai-firewall">The AI firewall</a> ·
-  <a href="#hardware-and-models">Hardware &amp; models</a> ·
-  <a href="docs/">Docs</a> ·
-  <a href="#api">API</a>
-</p>
+<p align="center"><a href="https://nestbox.mmbits.com/">🌐 Visit the Nestbox website</a> · <a href="#capabilities">Capabilities</a> · <a href="#quickstart">Quickstart</a> · <a href="docs/">Docs</a></p>
+
+> **Built in public.** Nestbox started at Dev Community Day Berlin. The local recipe and seed-bundle flow works today; the Control Center, policy editor, model lifecycle and remote builds are active development work.
+>
+> **Support the project.** Star the repository and follow development on the [Nestbox website](https://nestbox.mmbits.com/). GitHub Sponsors / Buy Me a Coffee will be linked here when the maintainer configures a support destination.
 
 ---
 
-No CLI archaeology. No firewall rules written by hand. Boot the ISO, open the UI, create a sandbox.
+## What Nestbox is
 
-Every sandbox gets its own compartment: Landlock filesystem policy, unprivileged process, and
-hot-reloadable **AI firewall** rules — created, edited and rolled back in the browser. Sandboxes
-appear on demand and disappear again; back up a sandbox or a single file and restore it just as
-easily.
+Nestbox is an open-source, self-hosted control plane for AI agents, local LLMs and protected OCI applications. Deploy a workload into an isolated sandbox, attach only the required project volume, assign reusable policy, and see resulting state from one operations surface.
 
-> **Independent community project. Not affiliated with or endorsed by NVIDIA.**
-> Nestbox works *with* NVIDIA OpenShell, NemoClaw and Nemotron; it is not an NVIDIA product.
+Nestbox is designed around **OpenShell**, the NVIDIA safe runtime for controlled AI-agent execution. It adds policy, project mounts, local model sandboxes, approved tools, MCP capabilities, image recipes, gateway observability and deployment artifacts.
 
-## What it does
+> **Independent project.** NVIDIA, OpenShell, NemoClaw, Nemotron, DGX Spark, GB10 Grace Blackwell, NIM and NeMo are NVIDIA product names or trademarks. Nestbox is not affiliated with or endorsed by NVIDIA.
 
-| | |
-|---|---|
-| **Nests on demand** | Create a sandbox for Claude Code, Hermes Agent, OpenCode, OpenClaw or a custom stack in one click. Start, stop, exec in, stream logs, delete. |
-| **AI firewall** | Declarative filesystem, process and network policy per nest. Edit a rule, it applies to the running sandbox without a restart, and you can roll it back. |
-| **Reachability without port forwarding** | Every nest gets a hostname and a valid certificate through the traffic container and the WireGuard overlay. |
-| **Backup &amp; restore** | Snapshot the controller, gateway, policies, certificates and every nest workspace. Restore everything or a single file. |
-| **Full API** | OpenAPI 3.1, Swagger UI and Redoc on the appliance itself. Tokens, roles, streaming events. |
-| **Agent packs** | An agent is 20 lines of YAML. Community packs need no controller release. |
+## Capabilities
 
+| Capability | Direction |
+| --- | --- |
+| **Agent sandboxes** | Run OpenShell, NemoClaw, OpenClaw, OpenCode, OpenChamber, Hermes, Claude Code, OpenAI-compatible and custom runtimes in isolated workspaces. |
+| **Local model sandboxes** | Select validated NVIDIA Nemotron profiles with lifecycle, health, logs and controlled consumers. |
+| **Policy editor** | Validate, version, diff, assign, revoke and roll back policy for mounts, tools, DNS, TLS and destinations. |
+| **Project mounts** | Explicit read-only or read-write grants; detach and reassign without a global shared filesystem. |
+| **Tools and MCP** | Choose Git, approved GitHub access, developer tools, CLI packages and MCP capabilities per sandbox. |
+| **Gateway observability** | See allowed and blocked destinations, route decisions, status and latency per sandbox. |
+| **OCI application sandboxes** | Plan protected image deployments from Docker Hub, private OCI registries and approved image sources. |
+## Visual product tour
+<p><img src="assets/brand/model-deployment.jpg" alt="Local model deployment into an isolated sandbox" width="49%"> <img src="assets/brand/tool-template.jpg" alt="Agent workspace with controlled tools" width="49%"></p>
+**Local model sandboxes:** choose a validated Nemotron profile, deploy a dedicated runtime, then start, stop, inspect health and read logs.
+**Agent templates and tools:** choose a runtime, preinstalled tools, MCP capabilities, mounts and policy before deployment.
+<p><img src="assets/brand/security-flow.jpg" alt="Policy gateway controls sandbox traffic" width="49%"> <img src="assets/brand/deployment-targets.jpg" alt="Deployment targets for Nestbox" width="49%"></p>
+**Policy and egress:** forward proxy is the intended default. Transparent proxy and TLS inspection are explicit opt-in, sandbox-scoped and disabled by default.
+**Deploy where compute lives:** generate inspectable seed bundles for bare metal, Proxmox, a cloud VM, WSL and local GPU hardware.
+## Architecture
+React Admin web console → FastAPI control API → gateway and policy enforcement → OpenShell runtime → isolated agent, model, tool-enabled or OCI application sandbox.
+Each project mount, tool, MCP capability and egress route is an explicit capability grant.
+## Secure network traffic
+The governed forward proxy is the intended default: operators can inspect destinations, policy decisions, status and latency without TLS decryption. Transparent proxy observation is planned as explicit opt-in for an authorized sandbox. A sandbox-scoped trust CA is issued only after approval and can be revoked when that mode is disabled.
+## Local AI, NVIDIA cloud and DGX Spark-class hardware
+Nestbox targets local GPU workstations, DGX Spark-class GB10 Grace Blackwell systems, provider-neutral GPU VMs and NVIDIA cloud resources. NVIDIA Nemotron, NIM, NeMo, NemoClaw, OpenShell and NVIDIA AI Enterprise can be part of a workload stack; Nestbox focuses on the policy-first operations layer around it.
+Hardware and model fit depend on quantisation, context length, inference backend and concurrent workloads. A 120B-class model must be validated on the exact target configuration; Nestbox does not make blanket performance claims.
 ## Quickstart
-
 ```bash
 git clone https://github.com/matthias1232/nestbox.git
 cd nestbox
-uv venv && . .venv/bin/activate
-uv pip install -e ".[dev]"
-cd controlplane
-python manage.py migrate
-NESTBOX_BOOTSTRAP_ADMIN_EMAIL=you@example.com \
-NESTBOX_BOOTSTRAP_ADMIN_PASSWORD='change-me' \
-python manage.py bootstrap
-python manage.py load_packs
-python manage.py runserver
+docker compose up -d --build
 ```
-
-Open <http://127.0.0.1:8000/> and sign in. The API lives at `/api/v1/`, Swagger UI at
-`/api/docs/`, Redoc at `/api/redoc/`.
-
-Without Docker or an OpenShell gateway the UI still runs: the container map reports
-`runtime.unavailable` and nests are recorded as `pending` instead of pretending to be running.
-
-## Portable runtime foundation
-
-The repository now separates the controller from the optional runtime profile:
-
-- `docker compose up -d --build` starts the controller and PostgreSQL.
-- `docker compose --profile runtime up -d --build` additionally starts the official OpenShell
-  Docker gateway on port `8080`; it uses the host Docker socket to create sandbox workloads.
-- `scripts/bootstrap/ubuntu.sh`, `wsl2.sh`, and `brev.sh` prepare a clean Ubuntu host, WSL2, or
-  a Brev startup instance from this repository.
-- `scripts/nemoclaw/onboard.sh` is the explicit, provider-safe step that creates the real
-  NemoClaw/OpenClaw sandbox after a provider has been selected in `/etc/nestbox/provider.env`.
-- `deploy/kubernetes/` is the Kubernetes controller contract; install the official OpenShell Helm
-  chart alongside it and pass its service endpoint through a Secret.
-
-The foundation supports OpenAI-compatible local vLLM/NIM/llama.cpp endpoints as well as hosted
-providers. Secrets stay outside Git and Compose manifests. See the example provider file in
-`compose/provider.env.example`.
-
-For a GPU host (native Ubuntu, GPU-enabled WSL2, or a GPU VM), start a local OpenAI-compatible
-vLLM endpoint with `docker compose -f compose/docker-compose.yml -f compose/docker-compose.gpu.yml
---profile runtime --profile gpu up -d`. Configure NemoClaw with `NEMOCLAW_PROVIDER=custom` and
-`NEMOCLAW_ENDPOINT_URL=http://host.openshell.internal:8001/v1` in the local provider file.
-
-## Architecture
-
-```mermaid
-flowchart TB
-  subgraph host["Ubuntu Server (one boot)"]
-    ctl["controller<br/>Django · DRF · HTMX"]
-    trf["traffic<br/>Caddy · ACME · WireGuard"]
-    gw["gateway<br/>OpenShell gRPC"]
-    dns["core-dns<br/>internal zone"]
-  end
-  ctl -->|"mTLS operator"| gw
-  ctl --> trf
-  ctl --> dns
-  gw --> rt["sandbox runtime<br/>Docker · Podman · MicroVM · K8s"]
-  rt --> n1["nest: claude-code"]
-  rt --> n2["nest: hermes-agent"]
-  rt --> n3["nest: openclaw-gateway"]
-  rt --> n4["nest: local-nemotron"]
-  n1 --> pol{{"policy walls<br/>filesystem · process · network"}}
-  n2 --> pol
-  n3 --> pol
-  n4 --> pol
-```
-
-Django is a control plane *on top of* OpenShell, not a reimplementation of it. Isolation,
-policy enforcement, credential handling and service exposure stay in the runtime that NVIDIA
-maintains. The controller owns desired state, a reconcile loop repairs drift, and the web UI is
-the only place a human needs to look.
-
-## The AI firewall
-
-Policies are YAML documents, stored twice on purpose: structured rows drive the form editors, and
-the document itself is what the gateway receives. Policies are never rebuilt from rows, so the UI
-cannot drift from what is actually enforced.
-
-```yaml
-network_policies:
-  model-api:
-    endpoints:
-      - host: api.anthropic.com
-        port: 443
-        protocol: rest
-        enforcement: enforced
-        access: allow
-    binaries:
-      - path: /usr/local/bin/claude
-```
-
-Filesystem and process sections are fixed when a nest is created; network sections reload live,
-which is why a rule change takes effect without restarting the sandbox. Every change is versioned,
-diffable against the effective policy, and rollbackable.
-
-## Hardware and models
-
-Nemotron only — that is the point of the appliance, not a limitation.
-
-| Model | Parameters | VRAM (estimate) | Hardware |
-|---|---|---|---|
-| Nemotron Nano 12B v2 VL | 12.6B dense | BF16 ~26 GB · FP8 ~14 GB | RTX 4090 / 5090 |
-| Nemotron 3 Nano | 30B-A3B | FP8 ~32 GB · NVFP4 ~18 GB | RTX 5090 32 GB, L40S 48 GB |
-| Nemotron 3 Super | 120B-A12B | NVFP4 ~65–70 GB | A100 / H100 80 GB, RTX PRO 6000 |
-| Nemotron 3 Ultra | 550B-A55B | NVFP4 ~280–300 GB | 4× RTX PRO 6000, DGX B200 |
-
-The VRAM column is our own arithmetic, not vendor guidance; see [docs/hardware](docs/hardware/)
-and [docs/claims.md](docs/claims.md) for sources and caveats. No model weights are shipped in the
-image — they are pulled on first boot, because the Nemotron licence is not Apache-2.0.
-
-**Four ways to run it, one image:** a GPU cloud VM to try before buying hardware, a local box
-without a GPU driven by cloud models, a local box with a GPU for full local inference, or your
-laptop hosting the model while the appliance only manages policies. The provider profile is the
-only thing that changes.
-
-## API
-
-- `/api/schema/` — OpenAPI 3.1 (JSON, or `?format=yaml`)
-- `/api/schema/v1/` — frozen contract, protected in CI
-- `/api/docs/` — Swagger UI with *Authorize* and *Try it out*
-- `/api/redoc/` — reference documentation
-- `/api/v1/` — root discovery document
-
-Every operation carries `x-roles` and `x-effect`; every failure uses one error envelope with a
-stable `code`. Clients can be generated from the committed schema, which CI checks.
-
-## Repository layout
-
-```
-controlplane/   Django project (config + apps)
-packs/          agent packs as YAML
-assets/         brand set, prompts, diagram sources
-iso/            livefs actions, autoinstall templates, smoke test
-firstboot/      first-boot unit and netplan renderer
-docs/           English documentation
-contracts/      frozen OpenAPI document
-```
-
-## Status
-
-This is the Phase 1 foundation: inventory, policy editing, agent packs, API, docs and the
-renderer that turns a recipe into cloud-init. The ISO build, the traffic container, the overlay
-and restic backups land in the following phases — the data model and interfaces for them are
-already in place. See [docs/roadmap.md](docs/roadmap.md) for the phase breakdown.
-
-## Licence
-
-Apache-2.0 with DCO sign-off. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+See [docs](docs/) and the [Nestbox website](https://nestbox.mmbits.com/) for installation guidance and the product tour.
+## Project origin and thanks
+Nestbox began during the Dev Community Day Berlin hackathon. The early project concept, website and presentation were accelerated with OpenAI credits. Thank you to OpenAI for helping make the first public project foundation possible.
+## License
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
