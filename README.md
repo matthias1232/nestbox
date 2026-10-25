@@ -40,6 +40,8 @@ The project is designed around **OpenShell**, the NVIDIA safe runtime for contro
 | Project mounts | Grant read-only or read-write access; detach and reassign without global shared storage. | In development |
 | Tools and MCP | Select Git, approved GitHub access, developer tools, CLI packages and MCP capabilities per sandbox. | In development |
 | Gateway observability | Live firewall-style traffic console per sandbox: incoming/outgoing direction, protocol, source, destination, port, decision, status, latency and correlation ID. | In development |
+| DNS control | Appliance DNS service, per-sandbox query log, approved resolver policy and hostname/domain blacklist rules. | Planned |
+| Rule from event | Select an unusual DNS or network event to draft a sandbox-scoped block rule, then review and apply it. | Planned |
 | OCI application sandboxes | Deploy protected images from Docker Hub, private OCI registries and approved image sources. | Planned |
 | Image builder | Produce inspectable Ubuntu seed bundles and later ISO artifacts for bare metal, VM, WSL and local GPU targets. | Seed bundle available; larger flow in development |
 
@@ -82,3 +84,9 @@ Nestbox began during the Dev Community Day Berlin hackathon. The early project c
 
 ## License
 Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+## DNS control and policy response
+Nestbox will provide an appliance DNS service for managed sandboxes. The planned Admin Center will show each sandbox DNS lookup next to its live traffic timeline: timestamp, sandbox, queried name, resolver, policy decision and correlation ID.
+An operator can blacklist a hostname or domain for one sandbox or an assigned policy; every change is versioned and reversible.
+## Rule from event
+The planned Live Traffic Console will let an operator select a suspicious DNS query or network event and create a prefilled policy-rule draft.
+A connection event can prefill destination, protocol and port; a DNS event can prefill a hostname or domain block rule. The draft is reviewed, diffed and explicitly applied before future traffic is blocked.
