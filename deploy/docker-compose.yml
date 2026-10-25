@@ -8,6 +8,8 @@ services:
       - ./data:/data
   web-console:
     build: ../services/web-console
+    volumes:
+      - ./secrets/web-console.htpasswd:/etc/nginx/secrets/web-console.htpasswd:ro
     restart: unless-stopped
     depends_on:
       - control-api
