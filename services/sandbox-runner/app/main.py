@@ -1,6 +1,7 @@
 import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+from docker.types import Mount
 import docker
 app = FastAPI(title="Nestbox Sandbox Runner")
 client = docker.from_env()
@@ -10,15 +11,23 @@ class SandboxRequest(BaseModel):
     command: list[str] = ["sleep", "infinity"]
     runtime: str = "custom"
     policy_id: str | None = None
+    volume: str | None = None
+    mode: str = "read-write"
 def container_name(name): return "nestbox-sandbox-" + name
+def volume_name(name): return "nestbox-volume-" + name
 @app.get("/healthz")
 def healthz(): return {"status":"ok","service":"sandbox-runner"}
 @app.post("/v1/sandboxes", status_code=201)
 def create_sandbox(body: SandboxRequest):
+    if body.volume and (not body.volume.replace("-", "").isalnum() or body.mode not in {"read-only", "read-write"}): raise HTTPException(422, "invalid mount capability")
     name = container_name(body.name)
     try: container = client.containers.get(name); return {"id":container.id,"name":name,"status":container.status}
     except docker.errors.NotFound: pass
-    try: container = client.containers.run(body.image, body.command, name=name, detach=True, network_disabled=True, read_only=True, cap_drop=["ALL"], security_opt=["no-new-privileges:true"], labels={"nestbox.managed":"true","nestbox.runtime":body.runtime,"nestbox.policy":body.policy_id or "none"})
+    mounts = []
+    if body.volume:
+        client.volumes.create(name=volume_name(body.volume), labels={"nestbox.managed":"true"})
+        mounts = [Mount(target="/workspace", source=volume_name(body.volume), type="volume", read_only=body.mode == "read-only")]
+    try: container = client.containers.run(body.image, body.command, name=name, detach=True, network_disabled=True, read_only=True, cap_drop=["ALL"], security_opt=["no-new-privileges:true"], mounts=mounts, labels={"nestbox.managed":"true","nestbox.runtime":body.runtime,"nestbox.policy":body.policy_id or "none"})
     except docker.errors.DockerException as error: raise HTTPException(400, str(error))
     return {"id":container.id,"name":name,"status":container.status}
 @app.post("/v1/sandboxes/{name}/{action}")

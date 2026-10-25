@@ -35,6 +35,8 @@ class Sandbox(BaseModel):
     runtime: str = "custom"
     template: str = "custom"
     policy_id: str | None = None
+    volume: str | None = None
+    mode: str = "read-write"
 class Action(BaseModel):
     action: str = Field(pattern="^(start|stop|restart|remove)$")
 class Policy(BaseModel):
