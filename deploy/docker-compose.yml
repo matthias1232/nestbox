@@ -29,8 +29,8 @@ services:
     build: ../services/sandbox-runner
     restart: unless-stopped
     environment:
-      NESTBOX_ALLOWED_IMAGES: alpine:3.20,nginx:1.27-alpine,nestbox-tool-git:local
-      NESTBOX_ALLOWED_TOOL_PROFILES: git,github-mcp,web-research
+      NESTBOX_ALLOWED_IMAGES: ubuntu:24.04,nestbox-ubuntu-dev:local,nestbox-hermes:local,nestbox-openclaw:local
+      NESTBOX_RUNTIME_NETWORK: nestbox-runtime
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
@@ -38,4 +38,16 @@ services:
   tool-image-git:
     build: ../services/tool-images/git
     image: nestbox-tool-git:local
+    profiles: ["build-tools"]
+  tool-image-ubuntu-dev:
+    build: ../services/tool-images/ubuntu-dev
+    image: nestbox-ubuntu-dev:local
+    profiles: ["build-tools"]
+  tool-image-hermes:
+    build: ../services/tool-images/hermes
+    image: nestbox-hermes:local
+    profiles: ["build-tools"]
+  tool-image-openclaw:
+    build: ../services/tool-images/openclaw
+    image: nestbox-openclaw:local
     profiles: ["build-tools"]
