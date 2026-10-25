@@ -3,7 +3,7 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 app = FastAPI(title="Nestbox Control API", version="0.1.0")
-state = {"sandboxes": {}, "models": {}, "policies": {}, "mounts": {}, "events": [], "artifacts": {}}
+state = {"sandboxes": {}, "models": {}, "policies": {}, "mounts": {}, "events": [], "artifacts": {}, "registries": {}}
 tools = [{"id":"git","kind":"package"},{"id":"github","kind":"mcp"},{"id":"web-research","kind":"mcp"}]
 def stamp(): return datetime.now(UTC).isoformat()
 def audit(kind, subject, detail=None):
@@ -30,6 +30,16 @@ class Mount(BaseModel):
     sandbox_id: str
     volume: str
     mode: str = Field(pattern="^(read-only|read-write)$")
+class Registry(BaseModel):
+    name: str
+    url: str
+    kind: str
+    credential_reference: str | None = None
+class ImageDeployment(BaseModel):
+    registry_id: str
+    image: str
+    sandbox_name: str
+    protect_with_openshell: bool = True
 class Action(BaseModel):
     action: str = Field(pattern="^(start|stop|restart)$")
 @app.get("/healthz")
@@ -84,3 +94,14 @@ def model_lifecycle(model_id: str, body: Action):
     if not value: raise HTTPException(404,"model sandbox not found")
     value["status"]="running" if body.action in {"start","restart"} else "stopped"
     audit("model_sandbox."+body.action,model_id,{"status":value["status"]}); return value
+@app.get("/v1/registries")
+def list_registries(): return list(state["registries"].values())
+@app.post("/v1/registries", status_code=201)
+def create_registry(body: Registry):
+    ident=str(uuid4()); value=body.model_dump()|{"id":ident,"created_at":stamp()}
+    state["registries"][ident]=value; audit("registry.created",ident,{"kind":body.kind}); return value
+@app.post("/v1/image-deployments", status_code=202)
+def deploy_image(body: ImageDeployment):
+    if body.registry_id not in state["registries"]: raise HTTPException(404,"registry not found")
+    ident=str(uuid4()); value=body.model_dump()|{"id":ident,"status":"planned","created_at":stamp()}
+    audit("image_deployment.planned",ident,{"openshell":body.protect_with_openshell}); return value

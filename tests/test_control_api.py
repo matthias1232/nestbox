@@ -23,3 +23,10 @@ def test_model_sandbox_and_tls_guard():
     result = client.post("/v1/model-sandboxes/" + model_id + "/lifecycle", json={"action":"start"})
     assert result.json()["status"] == "running"
     assert client.post("/v1/policies", json={"name":"inspect","tls_inspection":True}).status_code == 422
+def test_registry_and_image_plan():
+    registry = client.post("/v1/registries", json={"name":"Docker Hub","url":"https://registry-1.docker.io","kind":"docker-hub"})
+    assert registry.status_code == 201
+    registry_id = registry.json()["id"]
+    plan = client.post("/v1/image-deployments", json={"registry_id":registry_id,"image":"library/nginx:latest","sandbox_name":"protected-app"})
+    assert plan.status_code == 202
+    assert plan.json()["protect_with_openshell"] is True
