@@ -35,6 +35,11 @@ The project is designed around **OpenShell**, the NVIDIA safe runtime for contro
 | Surface | Intended experience | Status |
 | --- | --- | --- |
 | Agent sandboxes | Choose OpenShell, NemoClaw, OpenClaw, OpenCode, OpenChamber, Hermes, Claude Code, OpenAI-compatible or custom runtimes. | In development |
+
+### Planned compatibility surface
+
+Nestbox is being designed for OpenShell, NemoClaw, OpenClaw, OpenCode, OpenChamber, Claude Code, Codex and ChatGPT workflows, Gemini CLI, Hermes, Aider, Cline, Continue, Cursor workflows, OpenAI-compatible endpoints and custom agent runtimes. These are compatibility and workflow examples: direct support depends on the selected sandbox template, agent pack, provider/API configuration and the maturity of the relevant integration.
+
 | Local model sandboxes | Select validated NVIDIA Nemotron profiles, then manage lifecycle, health and logs. | In development |
 | Policy editor | Validate, version, diff, assign, revoke and roll back policy for mounts, tools, DNS, TLS and destinations. | In development |
 | Project mounts | Grant read-only or read-write access; detach and reassign without global shared storage. | In development |
