@@ -1564,3 +1564,4 @@ pre{overflow:auto;padding:1.5rem;border:1px solid var(--border);border-radius:12
 #pipeline figcaption{color:#b7c3aa;font:.75rem var(--font-mono);margin-top:.75rem}
 .mission{margin-top:1rem;color:#c8d4bc;max-width:49rem}
 .tour-notice{padding:1rem 0;background:#b6f53b;color:#071006}.tour-notice strong{margin-right:1rem}.tour-notice span{font-size:.9rem}#control-plane{padding:5rem 0;background:#12170e}#control-plane img,#deploy img{display:block;width:100%;margin:2rem 0;border:1px solid #4f6930}#control-plane small{color:#aeb9a1}
+#architecture,#templates{padding:5rem 0;background:#0d100c}#architecture img{display:block;width:100%;margin:2rem 0;border:1px solid #4f6930}#architecture p,#templates p{max-width:52rem;color:#b6c0aa}
