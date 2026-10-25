@@ -15,11 +15,11 @@ from pydantic import BaseModel, Field
 app = FastAPI(title="Nestbox Control API", version="1.0.0")
 STATE_PATH = Path(os.getenv("NESTBOX_STATE_PATH", "/data/state.json"))
 RUNNER_URL = os.getenv("NESTBOX_RUNNER_URL", "http://sandbox-runner:9000")
-DEFAULT = {"sandboxes": {}, "tool_profiles": {}, "bindings": {}, "deployments": {}, "events": []}
+DEFAULT = {"sandboxes": {}, "tool_profiles": {}, "bindings": {}, "deployments": {}, "providers": {}, "events": []}
 
 PACKS = {
     "ubuntu-dev": {"name": "Ubuntu 24.04 development", "image": "nestbox-ubuntu-dev:local", "command": ["sleep", "infinity"], "tool_profile": "development-default", "description": "Empty Ubuntu 24.04 development sandbox."},
-    "openclaw-gateway": {"name": "OpenClaw Gateway", "image": "nestbox-openclaw:local", "command": ["openclaw", "gateway", "--listen", "0.0.0.0:8080"], "tool_profile": "development-default", "description": "Dedicated OpenClaw service sandbox."},
+    "openclaw-gateway": {"name": "OpenClaw Gateway", "image": "nestbox-openclaw:local", "command": ["openclaw", "gateway", "run", "--dev", "--allow-unconfigured", "--bind", "lan", "--port", "8080", "--auth", "none"], "tool_profile": "development-default", "description": "Dedicated OpenClaw service sandbox."},
     "hermes-agent": {"name": "Hermes Agent", "image": "nestbox-hermes:local", "command": ["sleep", "infinity"], "tool_profile": "development-default", "description": "Official Nous Hermes Agent installation on Ubuntu 24.04."},
 }
 DEFAULT_TOOLS = ["git", "nano", "curl", "ca-certificates", "jq", "less", "procps", "iputils-ping", "dnsutils", "ripgrep", "vim"]
@@ -78,6 +78,15 @@ class SandboxCreate(BaseModel):
     environment: dict[str, str] = Field(default_factory=dict)
 
 
+class Provider(BaseModel):
+    name: str = Field(pattern=r"^[a-z0-9-]{1,63}$")
+    kind: str = "openai-compatible"
+    base_url: str
+    model: str
+    api_key: str = Field(default="", exclude=True)
+
+
+
 class Action(BaseModel):
     action: str = Field(pattern=r"^(start|stop|restart|remove)$")
 
@@ -120,6 +129,17 @@ def runtime() -> dict:
         return {"status": "unavailable", "adapter": "docker-development", "detail": str(exc.detail), "sandboxes": []}
     return {"status": "ready", "adapter": runtime_health["adapter"], "network": runtime_health["network"], "sandboxes": items, "openshell": {"status": "not-configured", "note": "Official OpenShell adapter is a future runtime adapter; this phase-1 VM currently uses the visible Docker development adapter."}}
 
+
+@app.post("/v1/providers", status_code=201)
+def create_provider(body: Provider) -> dict:
+    if body.name in state["providers"]: raise HTTPException(409, "provider name already exists")
+    value = body.model_dump() | {"id": str(uuid4()), "created_at": now(), "api_key_configured": bool(body.api_key)}
+    state["providers"][body.name] = value
+    audit("provider.created", value["id"], {"name": body.name, "kind": body.kind, "base_url": body.base_url, "model": body.model})
+    return {key: data for key, data in value.items() if key != "api_key"}
+@app.get("/v1/providers")
+def providers() -> list[dict]:
+    return [{key: value for key, value in item.items() if key != "api_key"} for item in state["providers"].values()]
 
 @app.get("/v1/packs")
 def packs() -> list[dict]:
