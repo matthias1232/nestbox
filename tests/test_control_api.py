@@ -16,3 +16,10 @@ def test_sandbox_policy_mount_and_artifact_flow():
     assert client.post(f"/v1/sandboxes/{ident}/lifecycle", json={"action":"start"}).json()["status"] == "running"
     assert client.post("/v1/mounts", json={"sandbox_id":ident,"volume":"project","mode":"read-write"}).status_code == 201
     assert client.post("/v1/artifacts/seed-bundles", json={"hostname":"lab"}).status_code == 201
+def test_model_sandbox_and_tls_guard():
+    model = client.post("/v1/model-sandboxes", json={"name":"nemotron-local","profile":"nemotron-nano"})
+    assert model.status_code == 201
+    model_id = model.json()["id"]
+    result = client.post("/v1/model-sandboxes/" + model_id + "/lifecycle", json={"action":"start"})
+    assert result.json()["status"] == "running"
+    assert client.post("/v1/policies", json={"name":"inspect","tls_inspection":True}).status_code == 422
