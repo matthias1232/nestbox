@@ -28,3 +28,10 @@ def lifecycle(name: str, action: str):
     except docker.errors.NotFound: raise HTTPException(404, "sandbox not found")
     getattr(container, action)(force=True) if action == "remove" else getattr(container, action)()
     return {"id":container.id,"name":container.name,"action":action}
+@app.get("/v1/sandboxes/{name}/logs")
+def logs(name: str, tail: int = 200):
+    if tail < 1 or tail > 1000: raise HTTPException(422, "tail must be 1..1000")
+    try: container = client.containers.get(container_name(name))
+    except docker.errors.NotFound: raise HTTPException(404, "sandbox not found")
+    if container.labels.get("nestbox.managed") != "true": raise HTTPException(403, "unmanaged container")
+    return {"name":container.name,"logs":container.logs(tail=tail).decode(errors="replace")}

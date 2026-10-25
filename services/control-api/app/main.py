@@ -49,7 +49,7 @@ def list_sandboxes(): return list(state["sandboxes"].values())
 @app.post("/v1/sandboxes", status_code=201)
 def create_sandbox(body: Sandbox):
     if body.policy_id and body.policy_id not in state["policies"]: raise HTTPException(404,"policy not found")
-    result = runner("POST", "/v1/sandboxes", {"name":body.name,"runtime":body.runtime,"policy_id":body.policy_id})
+    result = runner("POST", "/v1/sandboxes", {"name":body.name,"runtime":body.runtime})
     value = body.model_dump() | {"id":result["id"],"status":result["status"],"created_at":now()}
     state["sandboxes"][value["id"]]=value; audit("sandbox.created",value["id"],{"runtime":body.runtime}); return value
 @app.post("/v1/sandboxes/{sandbox_id}/lifecycle")
@@ -72,3 +72,8 @@ def list_events(): return state["events"]
 def list_egress_events():
     path=Path("/data/gateway/access.json")
     return [json.loads(line) for line in path.read_text().splitlines() if line] if path.exists() else []
+@app.get("/v1/sandboxes/{sandbox_id}/logs")
+def sandbox_logs(sandbox_id: str, tail: int = 200):
+    value = state["sandboxes"].get(sandbox_id)
+    if not value: raise HTTPException(404, "sandbox not found")
+    return runner("GET", "/v1/sandboxes/" + value["name"] + "/logs?tail=" + str(tail))
