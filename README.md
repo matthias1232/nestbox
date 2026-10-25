@@ -134,7 +134,7 @@ The public product tour, active-development notes and working local seed-bundle 
 
 ## Project origin and thanks
 
-Nestbox began during the Dev Community Day Berlin hackathon. The early project concept, website and presentation were accelerated with OpenAI credits. Thank you to OpenAI for helping make the first public project foundation possible.
+Nestbox began during the Dev Community Day Berlin hackathon on 25 October 2026. The early project concept, website and presentation were accelerated with OpenAI credits. Thank you to OpenAI for helping make the first public project foundation possible. Additional thanks to NVIDIA and Nous for a 20 US dollar free-credit voucher shared at the RTX Launch Event Berlin, which supported early experimentation and evaluation.
 
 ## License
 
