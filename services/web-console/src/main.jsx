@@ -32,6 +32,7 @@ const App = () => <Admin dataProvider={dataProvider} title="Nestbox Control Cent
   <Resource name="mounts" list={ListGuesser} />
   <Resource name="registries" list={ListGuesser} create={RegistryCreate} />
   <Resource name="events" list={ListGuesser} />
+  <Resource name="egress-events" list={ListGuesser} />
   <Resource name="artifacts" list={ListGuesser} />
 </Admin>;
 createRoot(document.getElementById('root')).render(<App />);
