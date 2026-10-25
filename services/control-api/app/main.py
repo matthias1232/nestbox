@@ -49,7 +49,7 @@ def list_sandboxes(): return list(state["sandboxes"].values())
 @app.post("/v1/sandboxes", status_code=201)
 def create_sandbox(body: Sandbox):
     if body.policy_id and body.policy_id not in state["policies"]: raise HTTPException(404,"policy not found")
-    result = runner("POST", "/v1/sandboxes", {"name":body.name,"runtime":body.runtime})
+    result = runner("POST", "/v1/sandboxes", {"name":body.name,"runtime":body.runtime,"policy_id":body.policy_id})
     value = body.model_dump() | {"id":result["id"],"status":result["status"],"created_at":now()}
     state["sandboxes"][value["id"]]=value; audit("sandbox.created",value["id"],{"runtime":body.runtime}); return value
 @app.post("/v1/sandboxes/{sandbox_id}/lifecycle")

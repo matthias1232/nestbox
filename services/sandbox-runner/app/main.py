@@ -9,6 +9,7 @@ class SandboxRequest(BaseModel):
     image: str = "alpine:3.20"
     command: list[str] = ["sleep", "infinity"]
     runtime: str = "custom"
+    policy_id: str | None = None
 def container_name(name): return "nestbox-sandbox-" + name
 @app.get("/healthz")
 def healthz(): return {"status":"ok","service":"sandbox-runner"}
@@ -17,7 +18,7 @@ def create_sandbox(body: SandboxRequest):
     name = container_name(body.name)
     try: container = client.containers.get(name); return {"id":container.id,"name":name,"status":container.status}
     except docker.errors.NotFound: pass
-    try: container = client.containers.run(body.image, body.command, name=name, detach=True, network_disabled=True, read_only=True, cap_drop=["ALL"], security_opt=["no-new-privileges:true"], labels={"nestbox.managed":"true","nestbox.runtime":body.runtime})
+    try: container = client.containers.run(body.image, body.command, name=name, detach=True, network_disabled=True, read_only=True, cap_drop=["ALL"], security_opt=["no-new-privileges:true"], labels={"nestbox.managed":"true","nestbox.runtime":body.runtime,"nestbox.policy":body.policy_id or "none"})
     except docker.errors.DockerException as error: raise HTTPException(400, str(error))
     return {"id":container.id,"name":name,"status":container.status}
 @app.post("/v1/sandboxes/{name}/{action}")
