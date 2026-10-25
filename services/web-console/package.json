@@ -1,0 +1,1 @@
+{"name":"nestbox-web-console","private":true,"version":"0.1.0","scripts":{"build":"vite build","dev":"vite"},"dependencies":{"@vitejs/plugin-react":"latest","vite":"latest","react":"latest","react-dom":"latest","react-admin":"latest","ra-data-simple-rest":"latest"}}

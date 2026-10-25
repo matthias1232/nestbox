@@ -1,0 +1,13 @@
+services:
+  control-api:
+    build: ../services/control-api
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+  web-console:
+    build: ../services/web-console
+    restart: unless-stopped
+    depends_on:
+      - control-api
+    ports:
+      - "8080:80"
