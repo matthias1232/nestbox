@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from docker.types import Mount
 import docker
 app = FastAPI(title="Nestbox Sandbox Runner")
+ALLOWED_TOOL_PROFILES = set(os.getenv("NESTBOX_ALLOWED_TOOL_PROFILES", "git,github-mcp,web-research").split(","))
 ALLOWED_IMAGES = set(os.getenv("NESTBOX_ALLOWED_IMAGES", "alpine:3.20").split(","))
 client = docker.from_env()
 class SandboxRequest(BaseModel):
@@ -17,6 +18,7 @@ class SandboxRequest(BaseModel):
     memory_limit: str = "512m"
     cpu_limit: float = 1.0
     pids_limit: int = 128
+    tool_profiles: list[str] = []
 def container_name(name): return "nestbox-sandbox-" + name
 def volume_name(name): return "nestbox-volume-" + name
 @app.get("/healthz")
@@ -24,6 +26,7 @@ def healthz(): return {"status":"ok","service":"sandbox-runner"}
 @app.post("/v1/sandboxes", status_code=201)
 def create_sandbox(body: SandboxRequest):
     if body.image not in ALLOWED_IMAGES: raise HTTPException(422, "image is not approved")
+    if any(profile not in ALLOWED_TOOL_PROFILES for profile in body.tool_profiles): raise HTTPException(422, "tool profile is not approved")
     if body.volume and (not body.volume.replace("-", "").isalnum() or body.mode not in {"read-only", "read-write"}): raise HTTPException(422, "invalid mount capability")
     name = container_name(body.name)
     try: container = client.containers.get(name); return {"id":container.id,"name":name,"status":container.status}
@@ -32,7 +35,7 @@ def create_sandbox(body: SandboxRequest):
     if body.volume:
         client.volumes.create(name=volume_name(body.volume), labels={"nestbox.managed":"true"})
         mounts = [Mount(target="/workspace", source=volume_name(body.volume), type="volume", read_only=body.mode == "read-only")]
-    try: container = client.containers.run(body.image, body.command, name=name, detach=True, network_disabled=True, read_only=True, cap_drop=["ALL"], security_opt=["no-new-privileges:true"], mem_limit=body.memory_limit, nano_cpus=int(body.cpu_limit * 1000000000), pids_limit=body.pids_limit, mounts=mounts, labels={"nestbox.managed":"true","nestbox.runtime":body.runtime,"nestbox.policy":body.policy_id or "none"})
+    try: container = client.containers.run(body.image, body.command, name=name, detach=True, network_disabled=True, read_only=True, cap_drop=["ALL"], security_opt=["no-new-privileges:true"], mem_limit=body.memory_limit, nano_cpus=int(body.cpu_limit * 1000000000), pids_limit=body.pids_limit, mounts=mounts, labels={"nestbox.managed":"true","nestbox.runtime":body.runtime,"nestbox.policy":body.policy_id or "none","nestbox.tools":";".join(body.tool_profiles)})
     except docker.errors.DockerException as error: raise HTTPException(400, str(error))
     return {"id":container.id,"name":name,"status":container.status}
 @app.post("/v1/sandboxes/{name}/{action}")

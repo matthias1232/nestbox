@@ -30,6 +30,7 @@ services:
     restart: unless-stopped
     environment:
       NESTBOX_ALLOWED_IMAGES: alpine:3.20,nginx:1.27-alpine
+      NESTBOX_ALLOWED_TOOL_PROFILES: git,github-mcp,web-research
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     ports:

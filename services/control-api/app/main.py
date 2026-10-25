@@ -41,6 +41,7 @@ class Sandbox(BaseModel):
     memory_limit: str = "512m"
     cpu_limit: float = 1.0
     pids_limit: int = 128
+    tool_profiles: list[str] = []
 class Action(BaseModel):
     action: str = Field(pattern="^(start|stop|restart|remove)$")
 class Policy(BaseModel):
