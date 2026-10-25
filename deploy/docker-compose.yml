@@ -28,6 +28,8 @@ services:
   sandbox-runner:
     build: ../services/sandbox-runner
     restart: unless-stopped
+    environment:
+      NESTBOX_ALLOWED_IMAGES: alpine:3.20,nginx:1.27-alpine
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     ports:

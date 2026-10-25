@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from docker.types import Mount
 import docker
 app = FastAPI(title="Nestbox Sandbox Runner")
+ALLOWED_IMAGES = set(os.getenv("NESTBOX_ALLOWED_IMAGES", "alpine:3.20").split(","))
 client = docker.from_env()
 class SandboxRequest(BaseModel):
     name: str = Field(pattern="^[a-z0-9-]{1,63}$")
@@ -19,6 +20,7 @@ def volume_name(name): return "nestbox-volume-" + name
 def healthz(): return {"status":"ok","service":"sandbox-runner"}
 @app.post("/v1/sandboxes", status_code=201)
 def create_sandbox(body: SandboxRequest):
+    if body.image not in ALLOWED_IMAGES: raise HTTPException(422, "image is not approved")
     if body.volume and (not body.volume.replace("-", "").isalnum() or body.mode not in {"read-only", "read-write"}): raise HTTPException(422, "invalid mount capability")
     name = container_name(body.name)
     try: container = client.containers.get(name); return {"id":container.id,"name":name,"status":container.status}
