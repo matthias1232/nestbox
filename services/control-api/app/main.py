@@ -38,6 +38,9 @@ class Sandbox(BaseModel):
     image: str = "alpine:3.20"
     volume: str | None = None
     mode: str = "read-write"
+    memory_limit: str = "512m"
+    cpu_limit: float = 1.0
+    pids_limit: int = 128
 class Action(BaseModel):
     action: str = Field(pattern="^(start|stop|restart|remove)$")
 class Policy(BaseModel):
@@ -52,7 +55,7 @@ def list_sandboxes(): return list(state["sandboxes"].values())
 @app.post("/v1/sandboxes", status_code=201)
 def create_sandbox(body: Sandbox):
     if body.policy_id and body.policy_id not in state["policies"]: raise HTTPException(404,"policy not found")
-    result = runner("POST", "/v1/sandboxes", {"name":body.name,"runtime":body.runtime,"policy_id":body.policy_id,"volume":body.volume,"mode":body.mode,"image":body.image})
+    result = runner("POST", "/v1/sandboxes", body.model_dump())
     value = body.model_dump() | {"id":result["id"],"status":result["status"],"created_at":now()}
     state["sandboxes"][value["id"]]=value; audit("sandbox.created",value["id"],{"runtime":body.runtime}); return value
 @app.post("/v1/sandboxes/{sandbox_id}/lifecycle")
