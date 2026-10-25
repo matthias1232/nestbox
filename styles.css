@@ -29,3 +29,4 @@ section{padding:6rem 0}.purpose{background:#0e140b;text-align:center}.purpose h2
 .roadmap-scale{background:radial-gradient(circle at 85% 25%,#568c2730,transparent 36%),#0d130a}.scale-steps{display:grid;gap:.8rem}.scale-steps article{padding:1.15rem;border:1px solid #405a29;background:#10170d}.scale-steps b{color:var(--lime);font:700 .68rem var(--mono);letter-spacing:.1em;text-transform:uppercase}.scale-steps h3{font-size:1.2rem;margin:.4rem 0}.scale-steps p{font-size:.85rem;margin:0}
 .origin{background:radial-gradient(circle at 80% 20%,#5d92262e,transparent 38%),#0d130a}.origin .button{margin-top:1.25rem}
 #origin .button.quiet{margin:1.25rem 0 0 .55rem}
+.visual-disclosure{padding:1.25rem 0;background:#0a0d08;border-top:1px solid #25351a}.visual-disclosure p{margin:0;max-width:70rem;color:#91a086;font-size:.76rem}.visual-disclosure strong{color:#c5fa50}
