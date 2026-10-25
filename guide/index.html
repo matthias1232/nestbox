@@ -55,9 +55,9 @@
         </p>
         <ul class="guide-facts">
           <li><strong>VM</strong> 2 vCPU, 4 GB RAM, 60 GB disk</li>
-          <li><strong>Network</strong> DHCP by default, static optional</li>
-          <li><strong>Install time</strong> about 6 minutes, unattended</li>
-          <li><strong>First boot</strong> 5–10 minutes for Docker and the controller image</li>
+          <li><strong>Network</strong> DHCP or static — chosen in the Image Creator</li>
+          <li><strong>Install time</strong> unattended; duration depends on the Ubuntu mirror</li>
+          <li><strong>First boot</strong> Docker, OpenShell gateway and the controller start automatically</li>
         </ul>
         <p class="guide-note">
           The buttons and dialog names below follow Proxmox VE 8.x; 9.x looks the same in the places that matter.
@@ -114,11 +114,17 @@ cd nestbox
               <a class="zoom" href="../assets/site/creator.png" title="Open at full resolution"><img src="../assets/site/creator.png" alt="Nestbox Image Creator page with the recipe summary, the Brev command and the rendered autoinstall and user-data" width="3200" height="2200"></a>
             </div>
             <figcaption>A creator recipe: DHCP on the appliance side, the UI on port 8443, self-signed TLS for
-              <code>nestbox-ct.local</code>, and one preseeded nest on port 8080.</figcaption>
+             <code>nestbox-ct.local</code>, and one preseeded nest on port 8080.</figcaption>
           </figure>
           <div class="callout">
             <p><strong>One image, three series.</strong> The same seed format works for Ubuntu 22.04, 24.04 and 26.04.
               Pick the base ISO for the series you want; the payload is identical.</p>
+          </div>
+          <div class="callout">
+            <p><strong>Virtualisation integration.</strong> On first boot Nestbox detects KVM/QEMU (including
+              Proxmox) and enables the QEMU Guest Agent. VMware installs Open VM Tools. A physical machine gets
+              neither service. This makes the IP address and controlled shutdown visible to the hypervisor without
+              changing the appliance workflow.</p>
           </div>
         </section>
 
@@ -441,7 +447,7 @@ sudo tail -f /var/log/nestbox/firstboot.log</code></pre>
       </div>
       <div class="footer-bottom">
         <p>Apache-2.0 · © Matthias Binder</p>
-        <p>Independent community project. Not affiliated with or endorsed by NVIDIA.</p>
+        <p>Independent community project. Product names belong to their respective owners.</p>
       </div>
     </div>
   </footer>
