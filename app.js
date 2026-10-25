@@ -7,3 +7,10 @@ function render(){output.textContent='# Nestbox Compute seed bundle - generated 
 form.addEventListener('submit',function(e){e.preventDefault();render();document.querySelector('#generate').scrollIntoView({behavior:'smooth'});});
 document.querySelector('#copy').addEventListener('click',async function(){render();await navigator.clipboard.writeText(output.textContent);this.textContent='Copied';});
 document.querySelector('#download').addEventListener('click',function(){render();const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([output.textContent]));a.download=host.value+'.seed.yaml';a.click();});render();
+const overlay = document.querySelector("#dev-overlay");
+document.querySelector("#dismiss-overlay")?.addEventListener("click", () => { overlay?.remove(); localStorage.setItem("nestbox-development-notice-dismissed", "1"); });
+if (localStorage.getItem("nestbox-development-notice-dismissed") === "1") overlay?.remove();
+const slides = [...document.querySelectorAll(".feature-slide")]; const dots = document.querySelector("#slider-dots"); const count = document.querySelector("#slide-count"); let activeSlide = 0;
+function showSlide(index) { activeSlide=(index+slides.length)%slides.length; slides.forEach((slide,i)=>slide.classList.toggle("active",i===activeSlide)); [...dots.children].forEach((dot,i)=>dot.classList.toggle("active",i===activeSlide)); if(count)count.textContent=String(activeSlide+1).padStart(2,"0")+" / "+String(slides.length).padStart(2,"0"); }
+slides.forEach((_,i)=>{const dot=document.createElement("button");dot.type="button";dot.setAttribute("aria-label","Show feature "+(i+1));dot.addEventListener("click",()=>showSlide(i));dots?.append(dot);});
+document.querySelector("#prev-slide")?.addEventListener("click",()=>showSlide(activeSlide-1)); document.querySelector("#next-slide")?.addEventListener("click",()=>showSlide(activeSlide+1)); if(slides.length)showSlide(0);
