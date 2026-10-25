@@ -51,7 +51,7 @@ The project is designed around **OpenShell**, the NVIDIA safe runtime for contro
 
 **Agent workspace.** Choose an agent runtime, approved tools, MCP capabilities, project scope and reusable policy before deployment.
 <p><img src="assets/brand/security-flow.jpg" alt="Policy gateway controls sandbox traffic" width="49%"> <img src="assets/brand/deployment-targets.jpg" alt="Deployment targets for Nestbox" width="49%"></p>
-**Policy and egress.** A governed forward proxy is the intended default. Transparent proxy and TLS inspection are explicit opt-in, sandbox-scoped and disabled by default.
+**Policy and egress.** A governed forward proxy is the intended default. Transparent proxy and TLS inspection are explicit opt-in, sandbox-scoped and disabled by default. For a highly isolated sandbox, policy can start as default-deny and allowlist only the required hosts, protocols, ports and tools.
 **Deploy where compute lives.** Generate inspectable seed bundles for bare metal, Proxmox, a cloud VM, WSL and local GPU hardware.
 
 ## Architecture
@@ -90,3 +90,7 @@ An operator can blacklist a hostname or domain for one sandbox or an assigned po
 ## Rule from event
 The planned Live Traffic Console will let an operator select a suspicious DNS query or network event and create a prefilled policy-rule draft.
 A connection event can prefill destination, protocol and port; a DNS event can prefill a hostname or domain block rule. The draft is reviewed, diffed and explicitly applied before future traffic is blocked.
+## Firewall and DNS visuals
+<p><img src="assets/brand/firewall-rule-event.jpg" alt="Firewall traffic event becomes a sandbox block-rule draft" width="49%"> <img src="assets/brand/dns-control.jpg" alt="Appliance DNS control with blacklist and allowlist policy" width="49%"></p>
+**Firewall event to rule.** A suspicious connection can become a sandbox-scoped block-rule draft; an operator reviews the diff and explicitly applies it.
+**DNS blacklist and allowlist.** A managed appliance DNS service logs each sandbox query. Block an unwanted name, or use default-deny DNS and allowlist only the domains a hardened workload requires.
