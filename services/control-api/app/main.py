@@ -3,7 +3,7 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 app = FastAPI(title="Nestbox Control API", version="0.1.0")
-state = {"sandboxes": {}, "policies": {}, "mounts": {}, "events": []}
+state = {"sandboxes": {}, "policies": {}, "mounts": {}, "events": [], "artifacts": {}}
 tools = [{"id":"git","kind":"package"},{"id":"github","kind":"mcp"},{"id":"web-research","kind":"mcp"}]
 def stamp(): return datetime.now(UTC).isoformat()
 def audit(kind, subject, detail=None):
@@ -59,3 +59,9 @@ def lifecycle(sandbox_id: str, body: Action):
     value["status"] = "running" if body.action in {"start", "restart"} else "stopped"
     audit("sandbox." + body.action, sandbox_id, {"status": value["status"]})
     return value
+@app.get("/v1/artifacts")
+def list_artifacts(): return list(state["artifacts"].values())
+@app.post("/v1/artifacts/seed-bundles", status_code=201)
+def create_seed_bundle(body: dict):
+    ident=str(uuid4()); artifact={"id":ident,"kind":"seed-bundle","status":"rendered","created_at":stamp(),"recipe":body}
+    state["artifacts"][ident]=artifact; audit("artifact.seed_bundle.rendered",ident); return artifact
