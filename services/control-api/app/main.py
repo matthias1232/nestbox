@@ -1,3 +1,4 @@
+from pathlib import Path
 import os
 import json
 from datetime import datetime, UTC
@@ -74,8 +75,13 @@ def create_policy(body: Policy):
 def tool_catalog(): return tools
 @app.get("/v1/events")
 def list_events(): return state["events"]
-@app.get("/v1/mounts")
+@app.get("/v1/egress-events")
+def list_egress_events():
+    path = Path("/data/gateway/access.json")
+    if not path.exists(): return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line][:500]
 def list_mounts(): return list(state["mounts"].values())
+@app.get("/v1/mounts")
 @app.post("/v1/mounts", status_code=201)
 def create_mount(body: Mount):
     if body.sandbox_id not in state["sandboxes"]: raise HTTPException(404,"sandbox not found")

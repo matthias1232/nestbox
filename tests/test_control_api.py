@@ -1,4 +1,7 @@
+import os
+import tempfile
 import sys
+os.environ["NESTBOX_STATE_PATH"] = tempfile.mktemp(prefix="nestbox-test-", suffix=".json")
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services" / "control-api"))
 from fastapi.testclient import TestClient
@@ -30,3 +33,5 @@ def test_registry_and_image_plan():
     plan = client.post("/v1/image-deployments", json={"registry_id":registry_id,"image":"library/nginx:latest","sandbox_name":"protected-app"})
     assert plan.status_code == 202
     assert plan.json()["protect_with_openshell"] is True
+def test_egress_events_empty_without_gateway_log():
+    assert client.get("/v1/egress-events").status_code == 200

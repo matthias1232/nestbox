@@ -6,6 +6,7 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./data:/data
+      - ./data/gateway:/data/gateway:ro
   web-console:
     build: ../services/web-console
     volumes:
@@ -18,5 +19,7 @@ services:
   gateway:
     build: ../services/gateway
     restart: unless-stopped
+    volumes:
+      - ./data/gateway:/var/log/nginx
     ports:
       - "127.0.0.1:8081:8081"
