@@ -39,7 +39,7 @@ The project is designed around **OpenShell**, the NVIDIA safe runtime for contro
 | Policy editor | Validate, version, diff, assign, revoke and roll back policy for mounts, tools, DNS, TLS and destinations. | In development |
 | Project mounts | Grant read-only or read-write access; detach and reassign without global shared storage. | In development |
 | Tools and MCP | Select Git, approved GitHub access, developer tools, CLI packages and MCP capabilities per sandbox. | In development |
-| Gateway observability | Inspect allowed and blocked destinations, route decisions, status and latency per sandbox. | In development |
+| Gateway observability | Live firewall-style traffic console per sandbox: incoming/outgoing direction, protocol, source, destination, port, decision, status, latency and correlation ID. | In development |
 | OCI application sandboxes | Deploy protected images from Docker Hub, private OCI registries and approved image sources. | Planned |
 | Image builder | Produce inspectable Ubuntu seed bundles and later ISO artifacts for bare metal, VM, WSL and local GPU targets. | Seed bundle available; larger flow in development |
 
@@ -68,7 +68,7 @@ Agent sandbox | Model sandbox | Tool-enabled sandbox | OCI app sandbox
 Each project mount, tool, MCP capability and egress route is an explicit capability grant. The web UI does not receive host privileges, and ordinary sandbox files do not hold long-lived secrets.
 
 ## Secure network traffic
-The governed forward proxy is the intended default. Operators can inspect destinations, policy decisions, status and latency without TLS decryption. Transparent proxy observation is planned as explicit opt-in for an authorized sandbox and can be disabled again with its sandbox-scoped trust CA revoked.
+The governed forward proxy is the intended default. The planned Admin Center shows a live firewall-style timeline for each sandbox: incoming and outgoing direction, protocol, source, destination, port, policy decision, status, latency and correlation ID. Transparent proxy observation is planned as explicit opt-in for an authorized sandbox and can be disabled again with its sandbox-scoped trust CA revoked.
 
 ## Local AI and NVIDIA ecosystem context
 Nestbox targets local GPU workstations, DGX Spark-class GB10 Grace Blackwell systems, provider-neutral GPU VMs and NVIDIA cloud resources. NVIDIA Nemotron, NIM, NeMo, NemoClaw, OpenShell and NVIDIA AI Enterprise can be part of a workload stack; Nestbox focuses on the policy-first operations layer around it.
