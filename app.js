@@ -14,3 +14,6 @@ const slides = [...document.querySelectorAll(".feature-slide")]; const dots = do
 function showSlide(index) { activeSlide=(index+slides.length)%slides.length; slides.forEach((slide,i)=>slide.classList.toggle("active",i===activeSlide)); [...dots.children].forEach((dot,i)=>dot.classList.toggle("active",i===activeSlide)); if(count)count.textContent=String(activeSlide+1).padStart(2,"0")+" / "+String(slides.length).padStart(2,"0"); }
 slides.forEach((_,i)=>{const dot=document.createElement("button");dot.type="button";dot.setAttribute("aria-label","Show feature "+(i+1));dot.addEventListener("click",()=>showSlide(i));dots?.append(dot);});
 document.querySelector("#prev-slide")?.addEventListener("click",()=>showSlide(activeSlide-1)); document.querySelector("#next-slide")?.addEventListener("click",()=>showSlide(activeSlide+1)); if(slides.length)showSlide(0);
+let sliderTouchStart = null;
+document.querySelector("#feature-slider")?.addEventListener("touchstart", event => { sliderTouchStart = event.changedTouches[0].clientX; }, { passive: true });
+document.querySelector("#feature-slider")?.addEventListener("touchend", event => { const delta = event.changedTouches[0].clientX - sliderTouchStart; if (Math.abs(delta) > 45) showSlide(activeSlide + (delta < 0 ? 1 : -1)); }, { passive: true });
