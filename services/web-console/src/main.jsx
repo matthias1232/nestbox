@@ -21,6 +21,7 @@ const dataProvider = {
 };
 const SandboxList = () => <List><Datagrid rowClick="show"><TextField source="name" /><TextField source="runtime" /><TextField source="template" /><TextField source="status" /><DateField source="created_at" showTime /></Datagrid></List>;
 const SandboxCreate = () => <Create><SimpleForm><TextInput source="name" required /><SelectInput source="runtime" choices={[{ id: 'openshell', name: 'OpenShell' }, { id: 'custom', name: 'Custom' }]} defaultValue="openshell" /><SelectInput source="template" choices={[{ id: 'development', name: 'Development' }, { id: 'research', name: 'Research' }, { id: 'custom', name: 'Custom' }]} defaultValue="custom" /></SimpleForm></Create>;
+const RuntimeList = () => <List><Datagrid><TextField source="name" /><TextField source="status" /><TextField source="runtime" /><TextField source="policy_id" /><TextField source="id" /></Datagrid></List>;
 const PolicyList = () => <List><Datagrid rowClick="show"><TextField source="name" /><TextField source="version" /><TextField source="proxy_observation" /><TextField source="syslog_enabled" /><DateField source="created_at" showTime /></Datagrid></List>;
 const PolicyCreate = () => <Create><SimpleForm><TextInput source="name" required /><BooleanInput source="proxy_observation" /><BooleanInput source="syslog_enabled" /></SimpleForm></Create>;
 const ModelCreate = () => <Create><SimpleForm><TextInput source="name" required /><TextInput source="profile" required /><TextInput source="hardware_target" defaultValue="local-gpu" /></SimpleForm></Create>;
@@ -31,6 +32,7 @@ const App = () => <Admin dataProvider={dataProvider} title="Nestbox Control Cent
   <Resource name="policies" list={PolicyList} create={PolicyCreate} />
   <Resource name="mounts" list={ListGuesser} />
   <Resource name="registries" list={ListGuesser} create={RegistryCreate} />
+  <Resource name="runtime-status" list={RuntimeList} />
   <Resource name="events" list={ListGuesser} />
   <Resource name="egress-events" list={ListGuesser} />
   <Resource name="artifacts" list={ListGuesser} />
