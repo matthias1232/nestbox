@@ -105,3 +105,7 @@ Many teams already operate NVIDIA GPUs in a private datacenter, lab or cloud env
 The planned configuration path can cover CUDA runtime compatibility, GPU device access, container image selection and workload-specific settings for approved components such as CUDA-X libraries, NIM microservices, TensorRT-LLM, RAPIDS or other software already present in the organization.
 Nestbox does not replace NVIDIA drivers, CUDA-X software, licensing or vendor support; it is intended to attach approved local or cloud GPU capabilities to a governed sandbox with explicit policy and observability.
 See [What is NVIDIA CUDA-X?](https://www.nvidia.com/de-de/technologies/cuda-x/).
+## Future direction: from home lab to teams
+Nestbox is being built in the open. Early foundations exist, but the next milestone is repeatable validation: make the core workflows reliable, run the first tests, learn from real feedback and announce a wider testing opportunity only when the project is ready for useful evaluation.
+If the project proves useful and earns sustained adoption, the direction could expand from one home-lab host or single VM into a centrally managed fleet. That may include multiple VMs, gateways, sandboxes and local-model runtimes operated from one Control Center, with Kubernetes-compatible deployment explored only when real demand justifies the added complexity.
+This is a direction, not a promise or production roadmap. The immediate focus remains a safe, understandable single-host foundation.
