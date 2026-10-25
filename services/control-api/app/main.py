@@ -50,3 +50,12 @@ def list_mounts(): return list(state["mounts"].values())
 def create_mount(body: Mount):
     if body.sandbox_id not in state["sandboxes"]: raise HTTPException(404,"sandbox not found")
     ident=str(uuid4()); value=body.model_dump()|{"id":ident,"created_at":stamp()}; state["mounts"][ident]=value; audit("mount.attached",ident,value); return value
+
+@app.post("/v1/sandboxes/{sandbox_id}/lifecycle")
+def lifecycle(sandbox_id: str, body: Action):
+    value = state["sandboxes"].get(sandbox_id)
+    if not value:
+        raise HTTPException(404, "sandbox not found")
+    value["status"] = "running" if body.action in {"start", "restart"} else "stopped"
+    audit("sandbox." + body.action, sandbox_id, {"status": value["status"]})
+    return value
