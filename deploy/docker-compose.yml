@@ -4,6 +4,8 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/data
   web-console:
     build: ../services/web-console
     restart: unless-stopped
