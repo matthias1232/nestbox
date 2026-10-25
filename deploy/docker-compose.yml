@@ -23,3 +23,10 @@ services:
       - ./data/gateway:/var/log/nginx
     ports:
       - "127.0.0.1:8081:8081"
+  sandbox-runner:
+    build: ../services/sandbox-runner
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "127.0.0.1:9000:9000"
