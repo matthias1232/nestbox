@@ -99,3 +99,9 @@ A connection event can prefill destination, protocol and port; a DNS event can p
 <p><img src="assets/brand/firewall-rule-event.jpg" alt="Firewall traffic event becomes a sandbox block-rule draft" width="49%"> <img src="assets/brand/dns-control.jpg" alt="Appliance DNS control with blacklist and allowlist policy" width="49%"></p>
 **Firewall event to rule.** A suspicious connection can become a sandbox-scoped block-rule draft; an operator reviews the diff and explicitly applies it.
 **DNS blacklist and allowlist.** A managed appliance DNS service logs each sandbox query. Block an unwanted name, or use default-deny DNS and allowlist only the domains a hardened workload requires.
+## CUDA-X-ready sandbox environments
+Many teams already operate NVIDIA GPUs in a private datacenter, lab or cloud environment. Nestbox is planned to make that existing GPU investment easier to use for controlled agent workloads: select a GPU-capable sandbox template and prepare the runtime configuration required by an approved CUDA-X software stack.
+<p><img src="assets/brand/cuda-x-sandbox.jpg" alt="Existing GPU hardware prepares an isolated sandbox for an approved CUDA-X software environment" width="100%"></p>
+The planned configuration path can cover CUDA runtime compatibility, GPU device access, container image selection and workload-specific settings for approved components such as CUDA-X libraries, NIM microservices, TensorRT-LLM, RAPIDS or other software already present in the organization.
+Nestbox does not replace NVIDIA drivers, CUDA-X software, licensing or vendor support; it is intended to attach approved local or cloud GPU capabilities to a governed sandbox with explicit policy and observability.
+See [What is NVIDIA CUDA-X?](https://www.nvidia.com/de-de/technologies/cuda-x/).
