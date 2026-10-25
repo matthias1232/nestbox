@@ -53,3 +53,7 @@ def logs(name: str, tail: int = 200):
     except docker.errors.NotFound: raise HTTPException(404, "sandbox not found")
     if container.labels.get("nestbox.managed") != "true": raise HTTPException(403, "unmanaged container")
     return {"name":container.name,"logs":container.logs(tail=tail).decode(errors="replace")}
+@app.get("/v1/sandboxes")
+def list_managed_sandboxes():
+    containers = client.containers.list(all=True, filters={"label": "nestbox.managed=true"})
+    return [{"id": item.id, "name": item.name, "status": item.status, "runtime": item.labels.get("nestbox.runtime"), "policy_id": item.labels.get("nestbox.policy")} for item in containers]

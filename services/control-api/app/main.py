@@ -84,3 +84,6 @@ def sandbox_logs(sandbox_id: str, tail: int = 200):
     value = state["sandboxes"].get(sandbox_id)
     if not value: raise HTTPException(404, "sandbox not found")
     return runner("GET", "/v1/sandboxes/" + value["name"] + "/logs?tail=" + str(tail))
+@app.get("/v1/runtime-status")
+def runtime_status():
+    return runner("GET", "/v1/sandboxes")
