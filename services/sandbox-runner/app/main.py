@@ -26,6 +26,7 @@ def healthz(): return {"status":"ok","service":"sandbox-runner"}
 @app.post("/v1/sandboxes", status_code=201)
 def create_sandbox(body: SandboxRequest):
     if body.image not in ALLOWED_IMAGES: raise HTTPException(422, "image is not approved")
+    if "git" in body.tool_profiles and body.image == "alpine:3.20": body.image = "nestbox-tool-git:local"
     if any(profile not in ALLOWED_TOOL_PROFILES for profile in body.tool_profiles): raise HTTPException(422, "tool profile is not approved")
     if body.volume and (not body.volume.replace("-", "").isalnum() or body.mode not in {"read-only", "read-write"}): raise HTTPException(422, "invalid mount capability")
     name = container_name(body.name)
