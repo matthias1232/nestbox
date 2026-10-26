@@ -1,6 +1,6 @@
 services:
   control-api:
-    build: ../services/control-api
+    build: ../services/control-api-rust
     restart: unless-stopped
     environment:
       NESTBOX_RUNNER_URL: http://sandbox-runner:9000
@@ -10,7 +10,7 @@ services:
       - ./data:/data
       - ./data/gateway:/data/gateway:ro
   web-console:
-    build: ../services/web-console
+    build: ../services/web-console-solid
     volumes:
       - ./secrets/web-console.htpasswd:/etc/nginx/secrets/web-console.htpasswd:ro
     restart: unless-stopped

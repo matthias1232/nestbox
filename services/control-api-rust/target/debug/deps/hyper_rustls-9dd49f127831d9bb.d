@@ -1,0 +1,9 @@
+/home/core/github/nestbox-site/services/control-api-rust/target/debug/deps/hyper_rustls-9dd49f127831d9bb.d: /tmp/opencode/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-rustls-0.27.10/src/lib.rs /tmp/opencode/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-rustls-0.27.10/src/config.rs /tmp/opencode/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-rustls-0.27.10/src/connector.rs /tmp/opencode/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-rustls-0.27.10/src/connector/builder.rs /tmp/opencode/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-rustls-0.27.10/src/stream.rs
+
+/home/core/github/nestbox-site/services/control-api-rust/target/debug/deps/libhyper_rustls-9dd49f127831d9bb.rmeta: /tmp/opencode/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-rustls-0.27.10/src/lib.rs /tmp/opencode/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-rustls-0.27.10/src/config.rs /tmp/opencode/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-rustls-0.27.10/src/connector.rs /tmp/opencode/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-rustls-0.27.10/src/connector/builder.rs /tmp/opencode/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-rustls-0.27.10/src/stream.rs
+
+/tmp/opencode/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-rustls-0.27.10/src/lib.rs:
+/tmp/opencode/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-rustls-0.27.10/src/config.rs:
+/tmp/opencode/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-rustls-0.27.10/src/connector.rs:
+/tmp/opencode/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-rustls-0.27.10/src/connector/builder.rs:
+/tmp/opencode/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-rustls-0.27.10/src/stream.rs:
