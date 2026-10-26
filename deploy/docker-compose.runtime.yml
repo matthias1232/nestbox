@@ -1,0 +1,53 @@
+services:
+  control-api:
+    build: ../services/control-api-rust
+    restart: unless-stopped
+    environment:
+      NESTBOX_RUNNER_URL: http://sandbox-runner:9000
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/data
+      - ./data/gateway:/data/gateway:ro
+  web-console:
+    build: ../services/web-console-solid
+    volumes:
+      - ./secrets/web-console.htpasswd:/etc/nginx/secrets/web-console.htpasswd:ro
+    restart: unless-stopped
+    depends_on:
+      - control-api
+    ports:
+      - "8080:80"
+  gateway:
+    build: ../services/gateway
+    restart: unless-stopped
+    volumes:
+      - ./data/gateway:/var/log/nginx
+    ports:
+      - "127.0.0.1:8081:8081"
+  sandbox-runner:
+    build: ../services/sandbox-runner
+    restart: unless-stopped
+    environment:
+      NESTBOX_ALLOWED_IMAGES: ubuntu:24.04,nestbox-ubuntu-dev:local,nestbox-hermes:local,nestbox-openclaw:local
+      NESTBOX_RUNTIME_NETWORK: nestbox-runtime
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "127.0.0.1:9000:9000"
+  tool-image-git:
+    build: ../services/tool-images/git
+    image: nestbox-tool-git:local
+    profiles: ["build-tools"]
+  tool-image-ubuntu-dev:
+    build: ../services/tool-images/ubuntu-dev
+    image: nestbox-ubuntu-dev:local
+    profiles: ["build-tools"]
+  tool-image-hermes:
+    build: ../services/tool-images/hermes
+    image: nestbox-hermes:local
+    profiles: ["build-tools"]
+  tool-image-openclaw:
+    build: ../services/tool-images/openclaw
+    image: nestbox-openclaw:local
+    profiles: ["build-tools"]
