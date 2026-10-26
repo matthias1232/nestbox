@@ -28,3 +28,13 @@ document.querySelectorAll('.language-option').forEach(button => {
     });
   });
 });
+const aiTextNodes = [];
+const textWalker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+let aiTextNode;
+while ((aiTextNode = textWalker.nextNode())) {
+  if (/\bAI\b/.test(aiTextNode.nodeValue) && !aiTextNode.parentElement.closest('script, style')) aiTextNodes.push([aiTextNode, aiTextNode.nodeValue]);
+}
+function setSiteVariant(usa) {
+  aiTextNodes.forEach(([node, original]) => { node.nodeValue = usa ? original.replace(/\bAI\b/g, 'SI') : original; });
+}
+document.querySelectorAll('.language-option').forEach(button => button.addEventListener('click', () => setSiteVariant(button.dataset.variant === 'usa')));
