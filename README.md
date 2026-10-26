@@ -9,7 +9,7 @@ Open-source infrastructure for governed AI agents, local models and protected ap
 
 <p align="center">
   <a href="https://nestbox.mmbits.com/">Website</a> ·
-  <a href="https://buymeacoffee.com/matthias1232">Buy me a coffee</a> ·
+  <a href="https://buymeacoffee.com/matthias1232">Buy me a Red Bull 🪽</a> ·
   <a href="#product-surfaces">Product surfaces</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="#follow-development">Follow development</a>
@@ -21,7 +21,7 @@ Open-source infrastructure for governed AI agents, local models and protected ap
 >
 > Please check back, watch this repository or follow the [Nestbox website](https://nestbox.mmbits.com/) for progress updates and future testing announcements.
 
-> **Support the project.** If the direction is useful to you, star the repository or [buy me a coffee](https://buymeacoffee.com/matthias1232). Your support helps fund time spent on the open-source prototype.
+> **Support the project.** If the direction is useful to you, star the repository or [buy me a Red Bull 🪽](https://buymeacoffee.com/matthias1232). Your support helps fund time spent on the open-source prototype.
 
 ---
 
