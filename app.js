@@ -16,3 +16,15 @@ document.querySelector("#prev-slide")?.addEventListener("click",()=>showSlide(ac
 let sliderTouchStart = null;
 document.querySelector("#feature-slider")?.addEventListener("touchstart", event => { sliderTouchStart = event.changedTouches[0].clientX; }, { passive: true });
 document.querySelector("#feature-slider")?.addEventListener("touchend", event => { const delta = event.changedTouches[0].clientX - sliderTouchStart; if (Math.abs(delta) > 45) showSlide(activeSlide + (delta < 0 ? 1 : -1)); }, { passive: true });
+const intelligence = document.querySelector('#hero-intelligence');
+document.querySelectorAll('.language-option').forEach(button => {
+  button.addEventListener('click', () => {
+    const usa = button.dataset.variant === 'usa';
+    intelligence.textContent = usa ? 'SI' : 'AI';
+    document.querySelectorAll('.language-option').forEach(option => {
+      const selected = option === button;
+      option.classList.toggle('active', selected);
+      option.setAttribute('aria-pressed', String(selected));
+    });
+  });
+});
