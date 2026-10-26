@@ -31,3 +31,4 @@ section{padding:6rem 0}.purpose{background:#0e140b;text-align:center}.purpose h2
 #origin .button.quiet{margin:1.25rem 0 0 .55rem}
 .visual-disclosure{padding:1.25rem 0;background:#0a0d08;border-top:1px solid #25351a}.visual-disclosure p{margin:0;max-width:70rem;color:#91a086;font-size:.76rem}.visual-disclosure strong{color:#c5fa50}
 .language-switch{display:flex;overflow:hidden;border:1px solid #40572a;background:#0a0e08}.language-option{padding:.38rem .55rem;border:0;border-right:1px solid #40572a;background:transparent;color:var(--muted);font:700 .67rem var(--mono);letter-spacing:.06em;cursor:pointer}.language-option:last-child{border-right:0}.language-option.active{background:var(--lime);color:#071000}@media(max-width:850px){.language-switch{margin-left:auto}.language-option{padding:.35rem .45rem}}
+.language-option{font-family:var(--sans);font-size:1rem;line-height:1}
