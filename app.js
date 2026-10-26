@@ -42,3 +42,23 @@ const purposeIntelligence = document.querySelector('#purpose-intelligence');
 document.querySelectorAll('.language-option').forEach(button => button.addEventListener('click', () => {
   if (purposeIntelligence) purposeIntelligence.textContent = button.dataset.variant === 'usa' ? 'SI' : 'AI';
 }));
+const heroFilm = document.querySelector('.hero-film');
+const filmToggle = document.querySelector('.film-toggle');
+if (heroFilm && filmToggle) {
+  const syncFilmToggle = () => {
+    const withSound = !heroFilm.muted;
+    filmToggle.textContent = withSound ? 'Mute film' : 'Play film + sound';
+    filmToggle.setAttribute('aria-pressed', String(withSound));
+  };
+  filmToggle.addEventListener('click', () => {
+    const wantSound = heroFilm.muted;
+    heroFilm.muted = !wantSound;
+    if (wantSound) {
+      const resumed = heroFilm.play();
+      if (resumed && typeof resumed.catch === 'function') resumed.catch(() => {});
+    }
+    syncFilmToggle();
+  });
+  heroFilm.addEventListener('volumechange', syncFilmToggle);
+  syncFilmToggle();
+}

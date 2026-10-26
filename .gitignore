@@ -3,3 +3,9 @@ __pycache__/
 *.py[cod]
 .venv/
 node_modules/
+.env.local
+
+# Regenerable intermediates for the hero film: only the finished
+# assets/video/nestbox-intro.mp4 is published.
+assets/video/nestbox-intro-scene-*.mp4
+assets/video/nestbox-intro-original-score.wav
