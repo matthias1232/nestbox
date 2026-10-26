@@ -135,3 +135,27 @@ async fn returns_logs_and_handles_unknown_ids() {
     assert_eq!(missing_status, StatusCode::NOT_FOUND);
     assert_eq!(missing["error"]["code"], "sandbox.not_found");
 }
+
+#[tokio::test]
+async fn generates_a_gateway_token_that_stays_server_side() {
+    let harness = harness().await;
+    let (status, created) = call(
+        &harness.router,
+        "POST",
+        "/v1/sandboxes",
+        Some(json!({ "name": "gateway-09", "pack_key": "openclaw-gateway" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let specs = harness.runtime.created_specs();
+    let environment: std::collections::BTreeMap<String, String> =
+        specs[0].environment.iter().cloned().collect();
+    let token = environment
+        .get("OPENCLAW_GATEWAY_TOKEN")
+        .expect("Token wird injiziert");
+    assert!(!token.is_empty());
+
+    // Das Token darf in der Antwort nicht auftauchen.
+    assert!(!created.to_string().contains(token));
+}

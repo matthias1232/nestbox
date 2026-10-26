@@ -44,7 +44,7 @@ pub fn catalog() -> Vec<Pack> {
                 "--port".to_string(),
                 "8080".to_string(),
                 "--auth".to_string(),
-                "none".to_string(),
+                "token".to_string(),
             ],
             tool_profile: "development-default".to_string(),
             description: "Dedizierte OpenClaw-Gateway-Sandbox.".to_string(),

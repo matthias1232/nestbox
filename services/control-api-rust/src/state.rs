@@ -84,6 +84,9 @@ pub struct Secrets {
     /// Provider-Name → API-Key.
     #[serde(default)]
     pub provider_api_keys: BTreeMap<String, String>,
+    /// Sandbox-Name → generiertes Dienst-Token (z. B. OpenClaw Gateway).
+    #[serde(default)]
+    pub sandbox_tokens: BTreeMap<String, String>,
 }
 
 /// Gemeinsamer Zustand aller Handler.

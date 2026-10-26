@@ -71,6 +71,24 @@ pub async fn create(state: &AppState, input: SandboxInput) -> Result<Sandbox, Ap
         }
     }
 
+    // Dienste, die ein Token verlangen, bekommen ein serverseitig erzeugtes.
+    // Das Token liegt im SecretStore und wird nie über die API ausgegeben.
+    if input.pack_key == "openclaw-gateway"
+        && !environment
+            .iter()
+            .any(|(key, _)| key == "OPENCLAW_GATEWAY_TOKEN")
+    {
+        let token = {
+            let mut secrets = state.secrets.write().await;
+            secrets
+                .sandbox_tokens
+                .entry(input.name.clone())
+                .or_insert_with(|| Uuid::new_v4().to_string())
+                .clone()
+        };
+        environment.push(("OPENCLAW_GATEWAY_TOKEN".to_string(), token));
+    }
+
     let spec = SandboxSpec {
         name: input.name.clone(),
         image: selected.image,
