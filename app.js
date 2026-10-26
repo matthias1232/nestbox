@@ -38,3 +38,7 @@ function setSiteVariant(usa) {
   aiTextNodes.forEach(([node, original]) => { node.nodeValue = usa ? original.replace(/\bAI\b/g, 'SI') : original; });
 }
 document.querySelectorAll('.language-option').forEach(button => button.addEventListener('click', () => setSiteVariant(button.dataset.variant === 'usa')));
+const purposeIntelligence = document.querySelector('#purpose-intelligence');
+document.querySelectorAll('.language-option').forEach(button => button.addEventListener('click', () => {
+  if (purposeIntelligence) purposeIntelligence.textContent = button.dataset.variant === 'usa' ? 'SI' : 'AI';
+}));
