@@ -1,14 +1,28 @@
 services:
+  # Die API läuft unprivilegiert (uid 10001). Das Datenverzeichnis muss
+  # deshalb einmalig passende Rechte bekommen.
+  init-data:
+    image: alpine:3.21
+    restart: "no"
+    command: ["sh", "-c", "mkdir -p /data && chown -R 10001:10001 /data"]
+    volumes:
+      - ./data:/data
+
   control-api:
     build: ../services/control-api-rust
     restart: unless-stopped
     environment:
       NESTBOX_RUNNER_URL: http://sandbox-runner:9000
+      NESTBOX_RUNTIME_NETWORK: nestbox-runtime
+      RUST_LOG: info,tower_http=warn
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./data:/data
       - ./data/gateway:/data/gateway:ro
+    depends_on:
+      init-data:
+        condition: service_completed_successfully
   web-console:
     build: ../services/web-console-solid
     volumes:
