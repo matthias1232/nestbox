@@ -35,3 +35,8 @@ build/
 dist/
 *.iso
 contracts/*.tmp
+
+# Rust/Solid runtime build output
+services/control-api-rust/target/
+services/web-console-solid/node_modules/
+services/web-console-solid/dist/
