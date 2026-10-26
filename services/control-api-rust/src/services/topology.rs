@@ -99,7 +99,10 @@ pub async fn topology(state: &AppState) -> Topology {
         edges.push(TopologyEdge {
             source: binding.source.clone(),
             target: binding.target.clone(),
-            label: format!("{}:{} · {}", binding.protocol, binding.port, binding.purpose),
+            label: format!(
+                "{}:{} · {}",
+                binding.protocol, binding.port, binding.purpose
+            ),
         });
     }
 

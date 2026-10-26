@@ -44,13 +44,19 @@ async fn migrates_legacy_state_and_keeps_compatible_records() {
         "tool_profiles": {},
         "bindings": {}
     });
-    tokio::fs::write(&config.state_path, legacy.to_string()).await.expect("schreiben");
+    tokio::fs::write(&config.state_path, legacy.to_string())
+        .await
+        .expect("schreiben");
 
     let runtime = Arc::new(FakeRuntime::new());
     let state = build(config, runtime).await.expect("State lädt");
 
     let data = state.data.read().await;
-    assert_eq!(data.sandboxes.len(), 1, "nur der kompatible Datensatz bleibt");
+    assert_eq!(
+        data.sandboxes.len(),
+        1,
+        "nur der kompatible Datensatz bleibt"
+    );
     assert!(data.sandboxes.values().any(|item| item.name == "hermes-01"));
     assert!(data.tool_profiles.contains_key("development-default"));
 }

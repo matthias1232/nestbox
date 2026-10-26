@@ -39,14 +39,26 @@ async fn schema_documents_types_and_keeps_api_key_write_only() {
     let harness = harness().await;
     let (_, schema) = call(&harness.router, "GET", "/v1/schema", None).await;
 
-    let schemas = schema["components"]["schemas"].as_object().expect("Schemas");
-    for expected in ["Sandbox", "SandboxInput", "ProviderProfile", "ProviderInput", "Topology"] {
+    let schemas = schema["components"]["schemas"]
+        .as_object()
+        .expect("Schemas");
+    for expected in [
+        "Sandbox",
+        "SandboxInput",
+        "ProviderProfile",
+        "ProviderInput",
+        "Topology",
+    ] {
         assert!(schemas.contains_key(expected), "Schema fehlt: {expected}");
     }
 
     // Der Key ist nur im Eingabeschema erlaubt, niemals im Ausgabeschema.
     assert!(schemas["ProviderInput"]["properties"]["api_key"].is_object());
-    assert!(schemas["ProviderProfile"]["properties"].get("api_key").is_none());
+    assert!(
+        schemas["ProviderProfile"]["properties"]
+            .get("api_key")
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -55,7 +67,10 @@ async fn swagger_ui_is_served() {
 
     // /docs leitet auf /docs/ um (SwaggerUi-Verhalten), dort liegt die Seite.
     let (redirect, _) = call_raw(&harness.router, "GET", "/docs", None).await;
-    assert!(redirect.is_redirection(), "erwartet Redirect, war {redirect}");
+    assert!(
+        redirect.is_redirection(),
+        "erwartet Redirect, war {redirect}"
+    );
 
     let (status, body) = call_raw(&harness.router, "GET", "/docs/", None).await;
     assert_eq!(status, StatusCode::OK);

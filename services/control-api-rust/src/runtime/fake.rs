@@ -28,7 +28,11 @@ impl FakeRuntime {
         self.specs.lock().expect("Mutex vergiftet").clone()
     }
 
-    fn with_entry<T>(&self, name: &str, change: impl FnOnce(&mut RuntimeFacts) -> T) -> Result<T, RuntimeError> {
+    fn with_entry<T>(
+        &self,
+        name: &str,
+        change: impl FnOnce(&mut RuntimeFacts) -> T,
+    ) -> Result<T, RuntimeError> {
         let mut guard = self.sandboxes.lock().expect("Mutex vergiftet");
         let entry = guard
             .get_mut(name)

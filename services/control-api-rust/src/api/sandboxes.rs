@@ -102,5 +102,7 @@ pub async fn logs(
     Path(id): Path<String>,
     Query(query): Query<LogQuery>,
 ) -> Result<Json<SandboxLogs>, ApiError> {
-    Ok(Json(service::logs(&state, &id, query.tail.unwrap_or(200)).await?))
+    Ok(Json(
+        service::logs(&state, &id, query.tail.unwrap_or(200)).await?,
+    ))
 }

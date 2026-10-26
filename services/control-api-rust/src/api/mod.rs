@@ -37,9 +37,15 @@ fn v1() -> Router<AppState> {
         .route("/tool-catalog", get(tools::catalog))
         .route("/sandboxes", get(sandboxes::list).post(sandboxes::create))
         .route("/sandboxes/{id}", get(sandboxes::get))
-        .route("/sandboxes/{id}/lifecycle", axum::routing::post(sandboxes::lifecycle))
+        .route(
+            "/sandboxes/{id}/lifecycle",
+            axum::routing::post(sandboxes::lifecycle),
+        )
         .route("/sandboxes/{id}/logs", get(sandboxes::logs))
         .route("/bindings", get(bindings::list).post(bindings::create))
         .route("/topology", get(topology::get))
-        .route("/reference/deploy", axum::routing::post(reference::deploy_reference))
+        .route(
+            "/reference/deploy",
+            axum::routing::post(reference::deploy_reference),
+        )
 }

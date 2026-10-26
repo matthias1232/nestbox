@@ -15,9 +15,9 @@ use crate::state::AppState;
 pub fn validate_name(name: &str) -> Result<(), ApiError> {
     let allowed = !name.is_empty()
         && name.len() <= 63
-        && name
-            .chars()
-            .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-');
+        && name.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+        });
     let clean_edges = !name.starts_with('-') && !name.ends_with('-');
 
     if !allowed || !clean_edges {
@@ -138,7 +138,14 @@ pub async fn create(state: &AppState, input: SandboxInput) -> Result<Sandbox, Ap
 
 /// Alle Sandboxes mit aktuellem Ist-Zustand.
 pub async fn list(state: &AppState) -> Vec<Sandbox> {
-    let mut items: Vec<Sandbox> = state.data.read().await.sandboxes.values().cloned().collect();
+    let mut items: Vec<Sandbox> = state
+        .data
+        .read()
+        .await
+        .sandboxes
+        .values()
+        .cloned()
+        .collect();
 
     for item in &mut items {
         match state.runtime.inspect(&item.name).await {
@@ -160,7 +167,12 @@ pub async fn get(state: &AppState, id: &str) -> Result<Sandbox, ApiError> {
         data.sandboxes
             .get(id)
             .cloned()
-            .or_else(|| data.sandboxes.values().find(|item| item.name == id).cloned())
+            .or_else(|| {
+                data.sandboxes
+                    .values()
+                    .find(|item| item.name == id)
+                    .cloned()
+            })
             .ok_or_else(|| ApiError::NotFound {
                 resource: "sandbox",
                 id: id.to_string(),
@@ -194,7 +206,11 @@ pub async fn lifecycle(
             .map_err(|error| runtime_error(error, &sandbox.name))?;
         state.data.write().await.sandboxes.remove(&sandbox.id);
         state
-            .audit("sandbox.removed", &sandbox.id, serde_json::json!({ "name": sandbox.name }))
+            .audit(
+                "sandbox.removed",
+                &sandbox.id,
+                serde_json::json!({ "name": sandbox.name }),
+            )
             .await;
         return Ok(Sandbox {
             status: "deleted".to_string(),

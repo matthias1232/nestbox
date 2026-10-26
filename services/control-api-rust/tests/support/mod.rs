@@ -80,7 +80,12 @@ pub async fn call(
 }
 
 /// Schickt eine Anfrage und liefert den rohen Text (für HTML und Secret-Prüfungen).
-pub async fn call_raw(router: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, String) {
+pub async fn call_raw(
+    router: &Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, String) {
     let request = Request::builder()
         .method(method)
         .uri(uri)

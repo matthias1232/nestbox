@@ -114,7 +114,11 @@ pub async fn deploy(state: &AppState) -> DeploymentReport {
             topology::create(state, request).await
         {
             state
-                .audit("reference.binding.skipped", "hermes-to-gateway", serde_json::json!({ "reason": message }))
+                .audit(
+                    "reference.binding.skipped",
+                    "hermes-to-gateway",
+                    serde_json::json!({ "reason": message }),
+                )
                 .await;
         }
     }

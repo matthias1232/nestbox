@@ -20,13 +20,24 @@ pub struct ProviderCredentials {
 
 /// Öffentliche Liste aller Profile.
 pub async fn list(state: &AppState) -> Vec<ProviderProfile> {
-    state.data.read().await.providers.values().cloned().collect()
+    state
+        .data
+        .read()
+        .await
+        .providers
+        .values()
+        .cloned()
+        .collect()
 }
 
 /// Legt ein Profil an; der Key landet getrennt von den Metadaten.
 pub async fn create(state: &AppState, input: ProviderInput) -> Result<ProviderProfile, ApiError> {
     let name = input.name.trim().to_string();
-    if name.is_empty() || !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
         return Err(ApiError::Invalid(
             "Provider-Name muss ^[a-z0-9-]{1,63}$ erfüllen.".to_string(),
         ));
@@ -93,7 +104,13 @@ pub async fn credentials(state: &AppState, name: &str) -> Result<ProviderCredent
             .cloned()
             .ok_or_else(|| ApiError::Invalid(format!("Unbekannter Provider '{name}'.")))?
     };
-    let api_key = state.secrets.read().await.provider_api_keys.get(name).cloned();
+    let api_key = state
+        .secrets
+        .read()
+        .await
+        .provider_api_keys
+        .get(name)
+        .cloned();
 
     Ok(ProviderCredentials {
         base_url: profile.base_url,

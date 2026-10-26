@@ -29,7 +29,13 @@ async fn rejects_duplicate_names() {
     let harness = harness().await;
     let payload = json!({ "name": "dev-01" });
 
-    let (first, _) = call(&harness.router, "POST", "/v1/sandboxes", Some(payload.clone())).await;
+    let (first, _) = call(
+        &harness.router,
+        "POST",
+        "/v1/sandboxes",
+        Some(payload.clone()),
+    )
+    .await;
     let (second, body) = call(&harness.router, "POST", "/v1/sandboxes", Some(payload)).await;
 
     assert_eq!(first, StatusCode::CREATED);
@@ -131,7 +137,8 @@ async fn returns_logs_and_handles_unknown_ids() {
     assert_eq!(logs["tail"], 50);
     assert!(logs["logs"].as_str().expect("Logs").contains("dev-02"));
 
-    let (missing_status, missing) = call(&harness.router, "GET", "/v1/sandboxes/unknown", None).await;
+    let (missing_status, missing) =
+        call(&harness.router, "GET", "/v1/sandboxes/unknown", None).await;
     assert_eq!(missing_status, StatusCode::NOT_FOUND);
     assert_eq!(missing["error"]["code"], "sandbox.not_found");
 }

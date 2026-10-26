@@ -25,13 +25,19 @@ async fn never_returns_the_api_key() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
-    assert!(!raw.contains(SECRET), "Antwort darf den Key nicht enthalten");
+    assert!(
+        !raw.contains(SECRET),
+        "Antwort darf den Key nicht enthalten"
+    );
 
     let body: serde_json::Value = serde_json::from_str(&raw).expect("JSON");
     assert_eq!(body["api_key_configured"], true);
 
     let (_, list_raw) = call_raw(&harness.router, "GET", "/v1/providers", None).await;
-    assert!(!list_raw.contains(SECRET), "Liste darf den Key nicht enthalten");
+    assert!(
+        !list_raw.contains(SECRET),
+        "Liste darf den Key nicht enthalten"
+    );
 }
 
 #[tokio::test]
@@ -43,7 +49,13 @@ async fn rejects_duplicate_and_invalid_profiles() {
         "model": "auto"
     });
 
-    let (first, _) = call(&harness.router, "POST", "/v1/providers", Some(payload.clone())).await;
+    let (first, _) = call(
+        &harness.router,
+        "POST",
+        "/v1/providers",
+        Some(payload.clone()),
+    )
+    .await;
     let (second, body) = call(&harness.router, "POST", "/v1/providers", Some(payload)).await;
     let (invalid, _) = call(
         &harness.router,
@@ -79,7 +91,9 @@ async fn injects_provider_credentials_into_the_sandbox_environment() {
         &harness.router,
         "POST",
         "/v1/sandboxes",
-        Some(json!({ "name": "hermes-01", "pack_key": "hermes-agent", "provider_id": "omniroute" })),
+        Some(
+            json!({ "name": "hermes-01", "pack_key": "hermes-agent", "provider_id": "omniroute" }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
@@ -92,8 +106,14 @@ async fn injects_provider_credentials_into_the_sandbox_environment() {
         environment.get("OPENAI_BASE_URL").map(String::as_str),
         Some("http://omniroute:20128/v1")
     );
-    assert_eq!(environment.get("OPENAI_MODEL").map(String::as_str), Some("auto"));
-    assert_eq!(environment.get("OPENAI_API_KEY").map(String::as_str), Some(SECRET));
+    assert_eq!(
+        environment.get("OPENAI_MODEL").map(String::as_str),
+        Some("auto")
+    );
+    assert_eq!(
+        environment.get("OPENAI_API_KEY").map(String::as_str),
+        Some(SECRET)
+    );
 }
 
 #[tokio::test]

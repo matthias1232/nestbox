@@ -160,7 +160,9 @@ impl RuntimeAdapter for HttpRunner {
     }
 
     async fn list(&self) -> Result<Vec<RuntimeFacts>, RuntimeError> {
-        let items: Vec<RunnerSandbox> = self.send(reqwest::Method::GET, "/v1/sandboxes", None).await?;
+        let items: Vec<RunnerSandbox> = self
+            .send(reqwest::Method::GET, "/v1/sandboxes", None)
+            .await?;
         Ok(items.into_iter().map(Into::into).collect())
     }
 

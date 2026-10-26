@@ -7,7 +7,10 @@ use serde_json::json;
 use support::{call, harness};
 
 async fn two_sandboxes(harness: &support::Harness) {
-    for (name, pack) in [("gateway-01", "openclaw-gateway"), ("hermes-01", "hermes-agent")] {
+    for (name, pack) in [
+        ("gateway-01", "openclaw-gateway"),
+        ("hermes-01", "hermes-agent"),
+    ] {
         let (status, _) = call(
             &harness.router,
             "POST",

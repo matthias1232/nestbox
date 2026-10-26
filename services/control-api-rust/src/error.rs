@@ -21,7 +21,10 @@ pub enum ApiError {
     NotFound { resource: &'static str, id: String },
 
     #[error("{resource} '{name}' existiert bereits")]
-    Conflict { resource: &'static str, name: String },
+    Conflict {
+        resource: &'static str,
+        name: String,
+    },
 
     #[error("{0}")]
     Invalid(String),

@@ -6,13 +6,15 @@
 
 use utoipa::OpenApi;
 
-use crate::audit::AuditEvent;
 use crate::api;
+use crate::audit::AuditEvent;
 use crate::domain::binding::{Binding, BindingInput};
 use crate::domain::pack::Pack;
 use crate::domain::provider::{ProviderInput, ProviderProfile};
 use crate::domain::runtime::{NetworkInterface, RuntimeFacts, RuntimeResources};
-use crate::domain::sandbox::{LifecycleAction, LifecycleRequest, Sandbox, SandboxInput, SandboxLogs};
+use crate::domain::sandbox::{
+    LifecycleAction, LifecycleRequest, Sandbox, SandboxInput, SandboxLogs,
+};
 use crate::domain::tool_profile::{ToolDefinition, ToolProfile, ToolProfileInput};
 use crate::domain::topology::{Topology, TopologyEdge, TopologyNode};
 use crate::error::{ErrorBody, ErrorEnvelope};

@@ -30,7 +30,14 @@ const CATALOG: &[&str] = &[
 
 /// Alle gespeicherten Profile.
 pub async fn list(state: &AppState) -> Vec<ToolProfile> {
-    state.data.read().await.tool_profiles.values().cloned().collect()
+    state
+        .data
+        .read()
+        .await
+        .tool_profiles
+        .values()
+        .cloned()
+        .collect()
 }
 
 /// Legt ein Profil an.

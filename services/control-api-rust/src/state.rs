@@ -17,8 +17,8 @@ use tokio::sync::RwLock;
 
 use crate::audit::AuditEvent;
 use crate::config::Config;
-use crate::domain::{Binding, ProviderProfile, Sandbox, ToolProfile};
 use crate::domain::pack;
+use crate::domain::{Binding, ProviderProfile, Sandbox, ToolProfile};
 use crate::error::ApiError;
 use crate::runtime::RuntimeAdapter;
 
@@ -200,9 +200,13 @@ async fn read_data(path: &Path) -> Data {
 /// Datensätze werden verworfen; Sandboxes, die noch im Runtime laufen, kommen
 /// über [`AppState::adopt_existing`] zurück.
 fn migrate(value: &mut serde_json::Value) {
-    if let Some(sandboxes) = value.get_mut("sandboxes").and_then(|node| node.as_object_mut()) {
+    if let Some(sandboxes) = value
+        .get_mut("sandboxes")
+        .and_then(|node| node.as_object_mut())
+    {
         sandboxes.retain(|_, item| {
-            item.get("pack_key").is_some_and(|pack| pack.as_str().is_some_and(|name| !name.is_empty()))
+            item.get("pack_key")
+                .is_some_and(|pack| pack.as_str().is_some_and(|name| !name.is_empty()))
                 && item.get("name").and_then(|name| name.as_str()).is_some()
         });
         for item in sandboxes.values_mut() {
@@ -222,7 +226,10 @@ async fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Option<T> {
     match serde_json::from_slice(&bytes) {
         Ok(value) => Some(value),
         Err(error) => {
-            tracing::warn!("{} ist unlesbar und wird ignoriert: {error}", path.display());
+            tracing::warn!(
+                "{} ist unlesbar und wird ignoriert: {error}",
+                path.display()
+            );
             None
         }
     }
