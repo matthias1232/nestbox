@@ -9,3 +9,8 @@ node_modules/
 # assets/video/nestbox-intro.mp4 is published.
 assets/video/nestbox-intro-scene-*.mp4
 assets/video/nestbox-intro-original-score.wav
+
+# Local build output
+services/control-api-rust/target/
+services/web-console-solid/node_modules/
+services/web-console-solid/dist/
