@@ -89,6 +89,14 @@ pub async fn create(state: &AppState, input: SandboxInput) -> Result<Sandbox, Ap
         environment.push(("OPENCLAW_GATEWAY_TOKEN".to_string(), token));
     }
 
+    // Reihenfolge: explizite Eingabe > Empfehlung des Packs > sicherer Default.
+    let memory_limit = input
+        .memory_limit
+        .or(selected.default_memory)
+        .unwrap_or_else(|| "1g".to_string());
+    let cpu_limit = input.cpu_limit.or(selected.default_cpu).unwrap_or(1.0);
+    let pids_limit = input.pids_limit.unwrap_or(256);
+
     let spec = SandboxSpec {
         name: input.name.clone(),
         image: selected.image,
@@ -96,9 +104,9 @@ pub async fn create(state: &AppState, input: SandboxInput) -> Result<Sandbox, Ap
         environment,
         pack_key: input.pack_key.clone(),
         tool_profile: tool_profile.clone(),
-        memory_limit: input.memory_limit,
-        cpu_limit: input.cpu_limit,
-        pids_limit: input.pids_limit,
+        memory_limit,
+        cpu_limit,
+        pids_limit,
     };
 
     let facts = state

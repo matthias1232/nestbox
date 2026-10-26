@@ -63,9 +63,9 @@ pub async fn deploy(state: &AppState) -> DeploymentReport {
             pack_key: pack.to_string(),
             tool_profile: None,
             provider_id: None,
-            memory_limit: "1g".to_string(),
-            cpu_limit: 1.0,
-            pids_limit: 256,
+            memory_limit: None,
+            cpu_limit: None,
+            pids_limit: None,
             environment: Default::default(),
         };
 

@@ -9,18 +9,6 @@ fn default_pack() -> String {
     "ubuntu-dev".to_string()
 }
 
-fn default_memory() -> String {
-    "1g".to_string()
-}
-
-fn default_cpu() -> f64 {
-    1.0
-}
-
-fn default_pids() -> i64 {
-    256
-}
-
 /// Eine vom Controller verwaltete Sandbox.
 ///
 /// `runtime` ist der zuletzt bekannte Ist-Zustand. Er wird bei jedem
@@ -53,12 +41,14 @@ pub struct SandboxInput {
     /// Provider-Profil, dessen Zugangsdaten als Umgebung übergeben werden.
     #[serde(default)]
     pub provider_id: Option<String>,
-    #[serde(default = "default_memory")]
-    pub memory_limit: String,
-    #[serde(default = "default_cpu")]
-    pub cpu_limit: f64,
-    #[serde(default = "default_pids")]
-    pub pids_limit: i64,
+    /// RAM-Limit; leer = Empfehlung des Packs.
+    #[serde(default)]
+    pub memory_limit: Option<String>,
+    /// CPU-Limit; leer = Empfehlung des Packs.
+    #[serde(default)]
+    pub cpu_limit: Option<f64>,
+    #[serde(default)]
+    pub pids_limit: Option<i64>,
     /// Zusätzliche Umgebungswerte (keine Secrets in der Oberfläche speichern).
     #[serde(default)]
     pub environment: std::collections::BTreeMap<String, String>,

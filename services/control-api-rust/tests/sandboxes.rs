@@ -166,3 +166,33 @@ async fn generates_a_gateway_token_that_stays_server_side() {
     // Das Token darf in der Antwort nicht auftauchen.
     assert!(!created.to_string().contains(token));
 }
+
+#[tokio::test]
+async fn applies_pack_resource_defaults_and_allows_overrides() {
+    let harness = harness().await;
+
+    // Ohne Angabe: Empfehlung des Packs (Gateway braucht mehr als 1 GB).
+    call(
+        &harness.router,
+        "POST",
+        "/v1/sandboxes",
+        Some(json!({ "name": "gateway-10", "pack_key": "openclaw-gateway" })),
+    )
+    .await;
+    // Mit Angabe: der explizite Wert gewinnt.
+    call(
+        &harness.router,
+        "POST",
+        "/v1/sandboxes",
+        Some(json!({ "name": "dev-10", "memory_limit": "512m", "cpu_limit": 0.5 })),
+    )
+    .await;
+
+    let specs = harness.runtime.created_specs();
+    let gateway = specs.iter().find(|spec| spec.name == "gateway-10").expect("Gateway");
+    let dev = specs.iter().find(|spec| spec.name == "dev-10").expect("Dev");
+
+    assert_eq!(gateway.memory_limit, "2g");
+    assert_eq!(dev.memory_limit, "512m");
+    assert_eq!(dev.cpu_limit, 0.5);
+}

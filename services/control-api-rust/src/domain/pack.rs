@@ -15,6 +15,12 @@ pub struct Pack {
     pub command: Vec<String>,
     pub tool_profile: String,
     pub description: String,
+    /// Empfohlener RAM, wenn der Aufrufer nichts vorgibt.
+    #[serde(default)]
+    pub default_memory: Option<String>,
+    /// Empfohlene CPUs, wenn der Aufrufer nichts vorgibt.
+    #[serde(default)]
+    pub default_cpu: Option<f64>,
 }
 
 /// Der mitgelieferte Katalog der Phase 1.
@@ -28,6 +34,8 @@ pub fn catalog() -> Vec<Pack> {
             tool_profile: "development-default".to_string(),
             description: "Leere Ubuntu-24.04-Entwicklungssandbox mit Standardwerkzeugen."
                 .to_string(),
+            default_memory: Some("1g".to_string()),
+            default_cpu: Some(1.0),
         },
         Pack {
             key: "openclaw-gateway".to_string(),
@@ -48,6 +56,9 @@ pub fn catalog() -> Vec<Pack> {
             ],
             tool_profile: "development-default".to_string(),
             description: "Dedizierte OpenClaw-Gateway-Sandbox.".to_string(),
+            // OpenClaw startet Plugins und Sidecars; 1 GB endet im OOM-Kill.
+            default_memory: Some("2g".to_string()),
+            default_cpu: Some(1.0),
         },
         Pack {
             key: "hermes-agent".to_string(),
@@ -56,6 +67,8 @@ pub fn catalog() -> Vec<Pack> {
             command: vec!["sleep".to_string(), "infinity".to_string()],
             tool_profile: "development-default".to_string(),
             description: "Offizieller Nous-Hermes-Agent auf Ubuntu 24.04.".to_string(),
+            default_memory: Some("2g".to_string()),
+            default_cpu: Some(1.0),
         },
     ]
 }
