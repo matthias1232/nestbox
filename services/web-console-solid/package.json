@@ -1,1 +1,1 @@
-{"name":"nestbox-solid-console","private":true,"version":"1.0.0","scripts":{"build":"vite build"},"dependencies":{"solid-js":"^1.9.9","vite":"^7.1.7","vite-plugin-solid":"^2.11.8"},"devDependencies":{}}
+{"name":"nestbox-solid-console","private":true,"version":"1.0.0","type":"module","scripts":{"build":"vite build && node scripts/copy-docs.mjs"},"dependencies":{"solid-js":"^1.9.9","vite":"^7.1.7","vite-plugin-solid":"^2.11.8","swagger-ui-dist":"^5.29.0","redoc":"^2.5.0"},"devDependencies":{}}
