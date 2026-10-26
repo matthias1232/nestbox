@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Gemeinsame Testhilfen: App mit Fake-Runtime und temporärem State.
 
 use std::sync::Arc;

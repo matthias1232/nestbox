@@ -18,6 +18,7 @@ use tokio::sync::RwLock;
 use crate::audit::AuditEvent;
 use crate::config::Config;
 use crate::domain::{Binding, ProviderProfile, Sandbox, ToolProfile};
+use crate::domain::pack;
 use crate::error::ApiError;
 use crate::runtime::RuntimeAdapter;
 
@@ -40,12 +41,12 @@ pub struct Data {
 }
 
 impl Data {
-    /// Zustand mit den mitgelieferten Defaults (Standard-Tool-Profil).
-    pub fn seeded() -> Self {
-        let mut data = Self::default();
-        data.tool_profiles.insert(
-            "development-default".to_string(),
-            ToolProfile {
+    /// Ergänzt fehlende Defaults, ohne bestehende Einträge zu überschreiben.
+    pub fn seed_defaults(&mut self) {
+        // `or_insert_with` schützt ein vom Operator angepasstes Profil.
+        self.tool_profiles
+            .entry("development-default".to_string())
+            .or_insert_with(|| ToolProfile {
                 name: "development-default".to_string(),
                 base: "ubuntu:24.04".to_string(),
                 packages: [
@@ -66,8 +67,13 @@ impl Data {
                 .collect(),
                 description: "Standardwerkzeuge für Ubuntu-24.04-Sandboxes.".to_string(),
                 created_at: chrono::Utc::now().to_rfc3339(),
-            },
-        );
+            });
+    }
+
+    /// Zustand mit den mitgelieferten Defaults (Standard-Tool-Profil).
+    pub fn seeded() -> Self {
+        let mut data = Self::default();
+        data.seed_defaults();
         data
     }
 }
@@ -92,9 +98,8 @@ pub struct AppState {
 impl AppState {
     /// Lädt State und Secrets, legt Defaults an und schreibt sie zurück.
     pub async fn load(config: Config, runtime: Arc<dyn RuntimeAdapter>) -> Result<Self, ApiError> {
-        let data = read_json::<Data>(&config.state_path)
-            .await
-            .unwrap_or_else(Data::seeded);
+        let mut data = read_data(&config.state_path).await;
+        data.seed_defaults();
         let secrets = read_json::<Secrets>(&config.secrets_path)
             .await
             .unwrap_or_default();
@@ -105,6 +110,10 @@ impl AppState {
             secrets: Arc::new(RwLock::new(secrets)),
             runtime,
         };
+
+        // Container, die der Runtime kennt, aber der State nicht (z. B. nach
+        // einem Upgrade), werden übernommen statt verwaist zu bleiben.
+        state.adopt_existing().await;
         state.save().await?;
         Ok(state)
     }
@@ -116,6 +125,37 @@ impl AppState {
         let secrets = self.secrets.read().await.clone();
         write_json(&self.config.secrets_path, &secrets, true).await?;
         Ok(())
+    }
+
+    /// Übernimmt Sandboxes, die im Runtime existieren, aber im State fehlen.
+    async fn adopt_existing(&self) {
+        let Ok(items) = self.runtime.list().await else {
+            return;
+        };
+
+        let mut data = self.data.write().await;
+        for facts in items {
+            let known = data.sandboxes.values().any(|item| item.name == facts.name);
+            if known || pack::find(&facts.pack_key).is_none() {
+                continue;
+            }
+
+            tracing::info!("Übernehme vorhandene Sandbox '{}' vom Runtime", facts.name);
+            let sandbox = Sandbox {
+                id: uuid::Uuid::new_v4().to_string(),
+                name: facts.name.clone(),
+                pack_key: facts.pack_key.clone(),
+                tool_profile: facts.tool_profile.clone(),
+                provider_id: None,
+                status: facts.status.clone(),
+                created_at: facts
+                    .started_at
+                    .clone()
+                    .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
+                runtime: Some(facts),
+            };
+            data.sandboxes.insert(sandbox.id.clone(), sandbox);
+        }
     }
 
     /// Hängt ein Audit-Event an und persistiert.
@@ -130,6 +170,46 @@ impl AppState {
         }
         if let Err(error) = self.save().await {
             tracing::error!("Audit-Event konnte nicht gespeichert werden: {error}");
+        }
+    }
+}
+
+/// Liest den State und verträgt dabei ältere Dateiformate.
+async fn read_data(path: &Path) -> Data {
+    let Some(mut value) = read_json::<serde_json::Value>(path).await else {
+        return Data::seeded();
+    };
+
+    migrate(&mut value);
+
+    match serde_json::from_value::<Data>(value) {
+        Ok(data) => data,
+        Err(error) => {
+            tracing::warn!("State passt nicht zum aktuellen Format und wird neu angelegt: {error}");
+            Data::seeded()
+        }
+    }
+}
+
+/// Entfernt Einträge, die nicht mehr zum aktuellen Format passen.
+///
+/// Der Prototyp der Phase 1 schrieb `"runtime": "custom"` als String. Solche
+/// Datensätze werden verworfen; Sandboxes, die noch im Runtime laufen, kommen
+/// über [`AppState::adopt_existing`] zurück.
+fn migrate(value: &mut serde_json::Value) {
+    if let Some(sandboxes) = value.get_mut("sandboxes").and_then(|node| node.as_object_mut()) {
+        sandboxes.retain(|_, item| {
+            item.get("pack_key").is_some_and(|pack| pack.as_str().is_some_and(|name| !name.is_empty()))
+                && item.get("name").and_then(|name| name.as_str()).is_some()
+        });
+        for item in sandboxes.values_mut() {
+            let runtime_is_object = item
+                .get("runtime")
+                .map(serde_json::Value::is_object)
+                .unwrap_or(false);
+            if !runtime_is_object {
+                item["runtime"] = serde_json::Value::Null;
+            }
         }
     }
 }
