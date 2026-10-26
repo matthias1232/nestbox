@@ -1,112 +1,61 @@
-# Nestbox Control API (Rust)
+# control-api-rust — the Nestbox control plane
 
-Die Control Plane der Appliance. Sie nimmt Wünsche an (Sandbox anlegen, starten,
-Provider hinterlegen), speichert sie nachvollziehbar und übersetzt sie über einen
-Adapter in echte Container. Die Web-GUI (SolidJS) spricht ausschließlich mit
-diesem HTTP-Vertrag.
+The HTTP API behind the console. Rust, Axum, PostgreSQL.
 
-## In 5 Minuten durch den Code
+## Start here
 
-| Frage | Datei |
+Read `src/AGENTS.md` for the layer model, then the `AGENTS.md` of the layer you
+are about to change. If you are about to change a design decision rather than a
+file, read the relevant ADR in `../../docs/adr/` first.
+
+## Layout
+
+| Path | What |
 |---|---|
-| Wo startet der Service? | `src/main.rs` – Config lesen, Adapter wählen, Server starten |
-| Was ist ein Endpunkt? | `src/api/*.rs` – ein Modul pro Ressource |
-| Wo liegen die Regeln? | `src/services/*.rs` – ohne HTTP, ohne Docker |
-| Was ist eine Sandbox? | `src/domain/sandbox.rs` – reine Datentypen |
-| Wie wird gespeichert? | `src/state.rs` – `state.json` und `secrets.json` |
-| Wie wird gestartet? | `src/runtime/` – `trait RuntimeAdapter` + Implementierungen |
-| Wie entsteht die Doku? | `src/openapi.rs` – `utoipa` liest die Typen |
+| `src/domain/` | Pure types and validation. No I/O. |
+| `src/store/` | SQL and row mapping. No business rules. |
+| `src/services/` | Business rules. No HTTP, no SQL. |
+| `src/api/` | HTTP parsing and responses. No SQL. |
+| `src/runtime/` | Execution against gateways and containers. |
+| `src/events/` | The live event bus and SSE transport. |
+| `src/security/` | Sessions, passwords, redaction, headers. |
+| `migrations/` | Versioned SQL. Forward-only. |
+| `tests/` | Integration and architecture tests. |
 
-Der Datenfluss ist immer derselbe:
-
-```
-HTTP → api/ (Validierung, Status) → services/ (Regeln) → runtime/ (Ausführung)
-```
-
-## Starten
+## Run locally
 
 ```bash
-cargo run
+export DATABASE_URL=postgres://nestbox:test@localhost:55432/nestbox_test
+export NESTBOX_BOOTSTRAP_ADMIN=true
+cargo run -- migrate     # apply migrations, seed, bootstrap the admin
+cargo run                # start the server on :8000
 ```
 
-Umgebungsvariablen:
-
-| Variable | Default | Bedeutung |
-|---|---|---|
-| `NESTBOX_STATE_PATH` | `/data/state.json` | Soll-Zustand |
-| `NESTBOX_SECRETS_PATH` | neben dem State | API-Keys, Rechte 0600 |
-| `NESTBOX_RUNNER_URL` | `http://sandbox-runner:9000` | Runtime-Adapter |
-| `NESTBOX_RUNTIME_NETWORK` | `nestbox-runtime` | Docker-Netz der Sandboxes |
-| `NESTBOX_LISTEN_ADDR` | `0.0.0.0:8000` | Listen-Adresse |
-| `RUST_LOG` | `info` | Log-Level |
-
-## Tests
+## Test
 
 ```bash
+docker compose -f ../../deploy/docker-compose.test.yml up -d
+export TEST_DATABASE_URL=postgres://nestbox:test@localhost:55432/nestbox_test
 cargo test
 ```
 
-Die Tests benutzen `runtime::fake::FakeRuntime` – sie brauchen weder Docker noch
-Netzwerk. Abgedeckt sind: Sandbox-Lifecycle, Namenskonflikte, Provider ohne
-Secret-Leck, Umgebungs-Injektion, Bindings, Topologie und der OpenAPI-Vertrag.
+The suite needs a real PostgreSQL, deliberately (ADR 0001): the migration path
+and the row-level-security policy are part of what is tested, and an in-memory
+fake would not exercise either.
 
-## Einen Endpunkt hinzufügen
+## Why runtime queries instead of `query!` macros
 
-Beispiel „Sandbox pausieren“:
+`sqlx::query_as` with bound parameters is used rather than the compile-time
+`query!` macros. The reason is operational: the macros need a live database at
+build time, which means the Docker build needs database access. The security
+property that matters — every value is a bound parameter, never concatenated —
+is identical. The trade-off is that a schema mismatch is caught by a test
+instead of by the compiler, which the integration suite covers.
 
-1. **Typ** in `src/domain/` ergänzen (falls neuer Körper nötig).
-2. **Regel** in `src/services/` schreiben (keine HTTP-Typen importieren).
-3. **Route** in `src/api/` anlegen und in `src/api/mod.rs` registrieren.
-4. **Doku**: Handler in `src/openapi.rs` unter `paths(...)` eintragen,
-   neue Typen unter `components(schemas(...))`.
-5. **Test** in `tests/` ergänzen.
+See `src/store/AGENTS.md` for the rules that replace the compile-time check.
 
-## Ein Feld hinzufügen
+## Endpoints
 
-1. Feld im Domain-Typ ergänzen (`#[serde(default)]`, wenn optional).
-2. Wenn es in der Ausgabe erscheinen soll: fertig – `utoipa` übernimmt es.
-3. Wenn es Eingabe ist: im `*Input`-Typ ergänzen und in der Regel prüfen.
-4. Test anpassen; GUI-Feld ergänzen.
-
-## Den Adapter austauschen
-
-`src/runtime/mod.rs` definiert `trait RuntimeAdapter`. Implementierungen:
-
-* `http_runner::HttpRunner` – spricht den Docker-Sandbox-Runner (heute)
-* `fake::FakeRuntime` – Tests
-
-Für OpenShell genügt eine neue Datei `openshell.rs` mit demselben Trait. In
-`main.rs` wird dann statt `HttpRunner` der neue Adapter gewählt. API, Services,
-GUI und OpenAPI bleiben unverändert.
-
-## Fehler
-
-Jede Fehlerantwort hat dieselbe Form:
-
-```json
-{"error": {"code": "sandbox.not_found", "message": "sandbox 'x' wurde nicht gefunden"}}
-```
-
-`code` ist stabil, `message` für Menschen. Neue Fälle gehören in
-`src/error.rs`, damit Status und Code zentral bleiben.
-
-## Secrets
-
-API-Keys stehen **nie** in `state.json`, nie in einer Antwort und nie im Log.
-Sie liegen in `secrets.json` (0600) und werden nur als Umgebungswerte an eine
-Sandbox übergeben (`OPENAI_BASE_URL`, `OPENAI_MODEL`, `OPENAI_API_KEY`).
-
-## Rust-Konzepte in diesem Projekt
-
-| Konzept | Wo es vorkommt | Kurz gesagt |
-|---|---|---|
-| `struct` + `derive` | `src/domain/` | Datentyp, Serialisierung wird generiert |
-| `Option<T>` | überall | „Wert oder keiner“ |
-| `Result<T, E>` + `?` | Services | Fehler weiterreichen statt werfen |
-| `async` / `.await` | Handler, Adapter | Warten ohne Thread zu blockieren |
-| `trait` | `RuntimeAdapter` | Schnittstelle, mehrere Implementierungen |
-| `Arc` + `RwLock` | `AppState` | geteilter Zustand, mehrere Leser |
-| `Serialize`/`Deserialize` | JSON | Typen werden zu JSON und zurück |
-
-Für dieses Projekt braucht man kein tieferes Rust-Wissen als diese sieben
-Punkte. Alles Weitere ist Lesen von Dateien, nicht Sprachmagie.
+The OpenAPI document is served at `/api/v1/openapi.json`, Swagger UI at
+`/docs`, and a human-readable Redoc page at `/redoc.html`. The generated
+document is committed and compared in CI (ADR 0015).

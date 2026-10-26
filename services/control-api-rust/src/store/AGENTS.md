@@ -1,0 +1,60 @@
+# store/ — persistence
+
+## Purpose
+
+SQL and the mapping between rows and domain types. Nothing else.
+
+A file here knows how to read and write one aggregate. It does not decide whether
+a write is allowed, and it does not know about HTTP. That separation is what lets
+a rule change without touching SQL, and a query change without touching a rule.
+
+## Dependencies
+
+- May use: `sqlx`, `domain`
+- Must not use: `axum`, business rules
+
+## Security rules
+
+1. Every query uses bound parameters. A value never becomes SQL text. The only
+   interpolated identifiers are column names from a closed Rust enum
+   (`SortField::column`), never from input.
+2. Every tenant-scoped query runs inside a transaction that has set
+   `SET LOCAL app.environment_id`. The `TenantScope` helper is the only way to
+   get a connection for tenant data, so the scope cannot be forgotten.
+3. No `SELECT *`. Columns are named, so a schema change is a compile-time
+   mismatch in the mapping instead of a silent field swap.
+4. An update checks the version and returns `VersionConflict` rather than
+   overwriting a concurrent change.
+5. Row contents are never logged. A row may contain a user-supplied string, and
+   a log line is a place it does not belong.
+
+## Why runtime queries
+
+`sqlx::query_as` with `FromRow` rather than the compile-time `query!` macros.
+The macros need a live database at build time, so the Docker build would need
+database access, which is a poor trade. The security property is identical;
+what changes is that a schema mismatch is caught by the integration test rather
+than by the compiler.
+
+## Files
+
+| File | Responsibility |
+|---|---|
+| `mod.rs` | `TenantScope`, shared helpers, re-exports |
+| `postgres/sandboxes.rs` | Sandbox reads and writes |
+| `postgres/policies.rs` | Policy documents, versions, rules |
+| `postgres/telemetry.rs` | Event insert and query |
+| `postgres/gateways.rs` | Gateways and supervisors |
+| `postgres/models.rs` | Catalog and hardware profiles |
+| `postgres/jobs.rs` | Jobs, targets, schedules |
+| `postgres/auth.rs` | Users, sessions, scopes |
+| `postgres/environments.rs` | Environments and clusters |
+| `postgres/providers.rs` | Provider profiles and secret references |
+| `postgres/audit.rs` | Append-only audit writes |
+
+## Extending this module
+
+Add the query in the file of the aggregate it belongs to. Take a
+`&mut TenantScope`, not a `&PgPool`: that is the compile-time reminder that the
+tenant is set. Name the columns. Map into a domain type rather than returning a
+tuple, so the service layer never sees a row shape.

@@ -1,10 +1,12 @@
-//! Geschäftslogik – ohne HTTP, ohne Axum.
-//!
-//! Jedes Modul hier bekommt den [`AppState`] und fachliche Typen. Dadurch sind
-//! die Regeln unabhängig von der Transport-Schicht testbar.
+//! Business rules.
 
-pub mod providers;
-pub mod reference;
-pub mod sandboxes;
-pub mod tools;
-pub mod topology;
+pub mod access_control;
+pub mod auth_service;
+pub mod gateway_service;
+pub mod job_service;
+pub mod model_service;
+pub mod policy_service;
+pub mod sandbox_service;
+pub mod telemetry_service;
+
+pub use access_control::require;

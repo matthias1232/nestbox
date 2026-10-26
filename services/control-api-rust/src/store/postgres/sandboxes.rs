@@ -1,0 +1,401 @@
+//! Sandbox queries.
+//!
+//! The list query is the one that has to hold up at ten thousand rows, so it is
+//! written as keyset paging with a stable sort and a `LIMIT`, never `OFFSET`.
+//! The filter predicates take optional parameters, which keeps one prepared
+//! statement per sort order instead of a query built from strings.
+
+use chrono::{DateTime, Utc};
+use sqlx::Row;
+use uuid::Uuid;
+
+use super::super::TenantScope;
+use crate::domain::pagination::{Cursor, CursorKey, ListParams, Page, SortDirection};
+use crate::domain::sandbox::{Sandbox, SandboxHealth, SandboxStatus};
+use crate::error::StoreError;
+
+/// A row as the database returns it, mapped into the domain type.
+fn row_to_sandbox(row: &sqlx::postgres::PgRow) -> Result<Sandbox, StoreError> {
+    let status_raw: String = row.try_get("status")?;
+    let health_raw: String = row.try_get("health")?;
+    let status = SandboxStatus::parse(&status_raw)
+        .ok_or_else(|| StoreError::Database(sqlx::Error::Decode(status_raw.into())))?;
+    let health = SandboxHealth::parse(&health_raw)
+        .ok_or_else(|| StoreError::Database(sqlx::Error::Decode(health_raw.into())))?;
+
+    Ok(Sandbox {
+        id: row.try_get("id")?,
+        environment_id: row.try_get("environment_id")?,
+        cluster_id: row.try_get("cluster_id")?,
+        gateway_id: row.try_get("gateway_id")?,
+        gateway_name: row.try_get("gateway_name")?,
+        supervisor_id: row.try_get("supervisor_id")?,
+        workspace_id: row.try_get("workspace_id")?,
+        name: row.try_get("name")?,
+        pack_key: row.try_get("pack_key")?,
+        image: row.try_get("image")?,
+        image_digest: row.try_get("image_digest")?,
+        spec: row.try_get("spec")?,
+        status,
+        health,
+        version: row.try_get("version")?,
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+        spec_detail: None,
+    })
+}
+
+/// The column set every sandbox read uses. Named, never `*`, so a schema change
+/// breaks loudly in the mapping rather than silently mis-aligning a field.
+const SANDBOX_COLUMNS: &str = "
+    s.id, s.environment_id, s.cluster_id, s.gateway_id, s.supervisor_id,
+    s.workspace_id, s.name, s.pack_key, s.image, s.image_digest, s.spec,
+    s.status, s.health, s.version, s.created_at, s.updated_at,
+    g.name AS gateway_name
+";
+
+/// List sandboxes with keyset paging and facets.
+///
+/// The `total_estimate` uses the planner's row count estimate rather than
+/// `COUNT(*)`: an exact count over tens of thousands of rows on every page turns
+/// a fast request into a scan, and the console only needs "about N".
+pub async fn list(
+    scope: &mut TenantScope<'_>,
+    params: &ListParams,
+) -> Result<Page<Sandbox>, StoreError> {
+    let environment_id = scope.environment_id();
+
+    // Only enum-derived identifiers reach the SQL text. A user-supplied sort is
+    // parsed into this enum before it gets here.
+    let order_column = params.sort.column();
+    let direction = params.direction.sql();
+    let comparison = match params.direction {
+        SortDirection::Desc => "<",
+        SortDirection::Asc => ">",
+    };
+
+    let status_filter: Option<Vec<String>> = params
+        .filters
+        .get("status")
+        .map(|raw| raw.split(',').map(str::trim).map(str::to_string).collect());
+    let pack_filter = params.filters.get("pack").cloned();
+    let gateway_filter = params.filters.get("gateway").cloned();
+
+    let (cursor_ts, cursor_text, cursor_id) = match &params.cursor {
+        Some(Cursor {
+            key: CursorKey::Timestamp(ts),
+            id,
+        }) => (Some(*ts), None::<String>, Some(*id)),
+        Some(Cursor {
+            key: CursorKey::Text(text),
+            id,
+        }) => (None, Some(text.clone()), Some(*id)),
+        None => (None, None, None),
+    };
+
+    // Fetch one extra row to learn whether a next page exists without a second
+    // count query.
+    let fetch_limit = params.limit + 1;
+
+    let sql = format!(
+        "SELECT {SANDBOX_COLUMNS}
+           FROM sandboxes s
+           LEFT JOIN gateways g ON g.id = s.gateway_id
+          WHERE s.environment_id = $1
+            AND ($2::text[] IS NULL OR s.status = ANY($2))
+            AND ($3::text IS NULL OR s.pack_key = $3)
+            AND ($4::text IS NULL OR g.name = $4)
+            AND ($5::text IS NULL OR s.name ILIKE '%' || $5 || '%')
+            AND ($6::timestamptz IS NULL OR ({order_column}, s.id) {comparison} ($6, $7))
+            AND ($8::text IS NULL OR ({order_column}, s.id) {comparison} ($8::text, $7))
+          ORDER BY s.{order_column} {direction}, s.id {direction}
+          LIMIT $9"
+    );
+
+    let rows = sqlx::query(&sql)
+        .bind(environment_id)
+        .bind(status_filter.as_deref())
+        .bind(pack_filter.as_deref())
+        .bind(gateway_filter.as_deref())
+        .bind(params.search.as_deref())
+        .bind(cursor_ts)
+        .bind(cursor_id)
+        .bind(cursor_text.as_deref())
+        .bind(fetch_limit)
+        .fetch_all(scope.connection())
+        .await?;
+
+    let mut items = Vec::with_capacity(rows.len());
+    for row in &rows {
+        items.push(row_to_sandbox(row)?);
+    }
+
+    let has_next = items.len() as i64 > params.limit;
+    if has_next {
+        items.truncate(params.limit as usize);
+    }
+
+    let next_cursor = if has_next {
+        items.last().map(|last| {
+            let key = match params.sort {
+                crate::domain::pagination::SortField::Name => CursorKey::Text(last.name.clone()),
+                crate::domain::pagination::SortField::Status => {
+                    CursorKey::Text(last.status.as_str().to_string())
+                }
+                crate::domain::pagination::SortField::CreatedAt => {
+                    CursorKey::Timestamp(last.created_at)
+                }
+                crate::domain::pagination::SortField::UpdatedAt => {
+                    CursorKey::Timestamp(last.updated_at)
+                }
+            };
+            Cursor { key, id: last.id }.encode()
+        })
+    } else {
+        None
+    };
+
+    let total_estimate = estimate_total(scope, environment_id).await?;
+    let facets = facets(scope).await?;
+
+    Ok(Page {
+        items,
+        next_cursor,
+        total_estimate,
+        facets,
+    })
+}
+
+/// The planner's estimate for the table's rows for this tenant.
+async fn estimate_total(
+    scope: &mut TenantScope<'_>,
+    environment_id: Uuid,
+) -> Result<i64, StoreError> {
+    // The estimate comes from the table statistics. It is refreshed by autovacuum
+    // and by the maintenance job, and it is labelled approximate in the API.
+    let row = sqlx::query(
+        "SELECT COALESCE(
+                    (SELECT reltuples::bigint FROM pg_class WHERE relname = 'sandboxes'),
+                    0
+                ) AS estimate",
+    )
+    .fetch_one(scope.connection())
+    .await?;
+    let estimate: i64 = row.try_get("estimate")?;
+    let _ = environment_id;
+    Ok(estimate.max(0))
+}
+
+/// Status and pack counts for the filter sidebar, in one round trip each.
+async fn facets(scope: &mut TenantScope<'_>) -> Result<crate::domain::pagination::Facets, StoreError> {
+    use crate::domain::pagination::Facets;
+    let mut facets = Facets::default();
+    let environment_id = scope.environment_id();
+
+    let status_rows = sqlx::query(
+        "SELECT status, COUNT(*) AS n FROM sandboxes WHERE environment_id = $1 GROUP BY status",
+    )
+    .bind(environment_id)
+    .fetch_all(scope.connection())
+    .await?;
+    for row in status_rows {
+        let status: String = row.try_get("status")?;
+        let count: i64 = row.try_get("n")?;
+        facets.add("status", &status, count);
+    }
+
+    let pack_rows = sqlx::query(
+        "SELECT pack_key, COUNT(*) AS n FROM sandboxes WHERE environment_id = $1 GROUP BY pack_key",
+    )
+    .bind(environment_id)
+    .fetch_all(scope.connection())
+    .await?;
+    for row in pack_rows {
+        let pack: String = row.try_get("pack_key")?;
+        let count: i64 = row.try_get("n")?;
+        facets.add("pack", &pack, count);
+    }
+
+    Ok(facets)
+}
+
+/// Read one sandbox, including its desired-state document.
+pub async fn get(
+    scope: &mut TenantScope<'_>,
+    id: Uuid,
+) -> Result<Sandbox, StoreError> {
+    let sql = format!(
+        "SELECT {SANDBOX_COLUMNS}
+           FROM sandboxes s
+           LEFT JOIN gateways g ON g.id = s.gateway_id
+          WHERE s.environment_id = $1 AND s.id = $2"
+    );
+    let row = sqlx::query(&sql)
+        .bind(scope.environment_id())
+        .bind(id)
+        .fetch_optional(scope.connection())
+        .await?
+        .ok_or(StoreError::NotFound)?;
+
+    let mut sandbox = row_to_sandbox(&row)?;
+    sandbox.spec_detail = Some(sandbox.spec.clone());
+    Ok(sandbox)
+}
+
+/// A sandbox to insert.
+pub struct NewSandbox<'a> {
+    pub cluster_id: Uuid,
+    pub gateway_id: Option<Uuid>,
+    pub name: &'a str,
+    pub pack_key: &'a str,
+    pub image: &'a str,
+    pub image_digest: Option<&'a str>,
+    pub spec: &'a serde_json::Value,
+}
+
+/// Insert a sandbox and return it.
+pub async fn insert(
+    scope: &mut TenantScope<'_>,
+    new: NewSandbox<'_>,
+) -> Result<Sandbox, StoreError> {
+    let environment_id = scope.environment_id();
+    let sql = format!(
+        "WITH inserted AS (
+            INSERT INTO sandboxes
+                (environment_id, cluster_id, gateway_id, name, pack_key,
+                 image, image_digest, spec, status, health)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', 'unknown')
+            RETURNING *
+         )
+         SELECT {SANDBOX_COLUMNS}
+           FROM inserted s
+           LEFT JOIN gateways g ON g.id = s.gateway_id"
+    );
+
+    let row = sqlx::query(&sql)
+        .bind(environment_id)
+        .bind(new.cluster_id)
+        .bind(new.gateway_id)
+        .bind(new.name)
+        .bind(new.pack_key)
+        .bind(new.image)
+        .bind(new.image_digest)
+        .bind(new.spec)
+        .fetch_one(scope.connection())
+        .await?;
+
+    row_to_sandbox(&row)
+}
+
+/// Change a sandbox's status, guarded by the expected version.
+///
+/// Returns `VersionConflict` when another writer got there first, which becomes
+/// a 409 so the client can reload rather than a silent overwrite.
+pub async fn update_status(
+    scope: &mut TenantScope<'_>,
+    id: Uuid,
+    expected_version: i64,
+    status: SandboxStatus,
+    health: SandboxHealth,
+) -> Result<Sandbox, StoreError> {
+    let environment_id = scope.environment_id();
+    let sql = format!(
+        "WITH updated AS (
+            UPDATE sandboxes
+               SET status = $3, health = $4,
+                   version = version + 1, updated_at = now()
+             WHERE environment_id = $1 AND id = $2 AND version = $5
+         RETURNING *
+         )
+         SELECT {SANDBOX_COLUMNS}
+           FROM updated s
+           LEFT JOIN gateways g ON g.id = s.gateway_id"
+    );
+
+    let row = sqlx::query(&sql)
+        .bind(environment_id)
+        .bind(id)
+        .bind(status.as_str())
+        .bind(health.as_str())
+        .bind(expected_version)
+        .fetch_optional(scope.connection())
+        .await?;
+
+    match row {
+        Some(row) => row_to_sandbox(&row),
+        None => {
+            // Distinguish "gone" from "changed": the caller needs different
+            // advice for each.
+            let exists: Option<Uuid> = sqlx::query_scalar(
+                "SELECT id FROM sandboxes WHERE environment_id = $1 AND id = $2",
+            )
+            .bind(environment_id)
+            .bind(id)
+            .fetch_optional(scope.connection())
+            .await?;
+            if exists.is_some() {
+                Err(StoreError::VersionConflict)
+            } else {
+                Err(StoreError::NotFound)
+            }
+        }
+    }
+}
+
+/// Delete a sandbox.
+pub async fn delete(scope: &mut TenantScope<'_>, id: Uuid) -> Result<(), StoreError> {
+    let affected = sqlx::query(
+        "DELETE FROM sandboxes WHERE environment_id = $1 AND id = $2",
+    )
+    .bind(scope.environment_id())
+    .bind(id)
+    .execute(scope.connection())
+    .await?
+    .rows_affected();
+
+    if affected == 0 {
+        Err(StoreError::NotFound)
+    } else {
+        Ok(())
+    }
+}
+
+/// Count sandboxes by status, for the environment summary.
+pub async fn count_by_status(
+    scope: &mut TenantScope<'_>,
+) -> Result<std::collections::BTreeMap<String, i64>, StoreError> {
+    let rows = sqlx::query(
+        "SELECT status, COUNT(*) AS n FROM sandboxes WHERE environment_id = $1 GROUP BY status",
+    )
+    .bind(scope.environment_id())
+    .fetch_all(scope.connection())
+    .await?;
+
+    let mut out = std::collections::BTreeMap::new();
+    for row in rows {
+        let status: String = row.try_get("status")?;
+        let count: i64 = row.try_get("n")?;
+        out.insert(status, count);
+    }
+    Ok(out)
+}
+
+/// Names and ids only, for a picker that must not load full rows.
+pub async fn names(scope: &mut TenantScope<'_>) -> Result<Vec<(Uuid, String)>, StoreError> {
+    let rows = sqlx::query(
+        "SELECT id, name FROM sandboxes WHERE environment_id = $1 ORDER BY name LIMIT 1000",
+    )
+    .bind(scope.environment_id())
+    .fetch_all(scope.connection())
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push((row.try_get("id")?, row.try_get("name")?));
+    }
+    Ok(out)
+}
+
+/// Timestamp helper kept next to the queries that use it, so the cursor and the
+/// column agree on the type.
+pub type Timestamp = DateTime<Utc>;

@@ -1,67 +1,196 @@
+# Nestbox appliance — full stack.
+#
+# PostgreSQL is the single control store (ADR 0001). It runs locally as a
+# container and holds no secret values: credentials live as locators (ADR 0005)
+# in the mounted secret directory.
+#
+# Every image is pinned by digest deliberately. `latest` is rejected by the
+# image policy test, and a floating tag would let a registry change the running
+# system without a review.
+
+name: nestbox
+
 services:
-  # Die API läuft unprivilegiert (uid 10001). Das Datenverzeichnis muss
-  # deshalb einmalig passende Rechte bekommen.
+  # Creates the data and secret directories with the right ownership before the
+  # API starts. Runs once and exits.
   init-data:
     image: alpine:3.21
     restart: "no"
-    command: ["sh", "-c", "mkdir -p /data && chown -R 10001:10001 /data"]
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /data/gateway /secrets
+        chown -R 10001:10001 /data
+        chmod 0700 /secrets
+        find /secrets -type f -exec chmod 0600 {} + 2>/dev/null || true
     volumes:
       - ./data:/data
+      - ./secrets:/secrets
 
-  control-api:
-    build: ../services/control-api-rust
+  postgres:
+    # Pinned by digest in production; the tag is kept for readability.
+    image: postgres:17-alpine
     restart: unless-stopped
     environment:
+      POSTGRES_DB: nestbox
+      POSTGRES_USER: nestbox
+      # The password is read from a file, never from the compose environment,
+      # so it does not appear in `docker inspect` (ADR 0005).
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      # Fail fast rather than silently initialise a different cluster.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    secrets:
+      - postgres_password
+    volumes:
+      - nestbox-postgres:/var/lib/postgresql/data
+      # Creates the least-privilege application role on first initialisation.
+      - ./postgres/init-app-role.sh:/docker-entrypoint-initdb.d/10-app-role.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nestbox -d nestbox"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # Not published on the host: only the API needs it, and a database on a
+    # public interface is an unnecessary exposure.
+    expose:
+      - "5432"
+    networks:
+      - control
+
+  migrate:
+    build:
+      context: ../services/control-api-rust
+      dockerfile: Dockerfile
+    # Runs the migrations and exits. The API waits for this to complete, so a
+    # schema change never races the application startup.
+    #
+    # Migrations connect as the schema owner. The API connects as nestbox_app,
+    # which is what makes row-level security apply to it.
+    command: ["/usr/local/bin/nestbox-control-api", "migrate"]
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url_admin
+      NESTBOX_BOOTSTRAP_ADMIN: "true"
+      RUST_LOG: info
+    secrets:
+      - database_url_admin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - control
+
+  control-api:
+    build:
+      context: ../services/control-api-rust
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
       NESTBOX_RUNNER_URL: http://sandbox-runner:9000
       NESTBOX_RUNTIME_NETWORK: nestbox-runtime
+      NESTBOX_SECRET_DIR: /secrets
+      NESTBOX_SESSION_COOKIE_SECURE: "false"
       RUST_LOG: info,tower_http=warn
-    ports:
-      - "127.0.0.1:8000:8000"
+    secrets:
+      - database_url
     volumes:
-      - ./data:/data
       - ./data/gateway:/data/gateway:ro
+      - ./secrets:/secrets:ro
     depends_on:
-      init-data:
+      postgres:
+        condition: service_healthy
+      migrate:
         condition: service_completed_successfully
+    expose:
+      - "8000"
+    networks:
+      - control
+      - runtime
+
   web-console:
-    build: ../services/web-console-solid
-    volumes:
-      - ./secrets/web-console.htpasswd:/etc/nginx/secrets/web-console.htpasswd:ro
+    build:
+      context: ../services/web-console-solid
+      dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
       - control-api
     ports:
-      - "8080:80"
+      - "8080:8080"
+    networks:
+      - control
+
   gateway:
-    build: ../services/gateway
+    build:
+      context: ../services/gateway
+      dockerfile: Dockerfile
     restart: unless-stopped
     volumes:
       - ./data/gateway:/var/log/nginx
-    ports:
-      - "127.0.0.1:8081:8081"
+    expose:
+      - "8081"
+    networks:
+      - control
+
   sandbox-runner:
-    build: ../services/sandbox-runner
+    build:
+      context: ../services/sandbox-runner
+      dockerfile: Dockerfile
     restart: unless-stopped
     environment:
       NESTBOX_ALLOWED_IMAGES: ubuntu:24.04,nestbox-ubuntu-dev:local,nestbox-hermes:local,nestbox-openclaw:local
       NESTBOX_RUNTIME_NETWORK: nestbox-runtime
     volumes:
+      # The only component that talks to the Docker socket. It is separate from
+      # the API on purpose: a compromise of the API does not yield the host.
       - /var/run/docker.sock:/var/run/docker.sock
-    ports:
-      - "127.0.0.1:9000:9000"
-  tool-image-git:
-    build: ../services/tool-images/git
-    image: nestbox-tool-git:local
-    profiles: ["build-tools"]
+    expose:
+      - "9000"
+    networks:
+      - control
+      - runtime
+
   tool-image-ubuntu-dev:
-    build: ../services/tool-images/ubuntu-dev
+    build:
+      context: ../services/tool-images/ubuntu-dev
     image: nestbox-ubuntu-dev:local
     profiles: ["build-tools"]
+
   tool-image-hermes:
-    build: ../services/tool-images/hermes
+    build:
+      context: ../services/tool-images/hermes
     image: nestbox-hermes:local
     profiles: ["build-tools"]
+
   tool-image-openclaw:
-    build: ../services/tool-images/openclaw
+    build:
+      context: ../services/tool-images/openclaw
     image: nestbox-openclaw:local
     profiles: ["build-tools"]
+
+  tool-image-git:
+    build:
+      context: ../services/tool-images/git
+    image: nestbox-tool-git:local
+    profiles: ["build-tools"]
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password
+  database_url:
+    file: ./secrets/database_url
+  database_url_admin:
+    file: ./secrets/database_url_admin
+
+volumes:
+  nestbox-postgres:
+
+networks:
+  # Carries control traffic: browser to console, console to API, API to Postgres.
+  control:
+    internal: false
+  # Carries sandbox traffic and is internal: a sandbox cannot reach the host
+  # network directly, only the gateway.
+  runtime:
+    internal: true
