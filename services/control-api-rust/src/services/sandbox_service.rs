@@ -158,6 +158,24 @@ pub struct CreateSandbox {
     pub pids_limit: i64,
 }
 
+/// Translate what the runtime reports into the stored health.
+///
+/// One rule for create and lifecycle, because they previously disagreed: create
+/// called an unprobed container healthy and a restart called it unknown, so the
+/// badge flipped on the first stop/start. A container with no health check
+/// reports `unknown` from Docker; a running one with no probe is treated as
+/// healthy because "running and not failing" is the only evidence available,
+/// and a stopped one is unknown because nothing is observing it.
+pub fn health_from_runtime(facts: &crate::domain::runtime::RuntimeFacts) -> SandboxHealth {
+    match facts.health.as_str() {
+        "healthy" => SandboxHealth::Healthy,
+        "degraded" | "starting" => SandboxHealth::Degraded,
+        "unhealthy" => SandboxHealth::Unhealthy,
+        _ if facts.status == "running" => SandboxHealth::Healthy,
+        _ => SandboxHealth::Unknown,
+    }
+}
+
 /// Whether a pack needs an inference endpoint to do its job.
 ///
 /// Kept as a named rule rather than an inline `== "hermes"` so it is one place
@@ -308,11 +326,7 @@ pub async fn create(
 
     match ctx.runtime.create(runtime_spec).await {
         Ok(facts) => {
-            let health = if facts.health == "unhealthy" {
-                SandboxHealth::Unhealthy
-            } else {
-                SandboxHealth::Healthy
-            };
+            let health = health_from_runtime(&facts);
             let updated = set_status(
                 ctx,
                 principal,
@@ -384,12 +398,7 @@ pub async fn act(
 
     match outcome {
         Ok(facts) => {
-            let health = match facts.health.as_str() {
-                "healthy" => SandboxHealth::Healthy,
-                "degraded" => SandboxHealth::Degraded,
-                "unhealthy" => SandboxHealth::Unhealthy,
-                _ => SandboxHealth::Unknown,
-            };
+            let health = health_from_runtime(&facts);
             set_status(
                 ctx,
                 principal,
@@ -625,6 +634,21 @@ mod tests {
     fn a_locally_built_image_is_allowed() {
         // It has no registry digest by construction; the tag is the marker.
         assert!(reject_unpinned_image("nestbox-hermes:local", None).is_ok());
+    }
+
+    #[test]
+    fn health_is_derived_the_same_way_on_every_path() {
+        let mut facts = crate::domain::runtime::RuntimeFacts::default();
+        facts.status = "running".into();
+        facts.health = "unknown".into();
+        assert_eq!(health_from_runtime(&facts), SandboxHealth::Healthy);
+
+        facts.status = "exited".into();
+        assert_eq!(health_from_runtime(&facts), SandboxHealth::Unknown);
+
+        facts.status = "running".into();
+        facts.health = "unhealthy".into();
+        assert_eq!(health_from_runtime(&facts), SandboxHealth::Unhealthy);
     }
 
     #[test]
