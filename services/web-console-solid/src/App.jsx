@@ -16,6 +16,9 @@ import ClusterPage from './features/cluster/ClusterPage.jsx';
 import ProvidersPage from './features/providers/ProvidersPage.jsx';
 import ModelsPage from './features/models/ModelsPage.jsx';
 import NodesPage from './features/nodes/NodesPage.jsx';
+import RecipesPage from './features/recipes/RecipesPage.jsx';
+import PersistentPage from './features/persistent/PersistentPage.jsx';
+import BuilderPage from './features/builder/BuilderPage.jsx';
 import JobsPage from './features/jobs/JobsPage.jsx';
 import AdminCenter from './features/sandboxes/AdminCenter.jsx';
 
@@ -38,6 +41,9 @@ const ROUTES = [
   { id: 'nodes', label: 'Nodes' },
   { id: 'providers', label: 'Providers' },
   { id: 'models', label: 'Models' },
+  { id: 'builder', label: 'Build image' },
+  { id: 'recipes', label: 'Recipes' },
+  { id: 'persistent', label: 'Persistent data' },
   { id: 'operations', label: 'Operations' },
 ];
 
@@ -148,6 +154,9 @@ export default function App() {
                   </Show>
                   <Show when={route() === 'providers'}><ProvidersPage /></Show>
                   <Show when={route() === 'models'}><ModelsPage /></Show>
+                  <Show when={route() === 'builder'}><BuilderPage /></Show>
+                  <Show when={route() === 'recipes'}><RecipesPage /></Show>
+                  <Show when={route() === 'persistent'}><PersistentPage /></Show>
                   <Show when={route() === 'operations'}><JobsPage /></Show>
                 </>
               }

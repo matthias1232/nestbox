@@ -41,6 +41,9 @@ features/sandboxes/
 | `models/` | Model catalog with hardware fit |
 | `jobs/` | Jobs and schedules |
 | `nodes/` | The machines sandboxes and models run on, their budget, and the probe |
+| `recipes/` | Recipe table, editor, detail, build, instantiate |
+| `persistent/` | Persistent roots, their mounts, and usage |
+| `builder/` | Composing a recipe from the catalogs, then building and running it |
 
 ## Extending
 

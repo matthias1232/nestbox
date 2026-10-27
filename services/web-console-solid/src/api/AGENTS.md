@@ -35,6 +35,9 @@ component never contains a URL.
 | `providers.js` | profiles, probe; locators only, never a value |
 | `models.js` | catalog with filters, hardware, facets, requirements, installs, install, uninstall |
 | `nodes.js` | nodes with their budget, one node, its sandboxes, probe, display rename |
+| `packs.js` | baselines, agent packs, and the tool catalog, resolved for a baseline |
+| `recipes.js` | recipe CRUD, build, instantiate |
+| `persistent.js` | persistent roots, mount, dismount, usage |
 | `jobs.js` | jobs, logs, schedules |
 
 ## Extending

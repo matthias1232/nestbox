@@ -1,0 +1,76 @@
+/* The builder: one page of sections, each a choice from the catalog. */
+
+.builder-sections {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+}
+
+.builder-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.9rem 1rem;
+  background: var(--card);
+}
+
+.builder-section h2 {
+  margin: 0 0 0.25rem;
+  font-size: 0.95rem;
+}
+
+.builder-choice {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.2rem 0;
+}
+
+.builder-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+.builder-tools .chip input {
+  margin-right: 0.35rem;
+}
+
+.builder-agent {
+  display: grid;
+  grid-template-columns: minmax(6rem, 1fr) minmax(7rem, 1fr) auto auto auto;
+  gap: 0.4rem;
+  align-items: center;
+  margin-top: 0.4rem;
+}
+
+.builder-agent input,
+.builder-agent select,
+.builder-section select {
+  min-width: 0;
+}
+
+.builder-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.builder-resources {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(6rem, 1fr));
+  gap: 0.5rem;
+}
+
+.builder-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+}
+
+.builder-input {
+  padding: 0.25rem 0.4rem;
+}
