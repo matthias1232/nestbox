@@ -45,9 +45,29 @@ reading both.
 | `policy_service.rs` | Validation, diff, scope rules, global override |
 | `telemetry_service.rs` | Ingest, live publish, history queries |
 | `model_service.rs` | Hardware detection (CPU, RAM, GPU, unified pool), fit, facets, catalog filters, install jobs |
+| `builder_service.rs` | Recipes: validation against the catalogs, the Dockerfile generator, content hash, build job, instantiate |
 | `gateway_service.rs` | Registry, settings, drift, sync |
 | `job_service.rs` | Job creation and progress |
 | `schedule_service.rs` | Schedule evaluation and runs |
+
+## The builder
+
+`builder_service.rs` deserves a note because two of its decisions are not
+obvious from the signature.
+
+- **The Dockerfile is generated, never stored.** The recipe holds the choices;
+  the catalogs hold what those choices mean; the generator is the only place the
+  two meet. A corrected pack row changes the next build with no migration.
+- **A build is a job that runs detached.** The endpoint records a `recipe_build`
+  job, marks the recipe `building`, and returns. The task is spawned in process
+  because there is no queue worker yet; a restart during a build leaves the row
+  `building`, and a PATCH recovers it. The job body is `builder_service::run_build`,
+  public so a test can run it without a detached task.
+- **`instantiate` writes the sandbox row itself** rather than calling
+  `sandbox_service::create`, because a recipe carries mounts, agents, and an
+  image tag that `CreateSandbox` cannot express. It reuses the same pieces
+  (`SandboxName`, the placement rules, `pack_needs_inference`, the status
+  settlement) so the two paths send the same shape to the runtime.
 
 ## Extending this module
 
