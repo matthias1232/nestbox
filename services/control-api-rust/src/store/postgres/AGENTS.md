@@ -27,7 +27,7 @@ the codebase where SQL appears.
 | `policies.rs` | Policy documents, versions, network rules, drafts |
 | `telemetry.rs` | Event insert, query, partition maintenance |
 | `gateways.rs` | Gateways, supervisors, sync state |
-| `models.rs` | Model catalog, hardware profiles, inference rows |
+| `models.rs` | Model catalog, hardware profiles, inference rows, the catalog-sync upsert |
 | `jobs.rs` | Jobs, targets, schedules |
 | `environments.rs` | Environments, clusters, nodes, overview counts |
 | `providers.rs` | Provider profiles, secret references |

@@ -156,12 +156,18 @@ pub async fn installs(
 
 /// Refresh the catalog from the public sources as a job.
 ///
-/// Filled by the `feat/catalog-sync` package.
+/// The job is created first so the run has an id, then executed in the request:
+/// the operator gets the per-source counts instead of a job id that nothing in
+/// this process would pick up. The same function is what a scheduled run calls
+/// with the job its schedule created.
 pub async fn sync(
-    State(_state): State<AppState>,
-    _auth: Auth,
+    State(state): State<AppState>,
+    auth: Auth,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::not_implemented("POST /models/sync"))
+    let summary = crate::services::catalog_sync::start(&state.services, &auth.principal).await?;
+    Ok(Json(serde_json::to_value(summary).unwrap_or_else(
+        |_| serde_json::json!({}),
+    )))
 }
 
 /// Install a model.

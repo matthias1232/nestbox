@@ -401,3 +401,131 @@ async fn a_telemetry_partition_exists_for_this_month() {
 
     assert!(partitions >= 3, "the next months should be pre-created");
 }
+
+/// A catalogue row as the sync writes it, for the upsert tests.
+fn synced_row(
+    name: &str,
+    source_id: &str,
+    min_vram_gib: i64,
+) -> nestbox_control_api::store::postgres::models::SyncedModel {
+    use nestbox_control_api::store::postgres::models::SyncedModel;
+    const GIB: i64 = 1024 * 1024 * 1024;
+    SyncedModel {
+        source: "huggingface".to_string(),
+        source_id: source_id.to_string(),
+        key: format!("huggingface-{}", source_id.to_lowercase().replace(['/', '.', '_'], "-")),
+        name: name.to_string(),
+        family: "qwen".to_string(),
+        parameters: "8B".to_string(),
+        context_length: Some(40960),
+        quantization: Some("BF16".to_string()),
+        weights_bytes: Some(8 * GIB),
+        min_vram_bytes: Some(min_vram_gib * GIB),
+        recommended_vram_bytes: Some((min_vram_gib + 4) * GIB),
+        min_gpu_count: 1,
+        min_ram_bytes: None,
+        recommended_ram_bytes: None,
+        min_cpu_cores: None,
+        recommended_cpu_cores: None,
+        runtime: "cuda".to_string(),
+        arch: Some("safetensors".to_string()),
+        artifact_format: Some("BF16".to_string()),
+        publisher: Some("Qwen".to_string()),
+        license: Some("apache-2.0".to_string()),
+        description: None,
+        unified_memory_only: false,
+        is_cpu_only: false,
+        source_uri: Some(format!("https://huggingface.co/{source_id}")),
+        version: "0123456789ab".to_string(),
+    }
+}
+
+/// The sync adds rows and refreshes them, but a curated row is never rewritten.
+///
+/// This is the rule the whole package exists for (ADR 0019): a sync that can
+/// overwrite a checked figure is worse than no sync, because the catalogue then
+/// looks authoritative while being wrong.
+#[tokio::test]
+async fn a_synced_row_updates_until_it_is_curated_by_hand() {
+    use nestbox_control_api::store::TenantScope;
+    use nestbox_control_api::store::postgres::models::{upsert_synced, Upserted};
+
+    let Some(pool) = connect().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+
+    let environment: Uuid = sqlx::query_scalar("SELECT id FROM environments LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .expect("environment");
+
+    // A new row is added, unpinned.
+    let mut scope = TenantScope::begin(&pool, environment).await.expect("scope");
+    let inserted = upsert_synced(&mut scope, &synced_row("Qwen3 8B", "Qwen/Qwen3-8B", 14))
+        .await
+        .expect("insert");
+    scope.commit().await.expect("commit");
+    assert_eq!(inserted, Upserted::Inserted);
+
+    let pinned: bool = sqlx::query_scalar(
+        "SELECT pinned FROM models WHERE source = 'huggingface' AND source_id = 'Qwen/Qwen3-8B'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("pinned flag");
+    assert!(!pinned, "a synced row is never curated");
+
+    // A later sync with a different figure refreshes it.
+    let mut scope = TenantScope::begin(&pool, environment).await.expect("scope");
+    let updated = upsert_synced(&mut scope, &synced_row("Qwen3 8B v2", "Qwen/Qwen3-8B", 20))
+        .await
+        .expect("update");
+    scope.commit().await.expect("commit");
+    assert_eq!(updated, Upserted::Updated);
+
+    let name: String = sqlx::query_scalar(
+        "SELECT name FROM models WHERE source = 'huggingface' AND source_id = 'Qwen/Qwen3-8B'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("name");
+    assert_eq!(name, "Qwen3 8B v2");
+
+    // Curate it, then sync the same id with a different name, gate and version.
+    sqlx::query(
+        "UPDATE models SET pinned = true, name = 'Curated Qwen3 8B', min_vram_bytes = 14::bigint * 1024 * 1024 * 1024
+          WHERE source = 'huggingface' AND source_id = 'Qwen/Qwen3-8B'",
+    )
+    .execute(&pool)
+    .await
+    .expect("curate");
+
+    let mut scope = TenantScope::begin(&pool, environment).await.expect("scope");
+    let skipped = upsert_synced(&mut scope, &synced_row("Upstream renamed it", "Qwen/Qwen3-8B", 99))
+        .await
+        .expect("pinned upsert");
+    scope.commit().await.expect("commit");
+    assert_eq!(skipped, Upserted::SkippedPinned);
+
+    let (name, min_vram, version): (String, i64, String) = sqlx::query_as(
+        "SELECT name, min_vram_bytes, version FROM models
+          WHERE source = 'huggingface' AND source_id = 'Qwen/Qwen3-8B'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("curated row");
+    assert_eq!(name, "Curated Qwen3 8B");
+    assert_eq!(min_vram, 14 * 1024 * 1024 * 1024);
+    assert_eq!(version, "0123456789ab");
+
+    // The row still exists and still has exactly one copy: nothing was deleted
+    // and no second row was created for the same source id.
+    let rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM models WHERE source = 'huggingface' AND source_id = 'Qwen/Qwen3-8B'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count");
+    assert_eq!(rows, 1);
+}

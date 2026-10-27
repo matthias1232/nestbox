@@ -297,3 +297,237 @@ pub async fn latest_hardware(
         system_ram_bytes: row.try_get("system_ram_bytes")?,
     }))
 }
+
+/// A catalogue row as a repository stated it, ready to be written.
+///
+/// This lives in the store rather than in `domain` because it is the shape of a
+/// write to `models`, not a concept the rest of the system reasons about: it
+/// carries every column the sync fills and nothing else. The gate numbers have
+/// already been derived when a row reaches here, so the store never computes a
+/// requirement.
+#[derive(Debug, Clone)]
+pub struct SyncedModel {
+    /// One of the values the `models.source` check allows.
+    pub source: String,
+    /// The identifier the source uses, unique within that source.
+    pub source_id: String,
+    pub key: String,
+    pub name: String,
+    pub family: String,
+    pub parameters: String,
+    pub context_length: Option<i64>,
+    pub quantization: Option<String>,
+    pub weights_bytes: Option<i64>,
+    pub min_vram_bytes: Option<i64>,
+    pub recommended_vram_bytes: Option<i64>,
+    pub min_gpu_count: i32,
+    pub min_ram_bytes: Option<i64>,
+    pub recommended_ram_bytes: Option<i64>,
+    pub min_cpu_cores: Option<i32>,
+    pub recommended_cpu_cores: Option<i32>,
+    pub runtime: String,
+    pub arch: Option<String>,
+    pub artifact_format: Option<String>,
+    pub publisher: Option<String>,
+    pub license: Option<String>,
+    pub description: Option<String>,
+    pub unified_memory_only: bool,
+    pub is_cpu_only: bool,
+    pub source_uri: Option<String>,
+    pub version: String,
+}
+
+/// What an upsert did, so the caller can count it in the job log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Upserted {
+    /// A row that did not exist before.
+    Inserted,
+    /// An unpinned row whose numbers were refreshed.
+    Updated,
+    /// A curated row, left exactly as it was.
+    SkippedPinned,
+    /// A different row already owns the key this one would need.
+    SkippedKeyTaken,
+}
+
+/// Insert or refresh a synced catalogue row.
+///
+/// Three rules decide the outcome, and they are the whole contract of the
+/// catalog sync (ADR 0019):
+///
+/// 1. a row is found by `(source, source_id)`, so a rename upstream refreshes
+///    the row instead of adding a second one;
+/// 2. a `pinned` row is never touched — not its numbers, not its name, not its
+///    `synced_at`, because it is the figure a human checked;
+/// 3. nothing is deleted. A model that disappears upstream keeps its row, which
+///    is what stops a bad sync from emptying the catalogue.
+///
+/// Every value is bound. The row's environment is `NULL` because the catalogue
+/// is shared, which the `models` row-level policy allows on purpose.
+pub async fn upsert_synced(
+    scope: &mut TenantScope<'_>,
+    model: &SyncedModel,
+) -> Result<Upserted, StoreError> {
+    let existing = sqlx::query_as::<_, (Uuid, bool)>(
+        "SELECT id, pinned FROM models WHERE source = $1 AND source_id = $2",
+    )
+    .bind(&model.source)
+    .bind(&model.source_id)
+    .fetch_optional(scope.connection())
+    .await?;
+
+    if let Some((id, pinned)) = existing {
+        if pinned {
+            return Ok(Upserted::SkippedPinned);
+        }
+        sqlx::query(
+            "UPDATE models
+                SET name = $2, family = $3, parameters = $4, context_length = $5,
+                    quantization = $6, weights_bytes = $7, min_vram_bytes = $8,
+                    recommended_vram_bytes = $9, min_gpu_count = $10,
+                    min_ram_bytes = $11, recommended_ram_bytes = $12,
+                    min_cpu_cores = $13, recommended_cpu_cores = $14,
+                    runtime = $15, arch = $16, artifact_format = $17,
+                    publisher = $18, license = $19, description = $20,
+                    unified_memory_only = $21, is_cpu_only = $22, source_uri = $23,
+                    version = $24, synced_at = now(), updated_at = now()
+              WHERE id = $1",
+        )
+        .bind(id)
+        .bind(&model.name)
+        .bind(&model.family)
+        .bind(&model.parameters)
+        .bind(model.context_length)
+        .bind(model.quantization.as_deref())
+        .bind(model.weights_bytes)
+        .bind(model.min_vram_bytes)
+        .bind(model.recommended_vram_bytes)
+        .bind(model.min_gpu_count)
+        .bind(model.min_ram_bytes)
+        .bind(model.recommended_ram_bytes)
+        .bind(model.min_cpu_cores)
+        .bind(model.recommended_cpu_cores)
+        .bind(&model.runtime)
+        .bind(model.arch.as_deref())
+        .bind(model.artifact_format.as_deref())
+        .bind(model.publisher.as_deref())
+        .bind(model.license.as_deref())
+        .bind(model.description.as_deref())
+        .bind(model.unified_memory_only)
+        .bind(model.is_cpu_only)
+        .bind(model.source_uri.as_deref())
+        .bind(&model.version)
+        .execute(scope.connection())
+        .await?;
+        return Ok(Upserted::Updated);
+    }
+
+    let inserted: Option<Uuid> = sqlx::query_scalar(
+        "INSERT INTO models (
+            environment_id, key, name, family, parameters, context_length,
+            quantization, weights_bytes, min_vram_bytes, recommended_vram_bytes,
+            min_gpu_count, min_ram_bytes, recommended_ram_bytes, min_cpu_cores,
+            recommended_cpu_cores, runtime, arch, artifact_format, publisher,
+            license, description, unified_memory_only, is_cpu_only, source_uri,
+            version, is_remote, source, source_id, synced_at, pinned
+         ) VALUES (
+            NULL, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+            $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, false, $25, $26,
+            now(), false
+         )
+         ON CONFLICT (key) DO NOTHING
+         RETURNING id",
+    )
+    .bind(&model.key)
+    .bind(&model.name)
+    .bind(&model.family)
+    .bind(&model.parameters)
+    .bind(model.context_length)
+    .bind(model.quantization.as_deref())
+    .bind(model.weights_bytes)
+    .bind(model.min_vram_bytes)
+    .bind(model.recommended_vram_bytes)
+    .bind(model.min_gpu_count)
+    .bind(model.min_ram_bytes)
+    .bind(model.recommended_ram_bytes)
+    .bind(model.min_cpu_cores)
+    .bind(model.recommended_cpu_cores)
+    .bind(&model.runtime)
+    .bind(model.arch.as_deref())
+    .bind(model.artifact_format.as_deref())
+    .bind(model.publisher.as_deref())
+    .bind(model.license.as_deref())
+    .bind(model.description.as_deref())
+    .bind(model.unified_memory_only)
+    .bind(model.is_cpu_only)
+    .bind(model.source_uri.as_deref())
+    .bind(&model.version)
+    .bind(&model.source)
+    .bind(&model.source_id)
+    .fetch_optional(scope.connection())
+    .await?;
+
+    Ok(match inserted {
+        Some(_) => Upserted::Inserted,
+        None => Upserted::SkippedKeyTaken,
+    })
+}
+
+/// The identity of a catalogue row, for matching a second source's ids onto it.
+///
+/// Only what a comparison needs: the key to write, and the names a listing might
+/// use for the same model.
+#[derive(Debug, Clone)]
+pub struct ModelIdentity {
+    pub key: String,
+    pub name: String,
+    pub source_id: Option<String>,
+}
+
+/// Every catalogue row this environment can see, for id matching.
+pub async fn identities(scope: &mut TenantScope<'_>) -> Result<Vec<ModelIdentity>, StoreError> {
+    let rows = sqlx::query(
+        "SELECT key, name, source_id FROM models
+          WHERE environment_id IS NULL OR environment_id = $1
+          ORDER BY key",
+    )
+    .bind(scope.environment_id())
+    .fetch_all(scope.connection())
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(ModelIdentity {
+            key: row.try_get("key")?,
+            name: row.try_get("name")?,
+            source_id: row.try_get("source_id")?,
+        });
+    }
+    Ok(out)
+}
+
+/// Record that NVIDIA serves these models as hosted NIMs.
+///
+/// `nim_available` is a fact about a remote listing, not a catalogue figure, so
+/// this is the one column the sync sets on a pinned row. It is write-once and
+/// does not touch `updated_at`: the row's edit history is about its curated
+/// numbers, and a badge appearing is not an edit.
+pub async fn set_nim_available(
+    scope: &mut TenantScope<'_>,
+    keys: &[String],
+) -> Result<u64, StoreError> {
+    if keys.is_empty() {
+        return Ok(0);
+    }
+    let result = sqlx::query(
+        "UPDATE models SET nim_available = true
+          WHERE key = ANY($1)
+            AND (environment_id IS NULL OR environment_id = $2)
+            AND NOT nim_available",
+    )
+    .bind(keys)
+    .bind(scope.environment_id())
+    .execute(scope.connection())
+    .await?;
+    Ok(result.rows_affected())
+}
