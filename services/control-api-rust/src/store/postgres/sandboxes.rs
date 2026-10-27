@@ -85,6 +85,15 @@ pub async fn list(
     let pack_filter = params.filters.get("pack").cloned();
     let gateway_filter = params.filters.get("gateway").cloned();
 
+    // The node filter arrives as a resolved id: the API layer looks the name up
+    // first, because an unknown node is a 404 and not an empty page. A value
+    // that is not a uuid can therefore only be a caller bug, and it matches
+    // nothing rather than widening the list.
+    let node_filter = match params.filters.get("node_id").map(String::as_str) {
+        Some(raw) => Some(Uuid::parse_str(raw).map_err(|_| StoreError::NotFound)?),
+        None => None,
+    };
+
     let (cursor_ts, cursor_text, cursor_id) = match &params.cursor {
         Some(Cursor {
             key: CursorKey::Timestamp(ts),
@@ -131,6 +140,7 @@ pub async fn list(
             AND ($3::text IS NULL OR s.pack_key = $3)
             AND ($4::text IS NULL OR g.name = $4)
             AND ($5::text IS NULL OR s.name ILIKE '%' || $5 || '%')
+            AND ($9::uuid IS NULL OR s.node_id = $9)
             AND {cursor_clause}
           ORDER BY {order_column} {direction}, s.id {direction}
           LIMIT $8"
@@ -154,6 +164,7 @@ pub async fn list(
     let rows = query
         .bind(cursor_id)
         .bind(fetch_limit)
+        .bind(node_filter)
         .fetch_all(scope.connection())
         .await?;
 

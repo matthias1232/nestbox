@@ -45,6 +45,7 @@ reading both.
 | `policy_service.rs` | Validation, diff, scope rules, global override |
 | `telemetry_service.rs` | Ingest, live publish, history queries |
 | `model_service.rs` | Hardware detection (CPU, RAM, GPU, unified pool), fit, facets, catalog filters, install jobs |
+| `node_service.rs` | The nodes list, one node with its budget, a node's sandboxes, name-or-id resolution, display rename |
 | `gateway_service.rs` | Registry, settings, drift, sync |
 | `job_service.rs` | Job creation and progress |
 | `schedule_service.rs` | Schedule evaluation and runs |
