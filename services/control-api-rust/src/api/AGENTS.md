@@ -40,7 +40,7 @@ The architecture test enforces the last two.
 | `events.rs` | SSE streams |
 | `cluster.rs` | Gateways, supervisors, topology |
 | `providers.rs` | Provider profiles, probe |
-| `models.rs` | Catalog with filters, hardware, facets, requirements, installs, sync |
+| `models.rs` | Catalog per node with filters, hardware, facets, requirements, installs with reservations, sync |
 | `nodes.rs` | Nodes, budget, probe (handlers: `feat/nodes-api`) |
 | `packs.rs` | Baselines, agent packs, tool catalog (`feat/packs-as-data`) |
 | `recipes.rs` | Recipe CRUD, build, instantiate (`feat/recipes-build`) |
