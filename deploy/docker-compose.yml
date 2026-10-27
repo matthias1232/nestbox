@@ -21,9 +21,10 @@ services:
       - -c
       - |
         mkdir -p /data/gateway /secrets
-        chown -R 10001:10001 /data
+        chown -R 10001:10001 /data /secrets
         chmod 0700 /secrets
         find /secrets -type f -exec chmod 0600 {} + 2>/dev/null || true
+        echo "data and secret directories prepared"
     volumes:
       - ./data:/data
       - ./secrets:/secrets
@@ -77,6 +78,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      init-data:
+        condition: service_completed_successfully
     restart: "no"
     networks:
       - control
@@ -102,6 +105,8 @@ services:
       postgres:
         condition: service_healthy
       migrate:
+        condition: service_completed_successfully
+      init-data:
         condition: service_completed_successfully
     expose:
       - "8000"

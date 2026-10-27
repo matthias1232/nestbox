@@ -10,7 +10,10 @@
 
 set -eu
 
-APP_PASSWORD="$(cat /run/secrets/postgres_password)"
+# The postgres entrypoint reads POSTGRES_PASSWORD_FILE as root and exports the
+# value, so it is available here even though the file itself is not readable by
+# the postgres user.
+APP_PASSWORD="${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}"
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<SQL
 DO \$\$
