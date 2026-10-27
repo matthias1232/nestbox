@@ -14,10 +14,14 @@ let csrfToken = null;
 let environmentId = null;
 
 export class ApiError extends Error {
-  constructor(code, message, status) {
+  constructor(code, message, status, details = null) {
     super(message);
     this.code = code;
     this.status = status;
+    // The server's non-secret context, e.g. `{ sandboxes: ["a", "b"] }` on a
+    // `provider.in_use`. A screen shows it instead of inventing an explanation,
+    // which is why the error carries the whole object rather than a message.
+    this.details = details;
   }
 }
 
@@ -63,6 +67,7 @@ export async function request(path, options = {}) {
       error.code || 'request.failed',
       error.message || `Request failed with ${response.status}`,
       response.status,
+      error.details ?? null,
     );
   }
   return payload;
