@@ -108,6 +108,11 @@ pub struct Sandbox {
     pub gateway_name: Option<String>,
     pub supervisor_id: Option<Uuid>,
     pub workspace_id: Option<Uuid>,
+    /// The node this sandbox runs on. Every sandbox has one; Phase 1 has one node.
+    pub node_id: Uuid,
+    /// The node's name, joined for the list view.
+    #[serde(default)]
+    pub node_name: Option<String>,
     pub name: String,
     pub pack_key: String,
     pub image: String,
@@ -254,6 +259,8 @@ mod tests {
             id: Uuid::nil(),
             environment_id: Uuid::nil(),
             cluster_id: Uuid::nil(),
+            node_id: Uuid::nil(),
+            node_name: None,
             gateway_id: None,
             gateway_name: None,
             supervisor_id: None,

@@ -40,8 +40,20 @@ The architecture test enforces the last two.
 | `events.rs` | SSE streams |
 | `cluster.rs` | Gateways, supervisors, topology |
 | `providers.rs` | Provider profiles, probe |
-| `models.rs` | Catalog with filters, hardware, facets, requirements, install |
+| `models.rs` | Catalog with filters, hardware, facets, requirements, installs, sync |
+| `nodes.rs` | Nodes, budget, probe (handlers: `feat/nodes-api`) |
+| `packs.rs` | Baselines, agent packs, tool catalog (`feat/packs-as-data`) |
+| `recipes.rs` | Recipe CRUD, build, instantiate (`feat/recipes-build`) |
+| `persistent_roots.rs` | Roots, mount, dismount, usage (`feat/persistent-roots`) |
+| `sandbox_agents.rs` | Agents inside a sandbox (`feat/sandbox-agents`) |
 | `jobs.rs` | Jobs, schedules |
+
+## Work packages
+
+A route may be registered and documented before its handler exists: the stub
+answers `501 server.not_implemented`. This is how parallel packages share one
+contract. A package fills the handler bodies in its file and touches nothing
+in `mod.rs` or `openapi.rs`.
 
 ## Extending
 

@@ -84,6 +84,13 @@ pub enum Permission {
     AuditRead,
     UserManage,
     EnvironmentManage,
+    NodeRead,
+    /// Renaming a node or probing its hardware through its runner.
+    NodeManage,
+    RecipeRead,
+    RecipeWrite,
+    /// Persistent roots and mounts touch the node's filesystem.
+    PersistWrite,
 }
 
 impl Permission {
@@ -97,6 +104,8 @@ impl Permission {
             | Self::ModelRead
             | Self::ProviderRead
             | Self::JobRead
+            | Self::NodeRead
+            | Self::RecipeRead
             | Self::AuditRead => Role::Viewer,
 
             Self::SandboxWrite
@@ -104,6 +113,9 @@ impl Permission {
             | Self::PolicyWrite
             | Self::ModelInstall
             | Self::ProviderWrite
+            | Self::RecipeWrite
+            | Self::PersistWrite
+            | Self::NodeManage
             | Self::JobWrite => Role::Operator,
 
             Self::PolicyGlobal
@@ -136,6 +148,11 @@ impl Permission {
             Self::AuditRead => "audit.read",
             Self::UserManage => "user.manage",
             Self::EnvironmentManage => "environment.manage",
+            Self::NodeRead => "node.read",
+            Self::NodeManage => "node.manage",
+            Self::RecipeRead => "recipe.read",
+            Self::RecipeWrite => "recipe.write",
+            Self::PersistWrite => "persist.write",
         }
     }
 }

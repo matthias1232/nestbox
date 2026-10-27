@@ -9,7 +9,8 @@ use reqwest::StatusCode;
 use serde::Deserialize;
 
 use crate::domain::runtime::{
-    ExecResult, NetworkInterface, RuntimeFacts, RuntimeResources, SandboxSpec,
+    BuildRequest, BuildResult, ExecResult, HardwareReport, NetworkInterface, RuntimeFacts,
+    RuntimeResources, SandboxSpec,
 };
 use crate::runtime::{RuntimeAdapter, RuntimeError};
 
@@ -154,6 +155,8 @@ impl RuntimeAdapter for HttpRunner {
             "memory_limit": spec.memory_limit,
             "cpu_limit": spec.cpu_limit,
             "pids_limit": spec.pids_limit,
+            "mounts": spec.mounts,
+            "gpu_count": spec.gpu_count,
         });
         let facts: RunnerSandbox = self
             .send(reqwest::Method::POST, "/v1/sandboxes", Some(&payload))
@@ -240,6 +243,16 @@ impl RuntimeAdapter for HttpRunner {
         Ok(result)
     }
 
+    async fn hardware(&self) -> Result<HardwareReport, RuntimeError> {
+        self.send(reqwest::Method::GET, "/v1/hardware", None).await
+    }
+
+    async fn build(&self, request: BuildRequest) -> Result<BuildResult, RuntimeError> {
+        let payload = serde_json::to_value(&request)
+            .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        self.send(reqwest::Method::POST, "/v1/builds", Some(&payload))
+            .await
+    }
 }
 
 impl HttpRunner {

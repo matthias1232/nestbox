@@ -49,6 +49,26 @@ impl ErrorCode {
 
     pub const MODEL_NOT_FOUND: Self = Self("model.not_found");
     pub const MODEL_NOT_INSTALLABLE: Self = Self("model.not_installable");
+    pub const MODEL_ALREADY_INSTALLED: Self = Self("model.already_installed");
+    pub const MODEL_INSTALL_NOT_FOUND: Self = Self("model.install_not_found");
+
+    pub const NODE_NOT_FOUND: Self = Self("node.not_found");
+    pub const NODE_RUNTIME_UNAVAILABLE: Self = Self("node.runtime_unavailable");
+    pub const NODE_INSUFFICIENT_RESOURCES: Self = Self("node.insufficient_resources");
+
+    pub const RECIPE_NOT_FOUND: Self = Self("recipe.not_found");
+    pub const RECIPE_NOT_BUILT: Self = Self("recipe.not_built");
+    pub const RECIPE_INVALID: Self = Self("recipe.invalid");
+    pub const BASELINE_NOT_FOUND: Self = Self("baseline.not_found");
+    pub const PACK_NOT_FOUND: Self = Self("pack.not_found");
+    pub const PACK_INCOMPATIBLE: Self = Self("pack.incompatible");
+
+    pub const ROOT_NOT_FOUND: Self = Self("root.not_found");
+    pub const ROOT_IN_USE: Self = Self("root.in_use");
+    pub const MOUNT_CONFLICT: Self = Self("mount.conflict");
+    pub const MOUNT_NOT_FOUND: Self = Self("mount.not_found");
+    pub const AGENT_NOT_FOUND: Self = Self("agent.not_found");
+    pub const AGENT_EXISTS: Self = Self("agent.exists");
 
     pub const JOB_NOT_FOUND: Self = Self("job.not_found");
     pub const SCHEDULE_NOT_FOUND: Self = Self("schedule.not_found");
@@ -60,6 +80,8 @@ impl ErrorCode {
     pub const SECRET_UNRESOLVABLE: Self = Self("secret.unresolvable");
     pub const PROVIDER_NOT_FOUND: Self = Self("provider.not_found");
     pub const PROVIDER_CREDENTIAL_MISSING: Self = Self("provider.credential_missing");
+    pub const PROVIDER_IN_USE: Self = Self("provider.in_use");
+    pub const PROVIDER_PENDING: Self = Self("provider.pending");
 
     pub const VALIDATION_FAILED: Self = Self("request.validation_failed");
     pub const PAYLOAD_TOO_LARGE: Self = Self("request.payload_too_large");
@@ -67,6 +89,8 @@ impl ErrorCode {
     pub const NOT_FOUND: Self = Self("request.not_found");
     pub const CONFLICT: Self = Self("request.conflict");
     pub const INTERNAL: Self = Self("server.internal");
+    /// The route is registered and documented but its package has not landed.
+    pub const NOT_IMPLEMENTED: Self = Self("server.not_implemented");
 }
 
 /// The error a handler returns.
@@ -137,6 +161,29 @@ impl ApiError {
 
     pub fn conflict(code: ErrorCode, message: impl Into<String>) -> Self {
         Self::new(StatusCode::CONFLICT, code, message)
+    }
+
+    /// A request that is well-formed but cannot be satisfied with the given
+    /// code: a node without the resources, an incompatible pack.
+    pub fn unprocessable(code: ErrorCode, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::UNPROCESSABLE_ENTITY, code, message)
+    }
+
+    /// A dependency the request needs is not available.
+    pub fn unavailable(code: ErrorCode, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::SERVICE_UNAVAILABLE, code, message)
+    }
+
+    /// A documented route whose implementation is a pending work package.
+    ///
+    /// Registered up front so the contract test "every route is documented and
+    /// every documented route exists" holds while packages land in parallel.
+    pub fn not_implemented(what: &str) -> Self {
+        Self::new(
+            StatusCode::NOT_IMPLEMENTED,
+            ErrorCode::NOT_IMPLEMENTED,
+            format!("{what} is not implemented yet."),
+        )
     }
 
     pub fn internal(message: impl Into<String>) -> Self {

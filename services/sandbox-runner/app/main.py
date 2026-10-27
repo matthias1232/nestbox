@@ -24,6 +24,39 @@ ALLOWED_IMAGES = set(
         "ubuntu:24.04,nestbox-ubuntu-dev:local,nestbox-hermes:local,nestbox-openclaw:local",
     ).split(",")
 )
+# Images the runner built itself from a recipe are always allowed: they carry
+# this prefix and a content hash, and the Dockerfile came from the control
+# plane. Anything else must be on the allowlist.
+RECIPE_IMAGE_PREFIX = "nestbox-recipe/"
+# The only directory tree a bind mount may come from. Validated as a real path
+# so `..` and symlinks cannot escape it. Empty disables mounts entirely.
+PERSISTENT_BASE = os.path.realpath(os.getenv("NESTBOX_PERSISTENT_BASE", "/var/lib/nestbox/persistent"))
+HOST_PROC = os.getenv("NESTBOX_HOST_PROC", "/proc")
+
+
+def image_allowed(image: str) -> bool:
+    return image in ALLOWED_IMAGES or image.startswith(RECIPE_IMAGE_PREFIX)
+
+
+class MountSpec(BaseModel):
+    source: str
+    target: str = Field(pattern=r"^/.+")
+    read_only: bool = False
+
+
+def validate_mount(mount: MountSpec) -> dict[str, Any]:
+    """Refuse any source outside the persistent base.
+
+    The control plane computed the source from a validated slug; this is the
+    second line, for the case where the control plane is wrong or compromised.
+    """
+    real = os.path.realpath(mount.source)
+    if not PERSISTENT_BASE or real != PERSISTENT_BASE and not real.startswith(PERSISTENT_BASE + os.sep):
+        raise HTTPException(422, f"mount source is outside the persistent base: {mount.source}")
+    if ".." in mount.target.split("/"):
+        raise HTTPException(422, "mount target must not contain '..'")
+    os.makedirs(real, exist_ok=True)
+    return {"type": "bind", "source": real, "target": mount.target, "read_only": mount.read_only}
 
 
 class SandboxRequest(BaseModel):
@@ -38,6 +71,8 @@ class SandboxRequest(BaseModel):
     cpu_limit: float = Field(default=1.0, gt=0, le=8)
     pids_limit: int = Field(default=256, ge=32, le=4096)
     ports: dict[str, int] = Field(default_factory=dict)
+    mounts: list[MountSpec] = Field(default_factory=list)
+    gpu_count: int = Field(default=0, ge=0, le=8)
 
 
 def container_name(name: str) -> str:
@@ -105,7 +140,7 @@ def healthz() -> dict[str, str]:
 
 @app.post("/v1/sandboxes", status_code=201)
 def create_sandbox(body: SandboxRequest) -> dict[str, Any]:
-    if body.image not in ALLOWED_IMAGES:
+    if not image_allowed(body.image):
         raise HTTPException(422, "image is not in the approved phase-1 catalog")
     ensure_network()
     name = container_name(body.name)
@@ -113,6 +148,21 @@ def create_sandbox(body: SandboxRequest) -> dict[str, Any]:
         return details(client.containers.get(name))
     except NotFound:
         pass
+    mounts = [validate_mount(m) for m in body.mounts]
+    extra: dict[str, Any] = {}
+    if mounts:
+        from docker.types import Mount as DockerMount
+
+        extra["mounts"] = [
+            DockerMount(target=m["target"], source=m["source"], type="bind", read_only=m["read_only"])
+            for m in mounts
+        ]
+    if body.gpu_count > 0:
+        if not container_gpu_available():
+            raise HTTPException(422, "this node cannot give a container a GPU: no NVIDIA container runtime")
+        from docker.types import DeviceRequest
+
+        extra["device_requests"] = [DeviceRequest(count=body.gpu_count, capabilities=[["gpu"]])]
     try:
         container = client.containers.run(
             body.image,
@@ -127,6 +177,7 @@ def create_sandbox(body: SandboxRequest) -> dict[str, Any]:
             pids_limit=body.pids_limit,
             cap_drop=["ALL"],
             security_opt=["no-new-privileges:true"],
+            **extra,
             labels={
                 "nestbox.managed": "true",
                 "nestbox.runtime": body.runtime,
@@ -137,6 +188,117 @@ def create_sandbox(body: SandboxRequest) -> dict[str, Any]:
         return details(container)
     except DockerException as exc:
         raise HTTPException(400, f"sandbox creation failed: {exc}") from exc
+
+
+def container_gpu_available() -> bool:
+    """Whether the Docker daemon has an NVIDIA runtime registered."""
+    try:
+        runtimes = client.info().get("Runtimes") or {}
+    except DockerException:
+        return False
+    return "nvidia" in runtimes
+
+
+def read_text(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            return handle.read()
+    except OSError:
+        return ""
+
+
+def run_capture(args: list[str], timeout: float = 5.0) -> str | None:
+    """Run a fixed argument vector and return stdout, or None if it is absent."""
+    import subprocess
+
+    try:
+        done = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    return done.stdout
+
+
+@app.get("/v1/hardware")
+def hardware() -> dict[str, Any]:
+    """What this host has, as raw text for the control plane to parse.
+
+    Raw rather than parsed on purpose: the parsers are tested Rust, and a
+    second implementation here would be a second opinion. ``/proc`` is read
+    from ``NESTBOX_HOST_PROC`` so a containerised runner can be given the host's
+    ``/proc`` and report the machine, not itself.
+    """
+    cpuinfo = read_text(os.path.join(HOST_PROC, "cpuinfo"))
+    meminfo = read_text(os.path.join(HOST_PROC, "meminfo"))
+    csv = run_capture([
+        "nvidia-smi",
+        "--query-gpu=index,name,memory.total,memory.free",
+        "--format=csv,noheader,nounits",
+    ])
+    header = run_capture(["nvidia-smi"]) if csv is not None else None
+    note = None
+    if csv is None:
+        note = "nvidia-smi is not available on this node; GPU models need a GPU host."
+    return {
+        "hostname": read_text("/etc/hostname").strip() or None,
+        "cpuinfo": cpuinfo,
+        "meminfo": meminfo,
+        "nvidia_smi_csv": csv,
+        "nvidia_smi_header": header,
+        "container_gpu": container_gpu_available(),
+        "note": note,
+    }
+
+
+class BuildRequest(BaseModel):
+    tag: str = Field(pattern=r"^nestbox-recipe/[a-z0-9-]{1,63}:[a-f0-9]{8,64}$")
+    dockerfile: str = Field(min_length=1, max_length=65536)
+    files: list[tuple[str, str]] = Field(default_factory=list)
+
+
+@app.post("/v1/builds")
+def build_image(body: BuildRequest) -> dict[str, Any]:
+    """Build an image from a generated Dockerfile.
+
+    The tag pattern is the only way a build can name itself, so a recipe image
+    always carries the prefix the allowlist trusts. Extra files are written
+    into the build context by relative name; a name with a path separator is
+    refused.
+    """
+    import io
+    import tarfile
+
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as tar:
+        def add(name: str, content: str) -> None:
+            data = content.encode()
+            info = tarfile.TarInfo(name=name)
+            info.size = len(data)
+            info.mode = 0o644
+            tar.addfile(info, io.BytesIO(data))
+
+        add("Dockerfile", body.dockerfile)
+        for name, content in body.files:
+            if "/" in name or name.startswith(".") or not name:
+                raise HTTPException(422, f"invalid build file name: {name!r}")
+            add(name, content)
+    buffer.seek(0)
+
+    log_lines: list[str] = []
+    try:
+        image, stream = client.images.build(fileobj=buffer, custom_context=True, tag=body.tag, rm=True, forcerm=True)
+        for chunk in stream:
+            if isinstance(chunk, dict) and "stream" in chunk:
+                log_lines.append(chunk["stream"])
+        return {"tag": body.tag, "image_id": image.id, "log": "".join(log_lines)[-65536:], "success": True}
+    except docker.errors.BuildError as exc:
+        for chunk in exc.build_log:
+            if isinstance(chunk, dict) and "stream" in chunk:
+                log_lines.append(chunk["stream"])
+        return {"tag": body.tag, "image_id": None, "log": ("".join(log_lines) + str(exc))[-65536:], "success": False}
+    except DockerException as exc:
+        raise HTTPException(400, f"build failed: {exc}") from exc
 
 
 @app.get("/v1/sandboxes")

@@ -18,6 +18,22 @@ async fn connect() -> Option<sqlx::PgPool> {
     // than assumed.
     let _ = sqlx::query("DROP SCHEMA IF EXISTS public CASCADE").execute(&pool).await;
     let _ = sqlx::query("CREATE SCHEMA public").execute(&pool).await;
+    // The application role is created by the Postgres init script on the
+    // appliance. Here it is created before the migrations, so 0009 can grant it
+    // and the row-level-security test can switch to it.
+    let _ = sqlx::query(
+        "DO $$BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nestbox_app') THEN
+                CREATE ROLE nestbox_app LOGIN;
+            END IF;
+        END$$",
+    )
+    .execute(&pool)
+    .await;
+    sqlx::query("GRANT USAGE, CREATE ON SCHEMA public TO nestbox_app")
+        .execute(&pool)
+        .await
+        .ok()?;
     sqlx::migrate!("./migrations").run(&pool).await.ok()?;
     Some(pool)
 }
@@ -106,9 +122,18 @@ async fn the_model_catalog_states_the_gate_it_uses() {
         .await
         .expect("count");
     assert!(
-        catalog_size >= 40,
-        "the catalog should be broad (NVIDIA, DeepSeek, Qwen, Llama, Gemma, Phi, CPU-only), got {catalog_size}"
+        catalog_size >= 80,
+        "the catalog should be broad (NVIDIA, DeepSeek, Qwen, Llama, Gemma, Phi, CPU-only, frontier), got {catalog_size}"
     );
+
+    // The frontier rows are pinned seeds, so the sync can never rewrite them.
+    let unpinned_seed: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM models WHERE source = 'seed' AND NOT pinned",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("query");
+    assert_eq!(unpinned_seed, 0, "every seed row is pinned");
 
     // Recommended never lies below minimum, and the two units are distinct on
     // purpose: a row that copies VRAM into RAM would hide the CPU path.
@@ -121,6 +146,64 @@ async fn the_model_catalog_states_the_gate_it_uses() {
     .await
     .expect("query");
     assert_eq!(copied_gate, 0, "recommended RAM must be at least the minimum");
+}
+
+/// The node tables are in place: one local node, every sandbox and hardware
+/// profile on it, and the builder catalogs seeded.
+#[tokio::test]
+async fn the_local_node_and_builder_catalogs_are_seeded() {
+    let Some(pool) = connect().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+
+    let local: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM nodes WHERE is_local")
+        .fetch_one(&pool)
+        .await
+        .expect("query");
+    assert_eq!(local, 1, "exactly one local node");
+
+    let orphan_sandboxes: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sandboxes WHERE node_id IS NULL")
+            .fetch_one(&pool)
+            .await
+            .expect("query");
+    assert_eq!(orphan_sandboxes, 0);
+
+    let baselines: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM baselines")
+        .fetch_one(&pool)
+        .await
+        .expect("query");
+    assert_eq!(baselines, 3);
+
+    let recommended: String =
+        sqlx::query_scalar("SELECT key FROM baselines WHERE recommended LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .expect("query");
+    assert_eq!(recommended, "ubuntu-24.04");
+
+    let packs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_packs WHERE enabled")
+        .fetch_one(&pool)
+        .await
+        .expect("query");
+    assert!(packs >= 9, "the agent packs are seeded, got {packs}");
+
+    // Every pack has an image and the tool catalog can resolve for both
+    // package managers.
+    let packs_without_image: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM agent_packs WHERE default_image = ''")
+            .fetch_one(&pool)
+            .await
+            .expect("query");
+    assert_eq!(packs_without_image, 0);
+
+    let sync_schedule: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM schedules WHERE kind = 'catalog_sync'")
+            .fetch_one(&pool)
+            .await
+            .expect("query");
+    assert!(sync_schedule >= 1, "the catalog sync schedule is seeded");
 }
 
 /// Row-level security refuses a row from another environment.
@@ -145,8 +228,9 @@ async fn row_level_security_blocks_a_cross_tenant_read() {
         .await
         .expect("cluster");
     sqlx::query(
-        "INSERT INTO sandboxes (environment_id, cluster_id, name, image, image_digest)
-         VALUES ($1, $2, 'rls-canary', 'img@sha256:abc', 'sha256:abc')",
+        "INSERT INTO sandboxes (environment_id, cluster_id, node_id, name, image, image_digest)
+         VALUES ($1, $2, (SELECT id FROM nodes WHERE is_local), 'rls-canary',
+                 'img@sha256:abc', 'sha256:abc')",
     )
     .bind(environment)
     .bind(cluster)
@@ -155,12 +239,21 @@ async fn row_level_security_blocks_a_cross_tenant_read() {
     .expect("insert");
 
     // Read it back with the tenant scope set: visible.
+    //
+    // The suite connects as the schema owner, which bypasses row-level
+    // security; the application connects as `nestbox_app`, which does not. The
+    // role switch is what makes this a test of the policy rather than of the
+    // owner's privilege.
     let mut tx = pool.begin().await.expect("tx");
     sqlx::query("SELECT set_config('app.environment_id', $1, true)")
         .bind(environment.to_string())
         .execute(&mut *tx)
         .await
         .expect("set scope");
+    sqlx::query("SET LOCAL ROLE nestbox_app")
+        .execute(&mut *tx)
+        .await
+        .expect("switch to the application role");
     let visible: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sandboxes WHERE name = 'rls-canary'")
         .fetch_one(&mut *tx)
         .await
@@ -176,6 +269,10 @@ async fn row_level_security_blocks_a_cross_tenant_read() {
         .execute(&mut *tx)
         .await
         .expect("set scope");
+    sqlx::query("SET LOCAL ROLE nestbox_app")
+        .execute(&mut *tx)
+        .await
+        .expect("switch to the application role");
     let hidden: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sandboxes WHERE name = 'rls-canary'")
         .fetch_one(&mut *tx)
         .await
@@ -203,8 +300,9 @@ async fn an_injection_shaped_name_is_just_a_string() {
 
     let hostile = "'; DROP TABLE sandboxes; --";
     sqlx::query(
-        "INSERT INTO sandboxes (environment_id, cluster_id, name, image, image_digest)
-         VALUES ($1, $2, $3, 'img@sha256:abc', 'sha256:abc')",
+        "INSERT INTO sandboxes (environment_id, cluster_id, node_id, name, image, image_digest)
+         VALUES ($1, $2, (SELECT id FROM nodes WHERE is_local), $3,
+                 'img@sha256:abc', 'sha256:abc')",
     )
     .bind(environment)
     .bind(cluster)

@@ -45,7 +45,12 @@ than by the compiler.
 | `postgres/policies.rs` | Policy documents, versions, rules |
 | `postgres/telemetry.rs` | Event insert and query |
 | `postgres/gateways.rs` | Gateways and supervisors |
-| `postgres/models.rs` | Catalog (with SQL filters and facets) and hardware profiles |
+| `postgres/models.rs` | Catalog (with SQL filters and facets) and hardware profiles per node |
+| `postgres/model_installs.rs` | Installs per node and their reservations |
+| `postgres/nodes.rs` | Nodes (global rows), sandbox counts per node |
+| `postgres/agent_packs.rs` | Baselines, agent packs, tool catalog |
+| `postgres/recipes.rs` | Recipes and build outcomes |
+| `postgres/persistent_roots.rs` | Roots, mounts, sandbox agents |
 | `postgres/jobs.rs` | Jobs, targets, schedules |
 | `postgres/auth.rs` | Users, sessions, scopes |
 | `postgres/environments.rs` | Environments and clusters |

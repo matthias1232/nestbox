@@ -7,7 +7,7 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::domain::runtime::{ExecResult, RuntimeFacts, SandboxSpec};
+use crate::domain::runtime::{BuildRequest, BuildResult, ExecResult, HardwareReport, RuntimeFacts, SandboxSpec};
 
 /// Fehler aus der Ausführungsschicht.
 #[derive(Debug, Error)]
@@ -61,6 +61,15 @@ pub trait RuntimeAdapter: Send + Sync {
         command: &[String],
         timeout_seconds: u32,
     ) -> Result<ExecResult, RuntimeError>;
+
+    /// What the runner's host has: CPU, memory, GPUs, container GPU support.
+    ///
+    /// Asked of the runner rather than measured here, because the control
+    /// plane may run in a container that sees none of the node's devices.
+    async fn hardware(&self) -> Result<HardwareReport, RuntimeError>;
+
+    /// Build an image from a generated Dockerfile.
+    async fn build(&self, request: BuildRequest) -> Result<BuildResult, RuntimeError>;
 }
 
 pub mod fake;

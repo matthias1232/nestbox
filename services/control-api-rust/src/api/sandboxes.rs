@@ -87,6 +87,9 @@ pub struct CreateRequest {
     pub cpu_limit: f64,
     #[serde(default = "default_pids")]
     pub pids_limit: i64,
+    /// The node to place the sandbox on, by name. Omitted means the local node.
+    #[serde(default)]
+    pub node: Option<String>,
 }
 
 fn default_memory() -> String {
@@ -117,6 +120,7 @@ pub async fn create(
             memory_limit: body.memory_limit,
             cpu_limit: body.cpu_limit,
             pids_limit: body.pids_limit,
+            node: body.node,
         },
     )
     .await?;

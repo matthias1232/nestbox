@@ -144,12 +144,20 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
-      NESTBOX_ALLOWED_IMAGES: ubuntu:24.04,nestbox-ubuntu-dev:local,nestbox-hermes:local,nestbox-openclaw:local
+      NESTBOX_ALLOWED_IMAGES: ubuntu:24.04,nestbox-ubuntu-dev:local,nestbox-hermes:local,nestbox-openclaw:local,nestbox-tool-git:local
       NESTBOX_RUNTIME_NETWORK: nestbox-runtime
+      # Bind mounts for persistent roots come only from this tree.
+      NESTBOX_PERSISTENT_BASE: /var/lib/nestbox/persistent
+      # The host's /proc, so the hardware report describes the machine.
+      NESTBOX_HOST_PROC: /host/proc
     volumes:
       # The only component that talks to the Docker socket. It is separate from
       # the API on purpose: a compromise of the API does not yield the host.
       - /var/run/docker.sock:/var/run/docker.sock
+      # Persistent roots live here on the host; the same path inside and out
+      # so a bind source the runner validates is the path Docker mounts.
+      - /var/lib/nestbox/persistent:/var/lib/nestbox/persistent
+      - /proc:/host/proc:ro
     expose:
       - "9000"
     networks:

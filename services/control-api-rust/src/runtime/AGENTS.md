@@ -36,3 +36,11 @@ services can be tested against `FakeAdapter` without a container runtime.
 Implement `RuntimeAdapter`, add it to the construction in `main.rs`, and say in
 the module docs which guarantees it does *not* provide. A fake that quietly
 satisfies more than the real thing hides bugs.
+
+## Hardware and builds
+
+`hardware()` returns the runner host's raw `/proc/cpuinfo`, `/proc/meminfo`,
+and `nvidia-smi` text plus whether the Docker daemon has an NVIDIA runtime.
+Raw rather than parsed, because the parsers are tested Rust in
+`services/model_service.rs`. `build()` sends a generated Dockerfile and gets an
+image tag back; the runner only accepts tags under `nestbox-recipe/`.

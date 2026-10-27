@@ -305,8 +305,14 @@ async fn detect_or_load(
         .await
         .map_err(ApiError::from)?;
 
+    // Phase 1: the local node. Package 2 of the node plan routes this through
+    // the node's runner and takes the node as a parameter.
+    let node = crate::store::postgres::nodes::local(&mut scope)
+        .await
+        .map_err(ApiError::from)?;
+
     if !refresh {
-        if let Some(profile) = store::latest_hardware(&mut scope)
+        if let Some(profile) = store::latest_hardware(&mut scope, node.id)
             .await
             .map_err(ApiError::from)?
         {
@@ -315,7 +321,7 @@ async fn detect_or_load(
         }
     }
 
-    let profile = probe_hardware(principal.environment_id);
+    let profile = probe_hardware(principal.environment_id, node.id);
     store::insert_hardware(&mut scope, &profile)
         .await
         .map_err(ApiError::from)?;
@@ -339,7 +345,7 @@ async fn detect_or_load(
 /// A machine without a GPU is not an error: it is a fact, and the RAM and core
 /// count are what decide whether a CPU model fits. The detection note says why
 /// the GPU list is empty so the console can explain it without guessing.
-pub fn probe_hardware(environment_id: uuid::Uuid) -> HardwareProfile {
+pub fn probe_hardware(environment_id: uuid::Uuid, node_id: uuid::Uuid) -> HardwareProfile {
     let hostname = std::fs::read_to_string("/etc/hostname")
         .ok()
         .map(|value| value.trim().to_string());
@@ -416,6 +422,7 @@ pub fn probe_hardware(environment_id: uuid::Uuid) -> HardwareProfile {
     HardwareProfile {
         id: uuid::Uuid::new_v4(),
         environment_id,
+        node_id,
         detected_at: chrono::Utc::now(),
         hostname,
         gpus,
@@ -652,7 +659,7 @@ mod tests {
     fn a_machine_without_nvidia_smi_reports_a_reason() {
         // This is the honest path on a host with no GPU tooling, which is also
         // the path the development appliance takes.
-        let profile = probe_hardware(uuid::Uuid::nil());
+        let profile = probe_hardware(uuid::Uuid::nil(), uuid::Uuid::nil());
         if profile.gpus.is_empty() {
             assert!(profile.detection_note.is_some());
         }

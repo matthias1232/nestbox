@@ -144,6 +144,7 @@ fn schedule_kind(name: &str) -> crate::domain::job::JobKind {
         "provider_refresh" => JobKind::ProviderRefresh,
         "model_update_check" => JobKind::ModelUpdateCheck,
         "session_cleanup" => JobKind::SessionCleanup,
+        "catalog_sync" => JobKind::CatalogSync,
         other => {
             tracing::warn!(schedule = other, "unknown schedule kind");
             JobKind::PolicyReconciliation
@@ -236,6 +237,7 @@ mod tests {
             "provider_refresh",
             "model_update_check",
             "session_cleanup",
+            "catalog_sync",
         ] {
             let kind = schedule_kind(name);
             assert!(!kind.as_str().is_empty());

@@ -9,9 +9,14 @@ pub mod cluster;
 pub mod events;
 pub mod jobs;
 pub mod models;
+pub mod nodes;
+pub mod packs;
+pub mod persistent_roots;
 pub mod policies;
 pub mod principal;
 pub mod providers;
+pub mod recipes;
+pub mod sandbox_agents;
 pub mod sandboxes;
 pub mod system;
 pub mod telemetry;
@@ -119,8 +124,49 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/models/hardware", get(models::hardware))
         .route("/api/v1/models/facets", get(models::facets))
         .route("/api/v1/models/requirements", get(models::requirements))
+        .route("/api/v1/models/installs", get(models::installs))
+        .route("/api/v1/models/sync", post(models::sync))
         .route("/api/v1/models/{key}/install", post(models::install))
         .route("/api/v1/models/{key}/uninstall", post(models::uninstall))
+        // Nodes
+        .route("/api/v1/nodes", get(nodes::list))
+        .route("/api/v1/nodes/{id}", get(nodes::get))
+        .route("/api/v1/nodes/{id}/sandboxes", get(nodes::sandboxes))
+        .route("/api/v1/nodes/{id}/display", put(nodes::update_display))
+        .route("/api/v1/nodes/{id}/probe", post(nodes::probe))
+        // Builder catalogs
+        .route("/api/v1/baselines", get(packs::baselines))
+        .route("/api/v1/agent-packs", get(packs::agent_packs))
+        .route("/api/v1/tool-catalog", get(packs::tool_catalog))
+        // Recipes
+        .route("/api/v1/recipes", get(recipes::list).post(recipes::create))
+        .route(
+            "/api/v1/recipes/{id}",
+            get(recipes::get).patch(recipes::update).delete(recipes::delete),
+        )
+        .route("/api/v1/recipes/{id}/build", post(recipes::build))
+        .route("/api/v1/recipes/{id}/instantiate", post(recipes::instantiate))
+        // Persistent roots
+        .route(
+            "/api/v1/persistent-roots",
+            get(persistent_roots::list).post(persistent_roots::create),
+        )
+        .route(
+            "/api/v1/persistent-roots/{id}",
+            get(persistent_roots::get).delete(persistent_roots::delete),
+        )
+        .route("/api/v1/persistent-roots/{id}/mount", post(persistent_roots::mount))
+        .route("/api/v1/persistent-roots/{id}/dismount", post(persistent_roots::dismount))
+        .route("/api/v1/persistent-roots/{id}/usage", get(persistent_roots::usage))
+        // Sandbox agents
+        .route(
+            "/api/v1/sandboxes/{id}/agents",
+            get(sandbox_agents::list).post(sandbox_agents::add),
+        )
+        .route(
+            "/api/v1/sandboxes/{id}/agents/{instance}",
+            delete(sandbox_agents::remove),
+        )
         // Jobs and schedules
         .route("/api/v1/jobs", get(jobs::list))
         .route("/api/v1/jobs/{id}", get(jobs::get))

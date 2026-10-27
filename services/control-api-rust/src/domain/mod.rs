@@ -5,11 +5,16 @@
 //! from leaking into the model of the problem.
 
 pub mod auth;
+pub mod builder;
 pub mod environment;
 pub mod gateway;
 pub mod job;
 pub mod model;
+pub mod model_install;
+pub mod node;
+pub mod pack;
 pub mod pagination;
+pub mod persist;
 pub mod policy;
 pub mod provider;
 pub mod runtime;

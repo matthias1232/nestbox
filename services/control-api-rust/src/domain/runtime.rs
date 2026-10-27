@@ -71,6 +71,59 @@ pub struct SandboxSpec {
     pub memory_limit: String,
     pub cpu_limit: f64,
     pub pids_limit: i64,
+    /// Bind mounts. Sources come from the persistent-root table, never from a
+    /// request; the runner validates them against its persistent base again.
+    pub mounts: Vec<crate::domain::persist::MountSpec>,
+    /// GPUs to hand to the container. Zero on a node without `container_gpu`.
+    pub gpu_count: u32,
+}
+
+/// What the runner found on its own host, as raw text the control plane parses.
+///
+/// Raw rather than parsed on purpose: the parsers are tested Rust, and a
+/// second implementation in the runner would be a second opinion.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct HardwareReport {
+    #[serde(default)]
+    pub hostname: Option<String>,
+    #[serde(default)]
+    pub cpuinfo: String,
+    #[serde(default)]
+    pub meminfo: String,
+    /// `nvidia-smi --query-gpu=index,name,memory.total,memory.free --format=csv,noheader,nounits`
+    #[serde(default)]
+    pub nvidia_smi_csv: Option<String>,
+    /// The plain `nvidia-smi` header, for the CUDA version.
+    #[serde(default)]
+    pub nvidia_smi_header: Option<String>,
+    /// Whether the Docker daemon has an NVIDIA runtime registered.
+    #[serde(default)]
+    pub container_gpu: bool,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// A request to build an image from a Dockerfile.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct BuildRequest {
+    /// `nestbox-recipe/<slug>:<hash>`
+    pub tag: String,
+    pub dockerfile: String,
+    /// Extra files by relative name, e.g. the entrypoint script.
+    #[serde(default)]
+    pub files: Vec<(String, String)>,
+}
+
+/// What a build produced.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct BuildResult {
+    pub tag: String,
+    #[serde(default)]
+    pub image_id: Option<String>,
+    #[serde(default)]
+    pub log: String,
+    #[serde(default)]
+    pub success: bool,
 }
 
 /// What a command run inside a sandbox produced.

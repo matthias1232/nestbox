@@ -31,6 +31,8 @@ fn row_to_sandbox(row: &sqlx::postgres::PgRow) -> Result<Sandbox, StoreError> {
         gateway_name: row.try_get("gateway_name")?,
         supervisor_id: row.try_get("supervisor_id")?,
         workspace_id: row.try_get("workspace_id")?,
+        node_id: row.try_get("node_id")?,
+        node_name: row.try_get("node_name")?,
         name: row.try_get("name")?,
         pack_key: row.try_get("pack_key")?,
         image: row.try_get("image")?,
@@ -49,9 +51,9 @@ fn row_to_sandbox(row: &sqlx::postgres::PgRow) -> Result<Sandbox, StoreError> {
 /// breaks loudly in the mapping rather than silently mis-aligning a field.
 const SANDBOX_COLUMNS: &str = "
     s.id, s.environment_id, s.cluster_id, s.gateway_id, s.supervisor_id,
-    s.workspace_id, s.name, s.pack_key, s.image, s.image_digest, s.spec,
+    s.workspace_id, s.node_id, s.name, s.pack_key, s.image, s.image_digest, s.spec,
     s.status, s.health, s.version, s.created_at, s.updated_at,
-    g.name AS gateway_name
+    g.name AS gateway_name, n.name AS node_name
 ";
 
 /// List sandboxes with keyset paging and facets.
@@ -123,6 +125,7 @@ pub async fn list(
         "SELECT {SANDBOX_COLUMNS}
            FROM sandboxes s
            LEFT JOIN gateways g ON g.id = s.gateway_id
+           LEFT JOIN nodes n ON n.id = s.node_id
           WHERE s.environment_id = $1
             AND ($2::text[] IS NULL OR s.status = ANY($2))
             AND ($3::text IS NULL OR s.pack_key = $3)
@@ -242,6 +245,7 @@ pub async fn get(
         "SELECT {SANDBOX_COLUMNS}
            FROM sandboxes s
            LEFT JOIN gateways g ON g.id = s.gateway_id
+           LEFT JOIN nodes n ON n.id = s.node_id
           WHERE s.environment_id = $1 AND s.id = $2"
     );
     let row = sqlx::query(&sql)
@@ -260,6 +264,7 @@ pub async fn get(
 pub struct NewSandbox<'a> {
     pub cluster_id: Uuid,
     pub gateway_id: Option<Uuid>,
+    pub node_id: Uuid,
     pub name: &'a str,
     pub pack_key: &'a str,
     pub image: &'a str,
@@ -276,20 +281,22 @@ pub async fn insert(
     let sql = format!(
         "WITH inserted AS (
             INSERT INTO sandboxes
-                (environment_id, cluster_id, gateway_id, name, pack_key,
+                (environment_id, cluster_id, gateway_id, node_id, name, pack_key,
                  image, image_digest, spec, status, health)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', 'unknown')
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', 'unknown')
             RETURNING *
          )
          SELECT {SANDBOX_COLUMNS}
            FROM inserted s
-           LEFT JOIN gateways g ON g.id = s.gateway_id"
+           LEFT JOIN gateways g ON g.id = s.gateway_id
+           LEFT JOIN nodes n ON n.id = s.node_id"
     );
 
     let row = sqlx::query(&sql)
         .bind(environment_id)
         .bind(new.cluster_id)
         .bind(new.gateway_id)
+        .bind(new.node_id)
         .bind(new.name)
         .bind(new.pack_key)
         .bind(new.image)
@@ -323,7 +330,8 @@ pub async fn update_status(
          )
          SELECT {SANDBOX_COLUMNS}
            FROM updated s
-           LEFT JOIN gateways g ON g.id = s.gateway_id"
+           LEFT JOIN gateways g ON g.id = s.gateway_id
+           LEFT JOIN nodes n ON n.id = s.node_id"
     );
 
     let row = sqlx::query(&sql)

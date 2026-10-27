@@ -35,6 +35,8 @@ pub struct GpuDevice {
 pub struct HardwareProfile {
     pub id: Uuid,
     pub environment_id: Uuid,
+    /// The node this measurement describes.
+    pub node_id: Uuid,
     pub detected_at: DateTime<Utc>,
     pub hostname: Option<String>,
     pub gpus: Vec<GpuDevice>,
@@ -746,6 +748,7 @@ mod tests {
         HardwareProfile {
             id: Uuid::nil(),
             environment_id: Uuid::nil(),
+            node_id: Uuid::nil(),
             detected_at: Utc::now(),
             hostname: Some("test".into()),
             gpus: gpus

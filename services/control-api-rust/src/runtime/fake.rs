@@ -11,7 +11,7 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 
-use crate::domain::runtime::{ExecResult, RuntimeFacts, SandboxSpec};
+use crate::domain::runtime::{BuildRequest, BuildResult, ExecResult, HardwareReport, RuntimeFacts, SandboxSpec};
 use crate::runtime::{RuntimeAdapter, RuntimeError};
 
 /// Take a lock, recovering from poisoning.
@@ -159,6 +159,30 @@ impl RuntimeAdapter for FakeRuntime {
             exit_code: Some(0),
             output: command.join(" "),
             truncated: false,
+        })
+    }
+
+    async fn hardware(&self) -> Result<HardwareReport, RuntimeError> {
+        // A small x86 host with no GPU: the shape the appliance VM has.
+        Ok(HardwareReport {
+            hostname: Some("fake-node".into()),
+            cpuinfo: "processor\t: 0\nmodel name\t: Fake CPU\nphysical id\t: 0\ncore id\t\t: 0\n\n\
+                      processor\t: 1\nmodel name\t: Fake CPU\nphysical id\t: 0\ncore id\t\t: 1\n"
+                .into(),
+            meminfo: "MemTotal:        8388608 kB\n".into(),
+            nvidia_smi_csv: None,
+            nvidia_smi_header: None,
+            container_gpu: false,
+            note: Some("fake runtime: no GPU".into()),
+        })
+    }
+
+    async fn build(&self, request: BuildRequest) -> Result<BuildResult, RuntimeError> {
+        Ok(BuildResult {
+            tag: request.tag,
+            image_id: Some("sha256:fake".into()),
+            log: "fake build".into(),
+            success: true,
         })
     }
 }

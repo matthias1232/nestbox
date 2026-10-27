@@ -230,8 +230,8 @@ pub async fn insert_hardware(
         "INSERT INTO hardware_profiles
             (environment_id, hostname, gpus, total_vram_bytes, unified_memory_bytes,
              unified_memory_source, cuda_version, driver_version, detection_note,
-             cpu_model, cpu_cores, cpu_threads, system_ram_bytes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+             cpu_model, cpu_cores, cpu_threads, system_ram_bytes, node_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
          RETURNING id",
     )
     .bind(scope.environment_id())
@@ -247,26 +247,29 @@ pub async fn insert_hardware(
     .bind(profile.cpu_cores)
     .bind(profile.cpu_threads)
     .bind(profile.system_ram_bytes)
+    .bind(profile.node_id)
     .fetch_one(scope.connection())
     .await?;
     Ok(id)
 }
 
-/// The most recent detection result, if any.
+/// The most recent detection result for a node, if any.
 pub async fn latest_hardware(
     scope: &mut TenantScope<'_>,
+    node_id: Uuid,
 ) -> Result<Option<HardwareProfile>, StoreError> {
     let row = sqlx::query(
-        "SELECT id, environment_id, detected_at, hostname, gpus, total_vram_bytes,
+        "SELECT id, environment_id, node_id, detected_at, hostname, gpus, total_vram_bytes,
                 unified_memory_bytes, unified_memory_source, cuda_version,
                 driver_version, detection_note, cpu_model, cpu_cores, cpu_threads,
                 system_ram_bytes
            FROM hardware_profiles
-          WHERE environment_id = $1
+          WHERE environment_id = $1 AND node_id = $2
           ORDER BY detected_at DESC
           LIMIT 1",
     )
     .bind(scope.environment_id())
+    .bind(node_id)
     .fetch_optional(scope.connection())
     .await?;
 
@@ -278,6 +281,7 @@ pub async fn latest_hardware(
     Ok(Some(HardwareProfile {
         id: row.try_get("id")?,
         environment_id: row.try_get("environment_id")?,
+        node_id: row.try_get("node_id")?,
         detected_at: row.try_get("detected_at")?,
         hostname: row.try_get("hostname")?,
         gpus,

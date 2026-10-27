@@ -182,6 +182,8 @@ pub enum JobKind {
     AddressPoolReconcile,
     ModelUpdateCheck,
     SessionCleanup,
+    CatalogSync,
+    RecipeBuild,
 }
 
 impl JobKind {
@@ -203,6 +205,8 @@ impl JobKind {
             Self::AddressPoolReconcile => "address_pool_reconcile",
             Self::ModelUpdateCheck => "model_update_check",
             Self::SessionCleanup => "session_cleanup",
+            Self::CatalogSync => "catalog_sync",
+            Self::RecipeBuild => "recipe_build",
         }
     }
 }

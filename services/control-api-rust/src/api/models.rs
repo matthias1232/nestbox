@@ -144,6 +144,26 @@ pub async fn requirements(
     )))
 }
 
+/// Installs per node with reservations.
+///
+/// Filled by the `feat/model-installs` package.
+pub async fn installs(
+    State(_state): State<AppState>,
+    _auth: Auth,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Err(ApiError::not_implemented("GET /models/installs"))
+}
+
+/// Refresh the catalog from the public sources as a job.
+///
+/// Filled by the `feat/catalog-sync` package.
+pub async fn sync(
+    State(_state): State<AppState>,
+    _auth: Auth,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Err(ApiError::not_implemented("POST /models/sync"))
+}
+
 /// Install a model.
 pub async fn install(
     State(state): State<AppState>,

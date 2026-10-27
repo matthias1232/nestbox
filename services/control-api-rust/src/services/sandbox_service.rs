@@ -162,6 +162,8 @@ pub struct CreateSandbox {
     pub memory_limit: String,
     pub cpu_limit: f64,
     pub pids_limit: i64,
+    /// The node to place the sandbox on, by name. Empty means the local node.
+    pub node: Option<String>,
 }
 
 /// Settle a row stuck in a transitional state when the runtime has moved on.
@@ -307,11 +309,35 @@ pub async fn create(
         .find(|gateway| gateway.accepts_placement())
         .map(|gateway| gateway.id);
 
+    // The node is resolved by name and must exist: a typo must not fall back
+    // to the local node silently.
+    let node = match request.node.as_deref().filter(|n| !n.is_empty()) {
+        Some(name) => crate::store::postgres::nodes::get_by_name(&mut scope, name)
+            .await
+            .map_err(|error| match error {
+                crate::error::StoreError::NotFound => ApiError::not_found(
+                    ErrorCode::NODE_NOT_FOUND,
+                    format!("No node named '{name}'."),
+                ),
+                other => ApiError::from(other),
+            })?,
+        None => crate::store::postgres::nodes::local(&mut scope)
+            .await
+            .map_err(ApiError::from)?,
+    };
+    if !node.kind.is_operable() {
+        return Err(ApiError::conflict(
+            ErrorCode::NODE_RUNTIME_UNAVAILABLE,
+            format!("Node '{}' has no runtime adapter yet.", node.name),
+        ));
+    }
+
     let spec = serde_json::json!({
         "pack_key": request.pack_key,
         "memory_limit": memory_limit,
         "cpu_limit": request.cpu_limit,
         "pids_limit": request.pids_limit,
+        "node": node.name,
     });
 
     let sandbox = store::insert(
@@ -319,6 +345,7 @@ pub async fn create(
         store::NewSandbox {
             cluster_id,
             gateway_id,
+            node_id: node.id,
             name: name.as_str(),
             pack_key: &request.pack_key,
             image: &image,
@@ -382,6 +409,8 @@ pub async fn create(
         memory_limit: memory_limit.clone(),
         cpu_limit: request.cpu_limit,
         pids_limit: request.pids_limit,
+        mounts: Vec::new(),
+        gpu_count: 0,
     };
 
     match ctx.runtime.create(runtime_spec).await {
@@ -758,6 +787,8 @@ mod tests {
             gateway_name: None,
             supervisor_id: None,
             workspace_id: None,
+            node_id: Uuid::nil(),
+            node_name: Some("local".into()),
             name: "x".into(),
             pack_key: "p".into(),
             image: "i@sha256:a".into(),

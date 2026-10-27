@@ -14,3 +14,6 @@ assets/video/nestbox-intro-original-score.wav
 services/control-api-rust/target/
 services/web-console-solid/node_modules/
 services/web-console-solid/dist/
+
+# Local OpenChamber session output (screenshots, drafts)
+.openchamber/
