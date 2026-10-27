@@ -1,11 +1,15 @@
 //! The PostgreSQL repositories, one module per aggregate.
 
 pub mod agent_packs;
+pub mod access;
 pub mod audit;
 pub mod auth;
+pub mod egress;
 pub mod environments;
 pub mod gateways;
 pub mod jobs;
+pub mod mcp;
+pub mod metrics;
 pub mod model_installs;
 pub mod models;
 pub mod nodes;
@@ -15,6 +19,8 @@ pub mod providers;
 pub mod recipes;
 pub mod sandboxes;
 pub mod telemetry;
+pub mod traffic;
+pub mod traffic_bodies;
 
 /// Open the connection pool.
 ///

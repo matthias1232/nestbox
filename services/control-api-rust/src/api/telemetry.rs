@@ -127,3 +127,16 @@ pub async fn seed_demo(
     }
     Ok(Json(serde_json::json!({ "ingested": count })))
 }
+
+/// Ingest a batch of access-log lines from a node's egress proxy.
+///
+/// Session-less by design: the node presents its own token. Bodies in the batch
+/// go through the central redactor before they are stored, and the batch is
+/// capped so one node cannot fill the table in a single request. The
+/// `feat/proxy-telemetry` package fills the body.
+pub async fn internal_batch(
+    State(_state): State<AppState>,
+    Json(_batch): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Err(ApiError::not_implemented("POST /internal/telemetry/batch"))
+}

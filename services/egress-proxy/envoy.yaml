@@ -1,0 +1,179 @@
+# Envoy as the egress proxy for every sandbox on this node.
+#
+# Two jobs, one listener:
+#
+#   1. **Decide.** Every request is sent to the control API before it leaves.
+#      The control API owns the rules (ADR 0001); this file owns none. If the
+#      control API cannot answer, the request is denied — `failure_mode_allow`
+#      is off, which is the fail-closed half of "default deny".
+#   2. **Record.** The access log is one JSON line per request: host, port,
+#      method, path, status, duration, bytes, user agent, sandbox, and the MCP
+#      facts the Lua filter extracted. The control API redacts and stores it.
+#
+# What is deliberately *not* here yet, and belongs to the `feat/egress-envoy`
+# package: TLS termination of a CONNECT tunnel with this node's own CA and an
+# upstream certificate, so a TLS request can be seen as a path rather than a
+# tunnel. Until then HTTPS is logged as a CONNECT tunnel with host, port, SNI,
+# and byte counts — and the console says so instead of implying it saw more than
+# it did.
+#
+# No listener is published on the host: the proxy is reachable from the sandbox
+# network only. An unauthenticated forward proxy on a LAN interface is an open
+# relay, and there is no reason to build one.
+
+admin:
+  address:
+    socket_address: { address: 127.0.0.1, port_value: 9901 }
+
+static_resources:
+  listeners:
+    - name: egress
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 3128 }
+      # Both inspectors are needed: `http_inspector` recognises a CONNECT or a
+      # plain HTTP request, `tls_inspector` recognises a raw TLS handshake from
+      # a client that ignores the proxy environment variables.
+      listener_filters:
+        - name: envoy.filters.listener.http_inspector
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.listener.http_inspector.v3.HttpInspector
+        - name: envoy.filters.listener.tls_inspector
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: egress
+                codec_type: AUTO
+                # CONNECT is how a TLS client asks for a tunnel through a proxy.
+                # Only the upgrade type is set here. `connect_config` (which is
+                # what enables TLS termination with this node's CA) does not
+                # exist under this message in v1.31 — the proxy rejected it at
+                # startup, which is exactly what a config that is checked at
+                # boot is for. The `feat/egress-envoy` package adds termination
+                # with the right field for its version and a test that the
+                # container starts.
+                upgrade_configs:
+                  - upgrade_type: CONNECT
+                access_log:
+                  - name: envoy.access_loggers.stdout
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                      log_format:
+                        json_format:
+                          ts: "%START_TIME%"
+                          node: "%ENVIRONMENT(NESTBOX_NODE_NAME)%"
+                          sandbox: "%REQ(x-nestbox-sandbox)%"
+                          host: "%REQ(:authority)%"
+                          method: "%REQ(:method)%"
+                          path: "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%"
+                          protocol: "%PROTOCOL%"
+                          status: "%RESPONSE_CODE%"
+                          duration_ms: "%DURATION%"
+                          bytes_in: "%BYTES_RECEIVED%"
+                          bytes_out: "%BYTES_SENT%"
+                          user_agent: "%REQ(user-agent)%"
+                          request_id: "%REQ(x-request-id)%"
+                          sni: "%REQUESTED_SERVER_NAME%"
+                          mcp_session_id: "%REQ(mcp-session-id)%"
+                          mcp_method: "%DYNAMIC_METADATA(nestbox:mcp_method)%"
+                          mcp_tool: "%DYNAMIC_METADATA(nestbox:mcp_tool)%"
+                          # Set by the decider as a response header, so the log
+                          # records what was actually decided rather than what
+                          # this file assumes was decided.
+                          decision: "%RESP(x-nestbox-decision)%"
+                          reason: "%RESP(x-nestbox-reason)%"
+                          rule_id: "%RESP(x-nestbox-rule-id)%"
+                route_config:
+                  name: egress
+                  virtual_hosts:
+                    - name: forward
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route:
+                            cluster: dynamic_forward_proxy_cluster
+                            # A long download is not a hung request; the idle
+                            # timeout is what closes a dead one.
+                            timeout: 300s
+                            idle_timeout: 60s
+                http_filters:
+                  # Buffer up to 64 KiB so the Lua filter can read a JSON-RPC
+                  # body. Larger bodies are streamed through unbuffered and are
+                  # logged as metadata only — the honest limit of "we record
+                  # bodies up to 64 KiB".
+                  - name: envoy.filters.http.buffer
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.Buffer
+                      max_request_bytes: 65536
+                  # Lua next: it reads the body to recognise MCP and writes the
+                  # tool name into dynamic metadata, before the decision is
+                  # asked for, so the decider can use `mcp_tool` in a rule.
+                  - name: envoy.filters.http.lua
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                      default_source_code:
+                        filename: /etc/envoy/extensions/mcp.lua
+                  - name: envoy.filters.http.ext_authz
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+                      transport_api_version: V3
+                      http_service:
+                        server_uri:
+                          uri: http://control-api:8000
+                          cluster: control_api
+                          timeout: 1s
+                        # Envoy appends the original request path to
+                        # `path_prefix`; the handler ignores that suffix and
+                        # uses the headers and body Envoy sends. The control
+                        # API registers the exact path and the suffixed form.
+                        path_prefix: /api/v1/internal/policy/check
+                        authorization_request:
+                          allowed_headers:
+                            patterns:
+                              - exact: x-nestbox-sandbox
+                              - exact: x-nestbox-node
+                              - exact: user-agent
+                              - exact: mcp-session-id
+                        authorization_response:
+                          allowed_upstream_headers:
+                            patterns:
+                              - exact: x-nestbox-decision
+                              - exact: x-nestbox-reason
+                              - exact: x-nestbox-rule-id
+                      # Fail closed. A control API that cannot answer is not
+                      # permission to proceed.
+                      failure_mode_allow: false
+                  - name: envoy.filters.http.dynamic_forward_proxy
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig
+                      dns_cache_config:
+                        name: dynamic_forward_proxy_cache
+                        dns_lookup_family: V4_ONLY
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  clusters:
+    - name: dynamic_forward_proxy_cluster
+      connect_timeout: 2s
+      lb_policy: CLUSTER_PROVIDED
+      cluster_type:
+        name: envoy.clusters.dynamic_forward_proxy
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
+          dns_cache_config:
+            name: dynamic_forward_proxy_cache
+            dns_lookup_family: V4_ONLY
+    - name: control_api
+      connect_timeout: 1s
+      type: STRICT_DNS
+      load_assignment:
+        cluster_name: control_api
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: control-api, port_value: 8000 }

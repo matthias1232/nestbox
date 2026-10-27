@@ -10,6 +10,7 @@
 | `web-console` | The SolidJS console, served by nginx |
 | `sandbox-runner` | The only component with Docker socket access |
 | `gateway` | The OpenShell-facing gateway image |
+| `egress-proxy` | The only way out of the sandbox network; asks the API per request |
 
 ## Secrets
 
@@ -60,6 +61,31 @@ refuses a file that group or world can read.
 Rotating the key is: write the new value to the same file, recreate the sandbox.
 Nothing else changes, and no rebuild is needed.
 
+
+## The egress proxy and its CA
+
+`sandbox-runner`'s sandboxes sit on `runtime`, which is `internal: true`: they
+have no default route. Their only exit is `egress-proxy`, an Envoy forward proxy
+that asks `control-api` for a decision on every request. No rule, no window, no
+exit — that is the default-deny promise, and a control API that cannot answer is
+a deny, not a pass.
+
+The proxy itself owns no rules and is not published on the host. It is the one
+container with `NET_ADMIN` and `NET_RAW`, and only for the redirect rules that
+catch a tool which ignores `HTTP_PROXY`.
+
+To let the proxy inspect HTTPS instead of only tunnelling it, every node needs
+its own CA:
+
+```bash
+deploy/scripts/make-egress-ca.sh      # idempotent; --force replaces
+```
+
+It writes `secrets/egress/ca.key` (0600, node only) and `secrets/egress/ca.crt`.
+The certificate goes into every sandbox image as a trusted root; the key never
+leaves the node and never enters PostgreSQL (ADR 0005). Without it, an HTTPS
+request is logged as a CONNECT tunnel with host, port, SNI, and byte counts, and
+the console says exactly that rather than showing an empty path.
 
 ## Start
 

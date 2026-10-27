@@ -1,13 +1,22 @@
 //! Business rules.
 
 pub mod access_control;
+pub mod access_service;
+pub mod agent_service;
 pub mod audit_service;
 pub mod auth_service;
+pub mod builder_service;
 pub mod catalog_sync;
 pub mod environment_service;
 pub mod gateway_service;
+pub mod inventory_service;
 pub mod job_service;
+pub mod mcp_service;
+pub mod metrics_service;
 pub mod model_service;
+pub mod node_service;
+pub mod pack_service;
+pub mod persist_service;
 pub mod policy_service;
 pub mod provider_service;
 pub mod sandbox_service;

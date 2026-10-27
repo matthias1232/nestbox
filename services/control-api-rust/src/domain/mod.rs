@@ -4,11 +4,15 @@
 //! a business rule testable in microseconds and what stops an execution model
 //! from leaking into the model of the problem.
 
+pub mod access;
 pub mod auth;
 pub mod builder;
+pub mod egress;
 pub mod environment;
 pub mod gateway;
 pub mod job;
+pub mod mcp;
+pub mod metrics;
 pub mod model;
 pub mod model_install;
 pub mod node;

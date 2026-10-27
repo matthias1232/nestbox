@@ -15,7 +15,7 @@ use super::{require, ServiceContext};
 use crate::domain::auth::{Permission, Principal};
 use crate::domain::model_install::ModelInstall;
 use crate::domain::node::Node;
-use crate::domain::provider::{ProviderKind, ProviderProfile};
+use crate::domain::provider::{ProviderKind, ProviderProfile, ProviderStatus};
 use crate::error::{ApiError, ErrorCode, StoreError};
 use crate::security::secrets;
 use crate::store::TenantScope;
@@ -114,8 +114,23 @@ pub async fn create_for_install(
 pub async fn delete_for_install(
     scope: &mut TenantScope<'_>,
     profile_id: Uuid,
-) -> Result<(), StoreError> {
-    store::delete(scope, profile_id).await
+) -> Result<(), ApiError> {
+    // A profile a sandbox still selects is not removed quietly: the sandbox
+    // would start with an environment naming an endpoint nobody maintains.
+    let names = store::sandboxes_using(scope, profile_id)
+        .await
+        .map_err(ApiError::from)?;
+    if !names.is_empty() {
+        return Err(ApiError::conflict(
+            ErrorCode::PROVIDER_IN_USE,
+            format!(
+                "The provider profile is used by {}.",
+                names.join(", ")
+            ),
+        )
+        .with_details(serde_json::json!({ "sandboxes": names })));
+    }
+    store::delete(scope, profile_id).await.map_err(ApiError::from)
 }
 
 /// Register a provider profile.
@@ -291,28 +306,66 @@ pub async fn probe(
 ) -> Result<ProbeResult, ApiError> {
     require(principal, Permission::ProviderRead)?;
     let profile = get(ctx, principal, id).await?;
+    let result = measure(ctx, &profile).await;
 
+    // Persist the answer, because the inference environment filters on it: a
+    // status that is only in this response would leave a sandbox pointed at an
+    // endpoint the probe just found dead.
+    let status = if result.reachable {
+        ProviderStatus::Reachable
+    } else {
+        ProviderStatus::Unreachable
+    };
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    store::set_status(&mut scope, id, status)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+
+    Ok(result)
+}
+
+/// Ask the endpoint whether it answers.
+///
+/// No database access, so what "reachable" means is decided in one place. An
+/// HTTP answer counts as reachable even when it is a 401: the server is up and
+/// the credential is the problem, which is a different fix from "nothing is
+/// listening".
+async fn measure(ctx: &ServiceContext, profile: &ProviderProfile) -> ProbeResult {
     let credential = match profile.secret_ref.as_deref() {
         Some(locator) => match secrets::resolve(locator, &ctx.secret_dir) {
             Ok(value) => Some(value),
             Err(error) => {
-                return Ok(ProbeResult {
+                return ProbeResult {
                     reachable: false,
                     credential_configured: true,
                     status: None,
                     model_count: None,
                     detail: error.message().to_string(),
-                });
+                };
             }
         },
         None => None,
     };
 
     let url = format!("{}/models", profile.endpoint.trim_end_matches('/'));
-    let client = reqwest::Client::builder()
+    let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
-        .map_err(|error| ApiError::internal("The probe client could not start.").with_internal(error.to_string()))?;
+    {
+        Ok(client) => client,
+        Err(error) => {
+            return ProbeResult {
+                reachable: false,
+                credential_configured: profile.credential_configured,
+                status: None,
+                model_count: None,
+                detail: format!("The probe client could not start: {error}"),
+            };
+        }
+    };
 
     let mut request = client.get(&url);
     if let Some(value) = credential.as_deref() {
@@ -323,34 +376,36 @@ pub async fn probe(
         Ok(response) => {
             let status = response.status();
             if !status.is_success() {
-                return Ok(ProbeResult {
+                return ProbeResult {
                     reachable: true,
                     credential_configured: profile.credential_configured,
                     status: Some(status.as_u16()),
                     model_count: None,
-                    detail: format!("The provider answered {status}, so the credential or the endpoint is wrong."),
-                });
+                    detail: format!(
+                        "The provider answered {status}, so the credential or the endpoint is wrong."
+                    ),
+                };
             }
             let body: serde_json::Value = response.json().await.unwrap_or(serde_json::Value::Null);
             let count = body
                 .get("data")
                 .and_then(|value| value.as_array())
                 .map(|items| items.len());
-            Ok(ProbeResult {
+            ProbeResult {
                 reachable: true,
                 credential_configured: profile.credential_configured,
                 status: Some(status.as_u16()),
                 model_count: count,
                 detail: "The provider answered and the credential was accepted.".to_string(),
-            })
+            }
         }
-        Err(error) => Ok(ProbeResult {
+        Err(error) => ProbeResult {
             reachable: false,
             credential_configured: profile.credential_configured,
             status: None,
             model_count: None,
             detail: format!("The provider could not be reached: {error}"),
-        }),
+        },
     }
 }
 
@@ -374,16 +429,7 @@ pub async fn inference_environment(
     let profiles = store::list(&mut scope).await.map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
 
-    let Some(profile) = profiles
-        .iter()
-        .find(|profile| {
-            matches!(
-                profile.kind,
-                ProviderKind::OpenaiCompatible | ProviderKind::Openai | ProviderKind::Omniroute
-            )
-        })
-        .or_else(|| profiles.first())
-    else {
+    let Some(profile) = select_inference_profile(&profiles) else {
         return Ok(BTreeMap::new());
     };
 
@@ -430,4 +476,112 @@ fn validate_locator(locator: &str) -> Result<(), ApiError> {
         ));
     }
     Ok(())
+}
+
+
+/// Which profile a sandbox should be given, from those the environment has.
+///
+/// The rule, in one place: prefer an OpenAI-compatible profile that has
+/// answered, then any profile that has answered; never a pending one. A
+/// pending profile is an install whose server does not exist yet, and handing
+/// it to an agent would send requests to a hostname that does not resolve.
+pub fn select_inference_profile(profiles: &[ProviderProfile]) -> Option<&ProviderProfile> {
+    let speaks_openai = |profile: &&ProviderProfile| {
+        matches!(
+            profile.kind,
+            ProviderKind::OpenaiCompatible | ProviderKind::Openai | ProviderKind::Omniroute
+        )
+    };
+    profiles
+        .iter()
+        .find(|profile| profile.status == ProviderStatus::Reachable && speaks_openai(profile))
+        .or_else(|| {
+            profiles
+                .iter()
+                .find(|profile| profile.status == ProviderStatus::Reachable)
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn profile(name: &str, kind: ProviderKind, status: ProviderStatus) -> ProviderProfile {
+        ProviderProfile {
+            id: Uuid::new_v4(),
+            environment_id: Uuid::nil(),
+            name: name.to_string(),
+            kind,
+            endpoint: "http://example.invalid/v1".to_string(),
+            model: None,
+            secret_ref: None,
+            credential_configured: false,
+            credential_expiry: None,
+            labels: serde_json::json!({}),
+            version: 1,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            status,
+            node_id: None,
+            model_install_id: None,
+            last_probed_at: None,
+        }
+    }
+
+    #[test]
+    fn a_pending_profile_never_reaches_a_sandbox() {
+        let profiles = vec![profile(
+            "local/qwen@local",
+            ProviderKind::LocalOpenaiCompatible,
+            ProviderStatus::Pending,
+        )];
+        assert!(select_inference_profile(&profiles).is_none());
+    }
+
+    #[test]
+    fn an_openai_compatible_profile_wins_over_a_reachable_other() {
+        let profiles = vec![
+            profile("nvidia", ProviderKind::Nvidia, ProviderStatus::Reachable),
+            profile(
+                "omniroute",
+                ProviderKind::Omniroute,
+                ProviderStatus::Reachable,
+            ),
+        ];
+        let chosen = select_inference_profile(&profiles).expect("a profile");
+        assert_eq!(chosen.name, "omniroute");
+    }
+
+    #[test]
+    fn a_reachable_profile_is_better_than_nothing_even_when_it_is_not_openai_shaped() {
+        let profiles = vec![
+            profile("local/x@local", ProviderKind::LocalOpenaiCompatible, ProviderStatus::Pending),
+            profile("anthropic", ProviderKind::Anthropic, ProviderStatus::Reachable),
+        ];
+        let chosen = select_inference_profile(&profiles).expect("a profile");
+        assert_eq!(chosen.name, "anthropic");
+    }
+
+    #[test]
+    fn an_unreachable_profile_is_never_chosen() {
+        let profiles = vec![profile(
+            "omniroute",
+            ProviderKind::Omniroute,
+            ProviderStatus::Unreachable,
+        )];
+        assert!(select_inference_profile(&profiles).is_none());
+    }
+
+    #[test]
+    fn the_status_round_trips_through_its_wire_name() {
+        for status in [
+            ProviderStatus::Pending,
+            ProviderStatus::Reachable,
+            ProviderStatus::Unreachable,
+        ] {
+            assert_eq!(ProviderStatus::parse(status.as_str()), Some(status));
+        }
+        assert_eq!(ProviderStatus::parse("something"), None);
+    }
 }
