@@ -8,6 +8,7 @@ pub mod gateway_service;
 pub mod job_service;
 pub mod model_service;
 pub mod node_service;
+pub mod persist_service;
 pub mod policy_service;
 pub mod provider_service;
 pub mod sandbox_service;

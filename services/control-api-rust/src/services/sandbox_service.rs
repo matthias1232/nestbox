@@ -356,6 +356,13 @@ pub async fn create(
     .await
     .map_err(ApiError::from)?;
 
+    // The container receives the binds the database says this sandbox has. The
+    // request cannot name a mount source: the only source is a persistent root's
+    // stored host path. Read inside this transaction so a row written by the same
+    // operation is visible.
+    let mounts =
+        crate::services::persist_service::mount_specs_for_sandbox(&mut scope, sandbox.id).await?;
+
     crate::store::postgres::audit::record(
         &mut scope,
         crate::store::postgres::audit::NewAuditEvent {
@@ -409,7 +416,7 @@ pub async fn create(
         memory_limit: memory_limit.clone(),
         cpu_limit: request.cpu_limit,
         pids_limit: request.pids_limit,
-        mounts: Vec::new(),
+        mounts,
         gpu_count: 0,
     };
 

@@ -44,7 +44,7 @@ The architecture test enforces the last two.
 | `nodes.rs` | Nodes with budget and sandbox count, one node, its sandboxes, display rename (probe: `feat/node-hardware-probe`) |
 | `packs.rs` | Baselines, agent packs, tool catalog (`feat/packs-as-data`) |
 | `recipes.rs` | Recipe CRUD, build, instantiate (`feat/recipes-build`) |
-| `persistent_roots.rs` | Roots, mount, dismount, usage (`feat/persistent-roots`) |
+| `persistent_roots.rs` | Roots, mount, dismount, usage |
 | `sandbox_agents.rs` | Agents inside a sandbox (`feat/sandbox-agents`) |
 | `jobs.rs` | Jobs, schedules |
 
