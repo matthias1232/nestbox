@@ -29,23 +29,32 @@ pub struct NewEvent<'a> {
 ///
 /// The detail is redacted before it is written, so a secret that slipped into an
 /// upstream field does not become permanent history.
+///
+/// The insert runs inside a tenant scope because `telemetry_events` carries a
+/// row-level policy: the API connects as `nestbox_app`, a non-owner role, so an
+/// insert without `app.environment_id` set is refused by the database. The scope
+/// is the same control the batch path uses; leaving it out here would make
+/// single-event ingest fail quietly on the appliance and succeed in a test that
+/// connects as the owner.
 pub async fn insert(pool: &sqlx::PgPool, event: NewEvent<'_>) -> Result<Uuid, StoreError> {
     let redacted = redaction::redact_json(&event.detail);
+    let mut scope = TenantScope::begin(pool, event.environment_id).await?;
     let id: Uuid = sqlx::query_scalar(
         "INSERT INTO telemetry_events
             (environment_id, sandbox_id, gateway_id, kind, source, ts, detail)
          VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING id",
     )
-    .bind(event.environment_id)
+    .bind(scope.environment_id())
     .bind(event.sandbox_id)
     .bind(event.gateway_id)
     .bind(event.kind.as_str())
     .bind(event.source)
     .bind(event.ts)
     .bind(redacted)
-    .fetch_one(pool)
+    .fetch_one(scope.connection())
     .await?;
+    scope.commit().await?;
     Ok(id)
 }
 
@@ -392,10 +401,14 @@ pub async fn facets(
 
 /// Record an inference request in its own table, so the console can sort on
 /// typed columns without parsing JSON on a hot path.
+///
+/// Scoped like `insert`, for the same reason: `inference_requests` has a
+/// row-level policy and the application role is not its owner.
 pub async fn insert_inference(
     pool: &sqlx::PgPool,
     event: &crate::domain::telemetry::InferenceEvent,
 ) -> Result<(), StoreError> {
+    let mut scope = TenantScope::begin(pool, event.environment_id).await?;
     sqlx::query(
         "INSERT INTO inference_requests
             (id, environment_id, sandbox_id, provider_key, endpoint, model_key,
@@ -404,7 +417,7 @@ pub async fn insert_inference(
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
     )
     .bind(event.id)
-    .bind(event.environment_id)
+    .bind(scope.environment_id())
     .bind(event.sandbox_id)
     .bind(event.provider_key.as_deref())
     .bind(event.endpoint.as_deref())
@@ -424,8 +437,9 @@ pub async fn insert_inference(
     })
     .bind(event.correlation_id.as_deref())
     .bind(event.ts)
-    .execute(pool)
+    .execute(scope.connection())
     .await?;
+    scope.commit().await?;
     Ok(())
 }
 

@@ -658,6 +658,20 @@ async fn the_batch_insert_satisfies_row_level_security_as_the_application_role()
     .await
     .expect("query kinds");
     assert_eq!(kinds, vec!["network", "network", "dns"], "{kinds:?}");
+
+    // The single-event path shares the scope, so `POST /telemetry/ingest` and
+    // the demo seed also store while RLS applies.
+    let single = telemetry_service::sample_event(environment_id, Some(sandbox_id), 0);
+    let stored = telemetry_service::ingest(&ctx, single)
+        .await
+        .expect("a single event is stored as the application role");
+    let single_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM telemetry_events WHERE id = $1")
+            .bind(stored)
+            .fetch_one(&pool)
+            .await
+            .expect("count the single event");
+    assert_eq!(single_rows, 1);
 }
 
 #[tokio::test]

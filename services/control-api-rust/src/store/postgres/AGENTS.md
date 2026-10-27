@@ -16,6 +16,12 @@ the codebase where SQL appears.
    same policy a 409 instead of a lost update.
 4. The audit table accepts inserts only. There is no update or delete statement
    for it here, and the application role's grants refuse one anyway.
+5. An ingest write sets the tenant scope in the repository, not only in the
+   service. `telemetry_events` and `inference_requests` carry row-level
+   policies, the API connects as the non-owner `nestbox_app` role, and the
+   ingest path is a write that legitimately names its own tenant — so
+   `telemetry.rs` opens the scope itself. A test that connects as the owner
+   would pass without it and prove nothing.
 
 ## Files
 
