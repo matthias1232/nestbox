@@ -11,6 +11,11 @@ a new colour asks for a token; it does not invent a hex value.
 |---|---|
 | `tokens.css` | Colour, spacing, radius, and type scale |
 | `app.css` | Reset, shell layout, tables, forms, drawer, graph |
+| `providers-status.css` | Provider status, install origin, and the in-use refusal |
+
+A screen-specific file is the exception, not the pattern: it exists where a
+feature says something app.css has no word for. Import it from the module that
+uses it, not from `main.jsx`.
 
 ## Rules
 

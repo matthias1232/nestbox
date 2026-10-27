@@ -24,14 +24,14 @@ component never contains a URL.
 
 | File | Resource |
 |---|---|
-| `client.js` | fetch wrapper, CSRF, environment header, error mapping |
+| `client.js` | fetch wrapper, CSRF, environment header, error mapping with `code` and `details` |
 | `auth.js` | login, logout, identity, environments |
 | `sandboxes.js` | list, detail, create, actions, logs, exec, inference, rules |
 | `policies.js` | policies, rules, drafts, traffic windows |
 | `telemetry.js` | history, facets, the SSE stream |
 | `cluster.js` | gateways, settings, sync, supervisors, topology |
 | `providers.js` | profiles, probe; locators only, never a value |
-| `models.js` | catalog with filters, hardware, facets, requirements, install, uninstall |
+| `models.js` | catalog with filters, hardware, facets, requirements, installs, install, uninstall |
 | `jobs.js` | jobs, logs, schedules |
 
 ## Extending

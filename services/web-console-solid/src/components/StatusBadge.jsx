@@ -10,6 +10,10 @@ const TONES = {
   stopped: 'muted', unknown: 'muted', cancelled: 'muted', not_installed: 'muted',
   failed: 'bad', unhealthy: 'bad', offline: 'bad', expired: 'bad', denied: 'bad',
   denied_by_policy: 'bad',
+  // A provider answers or it does not. `pending` stays amber on purpose: an
+  // install created a profile whose server is not started yet, which is not the
+  // same as an endpoint that failed (ADR 0018).
+  reachable: 'ok', unreachable: 'bad',
 };
 
 export default function StatusBadge(props) {
