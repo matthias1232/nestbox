@@ -21,6 +21,8 @@ pub struct CatalogQuery {
     /// Force a fresh hardware probe instead of using the cached result.
     #[serde(default)]
     pub refresh_hardware: bool,
+    /// The node the fit is for; the local node when omitted.
+    pub node: Option<String>,
     /// Only this family (exact, case-sensitive, as stored).
     pub family: Option<String>,
     /// Only this publisher.
@@ -40,6 +42,7 @@ pub struct CatalogQuery {
 impl CatalogQuery {
     fn filter(&self) -> CatalogFilter {
         CatalogFilter {
+            node: self.node.clone(),
             family: self.family.clone(),
             publisher: self.publisher.clone(),
             runtime: self.runtime.clone(),
@@ -75,23 +78,29 @@ fn hardware_json(profile: &HardwareProfile) -> serde_json::Value {
     })
 }
 
-/// The catalog, classified against this machine.
+/// The catalog, classified against what one node has left.
 pub async fn catalog(
     State(state): State<AppState>,
     auth: Auth,
     Query(query): Query<CatalogQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let models = model_service::catalog(
+    let view = model_service::catalog(
         &state.services,
         &auth.principal,
         query.refresh_hardware,
         &query.filter(),
     )
     .await?;
-    let hardware = model_service::hardware(&state.services, &auth.principal, false).await?;
     Ok(Json(serde_json::json!({
-        "items": models,
-        "hardware": hardware_json(&hardware),
+        "items": view.items,
+        "hardware": hardware_json(&view.hardware),
+        "budget": view.budget,
+        "node": {
+            "id": view.node.id,
+            "name": view.node.name,
+            "is_local": view.node.is_local,
+            "container_gpu": view.node.container_gpu,
+        },
     })))
 }
 
@@ -110,8 +119,13 @@ pub async fn hardware(
     auth: Auth,
     Query(query): Query<CatalogQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let profile =
-        model_service::hardware(&state.services, &auth.principal, query.refresh_hardware).await?;
+    let profile = model_service::hardware(
+        &state.services,
+        &auth.principal,
+        query.refresh_hardware,
+        query.node.as_deref(),
+    )
+    .await?;
     Ok(Json(hardware_json(&profile)))
 }
 
@@ -144,14 +158,26 @@ pub async fn requirements(
     )))
 }
 
-/// Installs per node with reservations.
-///
-/// Filled by the `feat/model-installs` package.
+/// Which installs to list.
+#[derive(Debug, Deserialize)]
+pub struct InstallsQuery {
+    /// Only installs on this node; every node when omitted.
+    pub node: Option<String>,
+}
+
+/// Installs per node with their reservation and provider profile.
 pub async fn installs(
-    State(_state): State<AppState>,
-    _auth: Auth,
+    State(state): State<AppState>,
+    auth: Auth,
+    Query(query): Query<InstallsQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::not_implemented("GET /models/installs"))
+    let items = model_service::installs(
+        &state.services,
+        &auth.principal,
+        query.node.as_deref(),
+    )
+    .await?;
+    Ok(Json(serde_json::json!({ "items": items })))
 }
 
 /// Refresh the catalog from the public sources as a job.
@@ -164,24 +190,34 @@ pub async fn sync(
     Err(ApiError::not_implemented("POST /models/sync"))
 }
 
-/// Install a model.
+/// The body of an install or uninstall: which node, or the local one.
+#[derive(Debug, Default, Deserialize)]
+pub struct NodeRequest {
+    pub node: Option<String>,
+}
+
+/// Install a model on a node.
 pub async fn install(
     State(state): State<AppState>,
     auth: Auth,
     Path(key): Path<String>,
+    body: Option<Json<NodeRequest>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    let node = body.and_then(|Json(request)| request.node);
     Ok(Json(
-        model_service::install(&state.services, &auth.principal, &key).await?,
+        model_service::install(&state.services, &auth.principal, &key, node.as_deref()).await?,
     ))
 }
 
-/// Uninstall a model.
+/// Uninstall a model from a node.
 pub async fn uninstall(
     State(state): State<AppState>,
     auth: Auth,
     Path(key): Path<String>,
+    body: Option<Json<NodeRequest>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    let node = body.and_then(|Json(request)| request.node);
     Ok(Json(
-        model_service::uninstall(&state.services, &auth.principal, &key).await?,
+        model_service::uninstall(&state.services, &auth.principal, &key, node.as_deref()).await?,
     ))
 }

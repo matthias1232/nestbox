@@ -44,7 +44,7 @@ reading both.
 | `provider_service.rs` | Provider profiles, probe, and the inference environment a sandbox receives |
 | `policy_service.rs` | Validation, diff, scope rules, global override |
 | `telemetry_service.rs` | Ingest, live publish, history queries |
-| `model_service.rs` | Hardware detection (CPU, RAM, GPU, unified pool), fit, facets, catalog filters, install jobs |
+| `model_service.rs` | Hardware detection (CPU, RAM, GPU, unified pool), fit against a node's free budget, facets, catalog filters, installs and their reservations |
 | `node_service.rs` | The nodes list, one node with its budget, a node's sandboxes, name-or-id resolution, display rename |
 | `pack_service.rs` | Baselines, agent packs, and tool catalog as data; pack defaults by row, baseline compatibility, package-name resolution |
 | `gateway_service.rs` | Registry, settings, drift, sync |

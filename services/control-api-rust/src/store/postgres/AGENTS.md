@@ -28,6 +28,7 @@ the codebase where SQL appears.
 | `telemetry.rs` | Event insert, query, partition maintenance |
 | `gateways.rs` | Gateways, supervisors, sync state |
 | `models.rs` | Model catalog, hardware profiles, inference rows |
+| `model_installs.rs` | One model on one node: reservation, state, provider link, its job |
 | `nodes.rs` | Nodes, the local node, seed marks, display fields, sandbox counts per node |
 | `jobs.rs` | Jobs, targets, schedules |
 | `environments.rs` | Environments, clusters, nodes, overview counts |

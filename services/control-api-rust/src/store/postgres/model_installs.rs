@@ -164,6 +164,51 @@ pub async fn set_provider(
     Ok(())
 }
 
+/// Attach the job that installs or removes this model.
+///
+/// The row is inserted before the job exists, so a failure to create the job
+/// rolls the whole install back instead of leaving a reservation with nothing
+/// working on it.
+pub async fn set_job(
+    scope: &mut TenantScope<'_>,
+    id: Uuid,
+    job_id: Uuid,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "UPDATE model_installs SET job_id = $3, updated_at = now()
+          WHERE environment_id = $1 AND id = $2",
+    )
+    .bind(scope.environment_id())
+    .bind(id)
+    .bind(job_id)
+    .execute(scope.connection())
+    .await?;
+    Ok(())
+}
+
+/// The sandboxes whose provider selection points at this install's profile.
+///
+/// An uninstall must not remove a profile a workload still selects: the
+/// sandbox would keep an endpoint that no longer resolves. The names are
+/// returned so `provider.in_use` can list them rather than say "in use".
+pub async fn sandboxes_using_profile(
+    scope: &mut TenantScope<'_>,
+    provider_profile_id: Uuid,
+) -> Result<Vec<String>, StoreError> {
+    let rows = sqlx::query(
+        "SELECT name FROM sandboxes
+          WHERE environment_id = $1 AND provider_profile_id = $2 AND status <> 'deleted'
+          ORDER BY name",
+    )
+    .bind(scope.environment_id())
+    .bind(provider_profile_id)
+    .fetch_all(scope.connection())
+    .await?;
+    rows.iter()
+        .map(|row| row.try_get("name").map_err(StoreError::from))
+        .collect()
+}
+
 /// Remove an install row; its reservation goes with it.
 pub async fn delete(scope: &mut TenantScope<'_>, id: Uuid) -> Result<(), StoreError> {
     let result = sqlx::query("DELETE FROM model_installs WHERE environment_id = $1 AND id = $2")

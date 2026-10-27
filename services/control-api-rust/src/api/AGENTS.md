@@ -40,7 +40,7 @@ The architecture test enforces the last two.
 | `events.rs` | SSE streams |
 | `cluster.rs` | Gateways, supervisors, topology |
 | `providers.rs` | Provider profiles, probe |
-| `models.rs` | Catalog with filters, hardware, facets, requirements, installs, sync |
+| `models.rs` | Catalog per node with filters, hardware, facets, requirements, installs with reservations, sync |
 | `nodes.rs` | Nodes with budget and sandbox count, one node, its sandboxes, display rename (probe: `feat/node-hardware-probe`) |
 | `packs.rs` | Baselines, agent packs, and tool catalog as data, with `?baseline=` resolution |
 | `recipes.rs` | Recipe CRUD, build, instantiate (`feat/recipes-build`) |
