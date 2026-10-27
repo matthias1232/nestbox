@@ -27,7 +27,7 @@ services can be tested against `FakeAdapter` without a container runtime.
 
 | File | Responsibility |
 |---|---|
-| `mod.rs` | The `RuntimeAdapter` trait and its errors |
+| `mod.rs` | The `RuntimeAdapter` trait (create, inspect, list, lifecycle, logs, exec) and its errors |
 | `http_runner.rs` | Adapter that speaks to the sandbox runner's internal API |
 | `fake.rs` | In-memory adapter for tests |
 

@@ -34,11 +34,12 @@ The architecture test enforces the last two.
 | `principal.rs` | The `Auth` extractor: session, token, CSRF |
 | `auth.rs` | Login, logout, identity |
 | `system.rs` | Health, readiness, runtime, OpenAPI, environments, audit |
-| `sandboxes.rs` | Sandbox list, detail, create, actions, logs |
+| `sandboxes.rs` | Sandbox list, detail, create, actions, logs, exec |
 | `policies.rs` | Policies, rules, drafts, traffic windows |
 | `telemetry.rs` | History, facets, ingest |
 | `events.rs` | SSE streams |
 | `cluster.rs` | Gateways, supervisors, topology |
+| `providers.rs` | Provider profiles, probe |
 | `models.rs` | Catalog, hardware, install |
 | `jobs.rs` | Jobs, schedules |
 

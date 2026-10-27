@@ -29,6 +29,10 @@ not another.
    that is enough to forge a token one byte at a time.
 5. Headers are set on every response, including errors and streams. A CSP that
    is present only on success is not a CSP.
+6. A secret locator is resolved by `secrets::resolve` only, which refuses a
+   path outside the secret directory and a file that group or world can read.
+   The value it returns goes into a container environment or an outbound
+   request, never into a response, a log, or the database (ADR 0016).
 
 ## Conventions
 
@@ -43,6 +47,7 @@ not another.
 |---|---|
 | `password.rs` | Argon2id hashing and verification |
 | `session.rs` | Session and CSRF token generation, hashing, comparison |
+| `secrets.rs` | Resolve a `file://` locator to a value, with path and permission guards |
 | `redaction.rs` | Masking secrets in strings and JSON values |
 | `headers.rs` | CSP, HSTS, frame options, CORS policy |
 

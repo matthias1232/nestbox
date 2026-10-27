@@ -72,8 +72,10 @@ export default function ClusterPage() {
       <Show when={tab() === 'graph'}>
         <TopologyGraph nodes={topology().nodes} edges={topology().edges} />
         <p class="muted small">
-          Gateways host sandboxes. Egress leaves through the gateway, where the
-          policy decides. A sandbox never reaches the network directly.
+          Solid lines are placement: the cluster runs the gateway, the gateway
+          hosts the sandbox. Dashed lines are traffic: a sandbox's egress goes
+          back through its gateway, where the policy decides. A sandbox never
+          reaches the network directly.
         </p>
       </Show>
 

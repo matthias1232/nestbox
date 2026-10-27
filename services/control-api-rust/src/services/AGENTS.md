@@ -41,6 +41,7 @@ reading both.
 | `auth_service.rs` | Login, logout, session validation, principal building |
 | `access_control.rs` | Permission evaluation and the refusal message |
 | `sandbox_service.rs` | Lifecycle, placement, bulk actions |
+| `provider_service.rs` | Provider profiles, probe, and the inference environment a sandbox receives |
 | `policy_service.rs` | Validation, diff, scope rules, global override |
 | `telemetry_service.rs` | Ingest, live publish, history queries |
 | `model_service.rs` | Hardware detection, fit, install jobs |

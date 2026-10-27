@@ -1,22 +1,29 @@
 // The cluster graph: what runs where, and what it talks through.
 //
 // Rendered as an inline SVG rather than a graph library. The layout is a fixed
-// three-column flow — gateway, sandbox, egress — because that is the mental
-// model the product promises ("sandbox → OpenShell → gateway → decision"), and a
-// force layout would make the same data look different on every load.
+// column flow — cluster, gateway, sandbox, egress — because that is the mental
+// model the product promises ("sandbox → OpenShell gateway → policy → egress"),
+// and a force layout would make the same data look different on every load.
+//
+// Columns are read left to right as the control path (which cluster, which
+// gateway, which sandbox). Traffic flows the other way, right to left, and the
+// egress column makes that explicit: every sandbox's traffic leaves through its
+// gateway, never directly.
 //
 // The component knows nothing about gateways: it receives nodes and edges.
 
 import { For, Show, createMemo } from 'solid-js';
 
-const COLUMN = { gateway: 0, supervisor: 1, sandbox: 2, egress: 3 };
+const COLUMN = { supervisor: 0, gateway: 1, sandbox: 2, egress: 3 };
 
 const COLUMN_TITLE = {
-  gateway: 'Gateway',
-  supervisor: 'Supervisor',
+  supervisor: 'Cluster',
+  gateway: 'OpenShell gateway',
   sandbox: 'Sandbox',
   egress: 'Egress',
 };
+
+const COLUMN_ORDER = ['supervisor', 'gateway', 'sandbox', 'egress'];
 
 const WIDTH = 940;
 const COLUMN_WIDTH = 190;
@@ -32,7 +39,33 @@ export default function TopologyGraph(props) {
       if (column === undefined) continue;
       buckets[node.kind].push(node);
     }
+    // One egress node per gateway: the policy decision point. It is derived,
+    // not served, because it is a property of "a gateway exists", not data.
+    for (const gateway of buckets.gateway) {
+      buckets.egress.push({
+        id: `egress:${gateway.id}`,
+        kind: 'egress',
+        name: 'policy → internet',
+        status: gateway.drifted ? 'degraded' : gateway.status,
+        gatewayId: gateway.id,
+      });
+    }
     return buckets;
+  });
+
+  // Edges from each sandbox to its gateway's egress, so the traffic path is
+  // visible as a line, not implied by adjacency.
+  const egressEdges = createMemo(() => {
+    const byGateway = new Map();
+    for (const edge of props.edges || []) {
+      if (edge.kind === 'hosts') byGateway.set(edge.to, edge.from);
+    }
+    const out = [];
+    for (const sandbox of columns().sandbox) {
+      const gateway = byGateway.get(sandbox.id);
+      if (gateway) out.push({ from: sandbox.id, to: `egress:${gateway}`, kind: 'egress' });
+    }
+    return out;
   });
 
   const positions = createMemo(() => {
@@ -71,13 +104,15 @@ export default function TopologyGraph(props) {
       >
         <svg viewBox={`0 0 ${WIDTH} ${height()}`} width="100%" height={height()} role="img"
              aria-label="Cluster topology">
-          <For each={Object.entries(COLUMN_TITLE)}>
-            {([kind, title], index) => (
-              <text class="column-title" x={24 + index * COLUMN_WIDTH} y={24}>{title}</text>
+          <For each={COLUMN_ORDER}>
+            {(kind) => (
+              <text class="column-title" x={24 + COLUMN[kind] * COLUMN_WIDTH} y={24}>
+                {COLUMN_TITLE[kind]}
+              </text>
             )}
           </For>
 
-          <For each={props.edges || []}>
+          <For each={[...(props.edges || []), ...egressEdges()]}>
             {(edge) => {
               const from = () => positions().get(edge.from);
               const to = () => positions().get(edge.to);
@@ -95,7 +130,7 @@ export default function TopologyGraph(props) {
           <For each={[...positions().values()]}>
             {(placed) => (
               <g
-                class={`node ${tone(placed.node)}`}
+                class={`node ${placed.node.kind} ${tone(placed.node)}`}
                 transform={`translate(${placed.x}, ${placed.y})`}
                 onClick={() => props.onSelect?.(placed.node)}
                 role="button"

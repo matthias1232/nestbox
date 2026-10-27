@@ -56,3 +56,9 @@ M1 builds the foundation: the control store, the API, the console, the policy
 and telemetry model, model management, and the operational jobs. Multi-gateway
 routing, ACME renewal, and sandbox migration are modelled but not executed.
 See `../architecture/scope.md` for the honest list.
+
+## Current state
+
+Read `docs/architecture/phase1-review.md` before planning work: it lists each
+acceptance criterion with its evidence, the bugs found only by running on the
+appliance, and the ordered list of what phase 2 has to do.

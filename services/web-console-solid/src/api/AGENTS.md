@@ -26,10 +26,11 @@ component never contains a URL.
 |---|---|
 | `client.js` | fetch wrapper, CSRF, environment header, error mapping |
 | `auth.js` | login, logout, identity, environments |
-| `sandboxes.js` | list, detail, create, actions, logs, inference, rules |
+| `sandboxes.js` | list, detail, create, actions, logs, exec, inference, rules |
 | `policies.js` | policies, rules, drafts, traffic windows |
 | `telemetry.js` | history, facets, the SSE stream |
 | `cluster.js` | gateways, settings, sync, supervisors, topology |
+| `providers.js` | profiles, probe; locators only, never a value |
 | `models.js` | catalog, hardware, install, uninstall |
 | `jobs.js` | jobs, logs, schedules |
 

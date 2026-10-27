@@ -23,6 +23,7 @@ supersedes the old one and note the supersession in both files.
 | [0013](0013-model-catalog-requirements-are-data.md) | Model requirements are data | Accepted |
 | [0014](0014-openshell-cli-feature-parity.md) | OpenShell CLI feature parity | Accepted |
 | [0015](0015-published-api-contract-is-binding.md) | The published API contract is binding | Accepted |
+| [0016](0016-provider-credentials-resolved-at-use.md) | Provider credentials are resolved at use, never stored or returned | Accepted |
 
 ## Writing a new ADR
 

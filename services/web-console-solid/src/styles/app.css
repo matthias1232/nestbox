@@ -230,6 +230,8 @@ ul.plain { list-style: none; padding: 0; margin: 0; display: flex; flex-directio
 .topology .node-meta { font-size: 10px; fill: var(--fg-muted); }
 .topology .edge { fill: none; stroke: var(--border-strong); stroke-width: 1.5; }
 .topology .edge.hosts { stroke: #2b3a4d; }
+.topology .edge.egress { stroke: var(--accent); stroke-dasharray: 4 3; opacity: 0.6; }
+.topology .node.egress rect { stroke-dasharray: 3 2; }
 
 /* Login -------------------------------------------------------------- */
 

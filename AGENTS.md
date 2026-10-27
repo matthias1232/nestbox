@@ -108,4 +108,6 @@ If you are an AI agent:
 
 ## Known limits of the current phase
 
-See `docs/architecture/scope.md` for what M1 deliberately does not do yet.
+See `docs/architecture/scope.md` for what M1 deliberately does not do yet, and
+`docs/architecture/phase1-review.md` for what is proven on the appliance, what
+is partial, and what is not done — with the evidence for each.
