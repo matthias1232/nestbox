@@ -256,6 +256,10 @@ pub enum Fit {
     NoGpu,
     /// Served by a provider; nothing to install.
     Remote,
+    /// The catalogue does not state what the model requires, so no machine can
+    /// be compared against it. Never "does not fit" and never installable: the
+    /// honest answer is that the requirement is not published (ADR 0019).
+    Unknown,
 }
 
 impl Fit {
@@ -288,6 +292,7 @@ impl Fit {
             Self::NeedsUnifiedMemory => "needs_unified_memory",
             Self::NoGpu => "no_gpu",
             Self::Remote => "remote",
+            Self::Unknown => "unknown",
         }
     }
 }
@@ -406,6 +411,26 @@ pub fn classify(model: &Model, hardware: &HardwareProfile, free: &FreeBudget) ->
         );
     }
 
+    // A requirement the catalogue does not state is not a requirement of zero.
+    // Synced rows can carry null gates for a repository that publishes no size
+    // (ADR 0019); without this check the gate arithmetic below would compare the
+    // machine against zero and call the model installable everywhere.
+    if let Some(missing) = missing_requirement(model, hardware) {
+        return report(
+            model,
+            hardware,
+            free,
+            Fit::Unknown,
+            format!(
+                "{} does not publish its {missing} requirement, so it cannot be compared \
+                 with this machine. Install stays disabled until the catalogue states it.",
+                model.name
+            ),
+            chosen_cpu_path(model, hardware),
+            false,
+        );
+    }
+
     if model.unified_memory_only && !hardware.is_unified() {
         return report(
             model,
@@ -429,6 +454,20 @@ pub fn classify(model: &Model, hardware: &HardwareProfile, free: &FreeBudget) ->
     }
 
     classify_gpu(model, hardware, free, use_cpu_path)
+}
+
+/// The requirement the chosen path needs and the catalogue does not state.
+///
+/// The minimum is the gate; a `recommended` figure without a minimum never
+/// decided anything. Asking the chosen path is what keeps a GPU model with a
+/// VRAM figure from being called unknown on a CPU-only machine that would use
+/// its RAM gate, and the reverse.
+fn missing_requirement(model: &Model, hardware: &HardwareProfile) -> Option<&'static str> {
+    if chosen_cpu_path(model, hardware) {
+        model.min_ram_bytes.is_none().then_some("RAM")
+    } else {
+        model.min_vram_bytes.is_none().then_some("GPU memory")
+    }
 }
 
 /// Which path the model takes on this machine: the rule the bars follow too.
@@ -1121,5 +1160,75 @@ mod tests {
     fn small_figures_keep_a_decimal() {
         assert_eq!(human_gib(GIB / 2), "0.5 GiB");
         assert_eq!(human_gib(24 * GIB), "24 GiB");
+    }
+
+    #[test]
+    fn a_model_that_publishes_no_size_is_unknown_not_installable() {
+        // The sync writes such rows for repositories that state no size (ADR
+        // 0019). Reading the missing gate as zero would call the model
+        // installable on a machine that cannot hold it.
+        let mut m = model(0, 1);
+        m.min_vram_bytes = None;
+        m.weights_bytes = None;
+        let report = classify(&m, &hardware(&[24 * GIB], None));
+        assert_eq!(report.fit, Fit::Unknown);
+        assert!(!report.fit.allows_install());
+        assert!(!report.fit.fits());
+        assert!(report.reason.contains("does not publish"));
+        assert!(report.reason.contains("GPU memory"));
+    }
+
+    #[test]
+    fn a_known_size_without_a_gate_is_still_unknown() {
+        // Weights are known — the files can be weighed — but no VRAM figure was
+        // derived from them, so the GPU gate has no number to compare.
+        let mut m = model(0, 1);
+        m.weights_bytes = Some(8 * GIB);
+        m.min_vram_bytes = None;
+        let report = classify(&m, &hardware(&[24 * GIB], None));
+        assert_eq!(report.fit, Fit::Unknown);
+        assert!(!report.fit.allows_install());
+    }
+
+    #[test]
+    fn a_cpu_model_without_a_ram_figure_is_unknown() {
+        let mut m = cpu_model(4, None);
+        m.min_ram_bytes = None;
+        m.recommended_ram_bytes = None;
+        let report = classify(&m, &hardware(&[], None));
+        assert_eq!(report.fit, Fit::Unknown);
+        assert!(report.reason.contains("RAM"));
+        assert!(!report.fit.allows_install());
+    }
+
+    #[test]
+    fn a_hybrid_model_is_unknown_only_on_the_path_without_a_figure() {
+        // A GGUF row with a VRAM gate but no RAM gate runs on the GPU path and
+        // is unknown on a machine without one.
+        let mut m = model(8, 1);
+        m.runtime = ModelRuntime::Hybrid;
+        m.min_ram_bytes = None;
+        assert_eq!(classify(&m, &hardware(&[24 * GIB], None)).fit, Fit::Installable);
+        assert_eq!(classify(&m, &hardware(&[], None)).fit, Fit::Unknown);
+    }
+
+    #[test]
+    fn an_unknown_model_gates_no_bar() {
+        let mut m = model(0, 1);
+        m.min_vram_bytes = None;
+        let report = classify(&m, &hardware(&[24 * GIB], None));
+        assert!(report
+            .bars
+            .iter()
+            .all(|bar| bar.status == BarStatus::NotRequired));
+    }
+
+    #[test]
+    fn a_published_gate_is_classified_exactly_as_before() {
+        let mut m = model(24, 1);
+        m.weights_bytes = Some(16 * GIB);
+        let report = classify(&m, &hardware(&[24 * GIB], None));
+        assert_eq!(report.fit, Fit::Installable);
+        assert!(report.fit.allows_install());
     }
 }
