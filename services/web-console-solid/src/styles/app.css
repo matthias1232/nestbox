@@ -313,3 +313,35 @@ ul.plain { list-style: none; padding: 0; margin: 0; display: flex; flex-directio
 .login .hint { font-size: 11px; margin: 0; }
 
 .pager { display: flex; justify-content: center; padding: var(--space-4); }
+
+/* Admin Center ------------------------------------------------------- */
+/* Full height, one scroll area. The header and the tab strip stay put so the
+ * answer to "is it healthy" does not scroll away while an operator reads a log. */
+
+.admin-center { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+
+.ac-header {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: var(--space-4); flex-wrap: wrap;
+  padding: var(--space-4) var(--space-5) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.ac-title { display: flex; gap: var(--space-2); align-items: flex-start; }
+.ac-title h1 { margin: 0; font-size: 20px; display: flex; align-items: center; gap: var(--space-2); }
+.ac-title p { margin: 3px 0 0; }
+.ac-actions { display: flex; gap: var(--space-1); flex-wrap: wrap; }
+
+.admin-center .tabs { padding: 0 var(--space-5); margin-bottom: 0; }
+
+.ac-body { flex: 1; min-height: 0; overflow: auto; padding: var(--space-4) var(--space-5) var(--space-6); }
+
+/* A tab whose body belongs to a later package says so, once, in the same shape
+ * every time. */
+.pending {
+  display: flex; flex-direction: column; gap: 6px;
+  max-width: 780px; padding: var(--space-4);
+  background: var(--bg-raised); border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+}
+.pending p { margin: 0; }

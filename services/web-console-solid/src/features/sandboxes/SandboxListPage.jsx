@@ -10,7 +10,7 @@ import { useSandboxes } from './useSandboxes.js';
 import SandboxDetail from './SandboxDetail.jsx';
 import { createSignal } from 'solid-js';
 
-export default function SandboxListPage() {
+export default function SandboxListPage(props) {
   const state = useSandboxes();
   const [openId, setOpenId] = createSignal(null);
 
@@ -115,7 +115,15 @@ export default function SandboxListPage() {
                       />
                     </td>
                     <td>
-                      <button class="link" onClick={() => setOpenId(sandbox.id)}>
+                      {/* The name opens the Admin Center, because that is
+                          where the questions about a sandbox are answered. The
+                          drawer stays one click away for a quick look. */}
+                      <button
+                        class="link"
+                        onClick={() =>
+                          props.onOpenAdmin ? props.onOpenAdmin(sandbox.id) : setOpenId(sandbox.id)
+                        }
+                      >
                         {sandbox.name}
                       </button>
                     </td>
@@ -125,6 +133,7 @@ export default function SandboxListPage() {
                     <td class="mono small">{sandbox.address || '—'}</td>
                     <td class="narrow mono small">{shortUptime(sandbox)}</td>
                     <td class="actions">
+                      <button class="tiny" onClick={() => setOpenId(sandbox.id)}>Details</button>
                       <button class="tiny" disabled={!state.canStart(sandbox)}
                               onClick={() => state.act(sandbox.id, 'start')}>Start</button>
                       <button class="tiny" disabled={!state.canStop(sandbox)}

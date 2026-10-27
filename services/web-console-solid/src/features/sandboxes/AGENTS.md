@@ -29,6 +29,32 @@ on it.
 | `useSandboxes.js` | Paging, filters, selection, actions; no JSX |
 | `SandboxListPage.jsx` | Table, facets, bulk bar |
 | `SandboxDetail.jsx` | Drawer with overview, logs, shell, rules, inference |
+| `AdminCenter.jsx` | The full-screen Admin Center shell: header, actions, tab strip; owns no tab body |
+| `DashboardTab.jsx` | Metrics, top processes, last blocks, MCP servers (`feat/admin-console-shell`) |
+| `TrafficTab.jsx` | Live table, filters, "allow this", temporary window (`feat/console-traffic`) |
+| `McpTab.jsx` | Servers, tools, calls, visibility per transport (`feat/console-mcp`) |
+| `TerminalTab.jsx` | xterm.js over the terminal WebSocket (`feat/console-terminal`) |
+| `AccessTab.jsx` | Ports, SSH key, remote snippets (`feat/console-access`) |
+| `MapTab.jsx`, `PoliciesTab.jsx` | Live edges, effective rules, deployed state (`feat/console-map-policies`) |
+| `ProcessesTab.jsx`, `InventoryTab.jsx`, `LogsTab.jsx` | `docker top`, snapshot, log tail (`feat/console-inventory`) |
+
+## The Admin Center contract
+
+`AdminCenter.jsx` is the shell and belongs to the integrator: header, lifecycle
+actions, tab strip, and the fetch of the sandbox row. A tab file belongs to one
+package and receives:
+
+- `props.sandbox` — the stored row (name, pack, image, status, runtime facts);
+- `props.revision` — bumped by `reload`, for a tab that wants to refetch;
+- `props.reload` — re-read the sandbox after an action.
+
+A tab never edits the shell. That is what lets seven console packages run at
+once and is checked by review, not by a test: the tab list in `AdminCenter.jsx`
+is the one place a tab is registered.
+
+Until its package lands, a tab renders `PendingPanel` and says what belongs
+there, which endpoint it will read, and who owns it. An empty box looks broken;
+sample data looks finished. Both lie.
 
 ## The shell tab
 

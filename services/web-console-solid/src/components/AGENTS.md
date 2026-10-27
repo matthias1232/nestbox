@@ -34,3 +34,4 @@ not gateways and sandboxes.
 | `ModelFitCell.jsx` | Badge, compact bars, and the shortfall in words |
 | `Tabs.jsx` | Accessible tab strip |
 | `Empty.jsx` | A consistent empty state |
+| `PendingPanel.jsx` | A tab body that a later package fills: what belongs there, which endpoint, who owns it |

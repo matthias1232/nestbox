@@ -32,3 +32,6 @@ that know nothing about the domain.
 2. Write `use<Name>.js` with the state and the calls.
 3. Write `<Name>Page.jsx` with markup only.
 4. Add the route in `App.jsx` and a row to the table in `features/AGENTS.md`.
+   The Admin Center is the one view with a real address (`/sandboxes/<id>`), so
+   a link to a sandbox survives a reload and can be pasted into a chat; every
+   other view stays a signal.

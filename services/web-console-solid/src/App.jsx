@@ -5,7 +5,7 @@
 // a dependency and a concept without buying anything yet. If deep links become a
 // requirement, this is the single file that changes.
 
-import { Show, For, createSignal, onMount } from 'solid-js';
+import { Show, For, createSignal, onMount, onCleanup } from 'solid-js';
 import { useSession } from './state/session.jsx';
 import * as auth from './api/auth.js';
 import LoginPage from './features/auth/LoginPage.jsx';
@@ -16,6 +16,18 @@ import ClusterPage from './features/cluster/ClusterPage.jsx';
 import ProvidersPage from './features/providers/ProvidersPage.jsx';
 import ModelsPage from './features/models/ModelsPage.jsx';
 import JobsPage from './features/jobs/JobsPage.jsx';
+import AdminCenter from './features/sandboxes/AdminCenter.jsx';
+
+// The Admin Center is the only view with an address of its own: an operator
+// pastes `/sandboxes/<id>` into a chat and expects the same screen. Everything
+// else stays a signal, because adding a router for seven views would be a
+// dependency without a benefit.
+const ADMIN_PATH = /^\/sandboxes\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\/?$/;
+
+function adminFromLocation() {
+  const match = ADMIN_PATH.exec(window.location.pathname);
+  return match ? match[1] : null;
+}
 
 const ROUTES = [
   { id: 'sandboxes', label: 'Sandboxes' },
@@ -31,6 +43,26 @@ export default function App() {
   const session = useSession();
   const [route, setRoute] = createSignal('sandboxes');
   const [checked, setChecked] = createSignal(false);
+  const [adminId, setAdminId] = createSignal(adminFromLocation());
+
+  function openAdmin(id) {
+    window.history.pushState({}, '', `/sandboxes/${id}`);
+    setAdminId(id);
+    setRoute('sandboxes');
+  }
+
+  function closeAdmin() {
+    window.history.pushState({}, '', '/');
+    setAdminId(null);
+  }
+
+  // The back button must close the Admin Center again, otherwise the address bar
+  // and the screen disagree.
+  function onPop() {
+    setAdminId(adminFromLocation());
+  }
+  window.addEventListener('popstate', onPop);
+  onCleanup(() => window.removeEventListener('popstate', onPop));
 
   // A reload must not show the login form to someone who is still signed in.
   // The session cookie is HttpOnly, so the only way to know is to ask the
@@ -96,13 +128,24 @@ export default function App() {
           </aside>
 
           <main>
-            <Show when={route() === 'sandboxes'}><SandboxListPage /></Show>
-            <Show when={route() === 'traffic'}><TrafficPage /></Show>
-            <Show when={route() === 'policies'}><PoliciesPage /></Show>
-            <Show when={route() === 'cluster'}><ClusterPage /></Show>
-            <Show when={route() === 'providers'}><ProvidersPage /></Show>
-            <Show when={route() === 'models'}><ModelsPage /></Show>
-            <Show when={route() === 'operations'}><JobsPage /></Show>
+            <Show
+              when={adminId()}
+              fallback={
+                <>
+                  <Show when={route() === 'sandboxes'}>
+                    <SandboxListPage onOpenAdmin={openAdmin} />
+                  </Show>
+                  <Show when={route() === 'traffic'}><TrafficPage /></Show>
+                  <Show when={route() === 'policies'}><PoliciesPage /></Show>
+                  <Show when={route() === 'cluster'}><ClusterPage /></Show>
+                  <Show when={route() === 'providers'}><ProvidersPage /></Show>
+                  <Show when={route() === 'models'}><ModelsPage /></Show>
+                  <Show when={route() === 'operations'}><JobsPage /></Show>
+                </>
+              }
+            >
+              <AdminCenter sandboxId={adminId()} onClose={closeAdmin} />
+            </Show>
           </main>
         </div>
       </Show>
