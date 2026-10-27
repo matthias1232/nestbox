@@ -14,7 +14,7 @@ on it.
   as "is it reachable".
 - The node each sandbox runs on. The list already carries `node_name` and
   `node_id`; the column is the only place the console says which machine holds
-  the container.
+  the container — and, at create time, what that machine has left to give.
 - The log tail without leaving the page, because a failure is diagnosed from the
   log.
 
@@ -27,14 +27,29 @@ on it.
 - The node name links to the nodes screen only when `onOpenNode` is passed by the
   integrator; this feature does not own that route, and a dead link is worse than
   plain text.
+- A resource pre-check compares the request against the budget `GET /nodes`
+  returned. It never adds up capacity itself: a request above
+  `budget.ram_free_bytes` or above `budget.cpu_cores` disables submit and names
+  the number, and the server's own `422 node.insufficient_resources` /
+  `404 node.not_found` is shown when it answers instead. A node nobody measured
+  has no budget to check against, and the form says so rather than treating zero
+  as full.
+- Removing an agent decides what happens to its persistent home. The "keep its
+  data" checkbox is that decision, it defaults to true, and `keep_persistent`
+  carries it on the same DELETE.
+>>>>>>> origin/feat/m1-rebuild
 
 ## Files
 
 | File | Responsibility |
 |---|---|
 | `useSandboxes.js` | Paging, filters, selection, actions; no JSX |
-| `SandboxListPage.jsx` | Table, facets, bulk bar |
-| `SandboxDetail.jsx` | Drawer with overview, logs, shell, rules, inference |
+| `SandboxListPage.jsx` | Table, facets, bulk bar, the New sandbox drawer |
+| `CreateSandboxForm.jsx` | Name, pack, node, memory, CPU, PIDs; the node's free numbers beside them (`feat/ui-sandbox-resources`) |
+| `useCreateSandbox.js` | Nodes, packs, the draft, and the pre-check; no JSX (`feat/ui-sandbox-resources`) |
+| `SandboxDetail.jsx` | Drawer with overview, agents, logs, shell, rules, inference |
+| `AgentsTab.jsx` | Agents of one sandbox: list, add, remove with "keep its data" (`feat/ui-sandbox-resources`) |
+| `useSandboxAgents.js` | Agents, pack catalog, add and remove; treats `agent.exists` and `agent.not_found` as sentences, not crashes (`feat/ui-sandbox-resources`) |
 | `AdminCenter.jsx` | The full-screen Admin Center shell: header, actions, tab strip; owns no tab body |
 | `DashboardTab.jsx` | Metrics, top processes, last blocks, MCP servers (`feat/admin-console-shell`) |
 | `TrafficTab.jsx` | Live table, filters, "allow this", temporary window (`feat/console-traffic`) |
@@ -43,6 +58,16 @@ on it.
 | `AccessTab.jsx` | Ports, SSH key, remote snippets (`feat/console-access`) |
 | `MapTab.jsx`, `PoliciesTab.jsx` | Live edges, effective rules, deployed state (`feat/console-map-policies`) |
 | `ProcessesTab.jsx`, `InventoryTab.jsx`, `LogsTab.jsx` | `docker top`, snapshot, log tail (`feat/console-inventory`) |
+
+## The drawer's Agents tab
+
+The drawer (`SandboxDetail.jsx`) answers the quick questions and owns its own tab
+list; the Admin Center's tab list is untouched by this package. "Agents" reads
+`GET /sandboxes/{id}/agents`, adds one with `POST …/agents` from the catalog at
+`GET /agent-packs`, and removes one with `DELETE …/agents/{instance}` carrying
+`keep_persistent`. It also shows the generated entrypoint. After an add the
+sentence does not claim the agent is up: a running container keeps the command it
+was created with until it is recreated.
 
 ## The Admin Center contract
 

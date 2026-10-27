@@ -7,10 +7,12 @@ import { Show, For, createSignal, createEffect } from 'solid-js';
 import Drawer from '../../components/Drawer.jsx';
 import Tabs from '../../components/Tabs.jsx';
 import StatusBadge from '../../components/StatusBadge.jsx';
+import AgentsTab from './AgentsTab.jsx';
 import * as api from '../../api/sandboxes.js';
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
+  { id: 'agents', label: 'Agents' },
   { id: 'logs', label: 'Logs' },
   { id: 'shell', label: 'Shell' },
   { id: 'rules', label: 'Rules' },
@@ -114,6 +116,15 @@ export default function SandboxDetail(props) {
             <dt>Version</dt><dd class="mono">{sandbox().version}</dd>
             <dt>Image</dt><dd class="mono small">{sandbox().image}</dd>
             <dt>Digest</dt><dd class="mono small">{sandbox().image_digest || 'not pinned'}</dd>
+            {/* The node is a machine, and the inventory of machines is a page of
+                its own. A plain anchor, because the route belongs to that page. */}
+            <dt>Node</dt>
+            <dd>
+              <Show when={sandbox().node_name} fallback={<span class="muted">not recorded</span>}>
+                <a href="/nodes" class="mono">{sandbox().node_name}</a>
+                <span class="muted small"> · where its container runs</span>
+              </Show>
+            </dd>
             <dt>Created</dt><dd class="mono small">{sandbox().created_at}</dd>
             <dt>Updated</dt><dd class="mono small">{sandbox().updated_at}</dd>
           </dl>
@@ -163,6 +174,10 @@ export default function SandboxDetail(props) {
             </Show>
           </Show>
         </Show>
+      </Show>
+
+      <Show when={tab() === 'agents'}>
+        <AgentsTab sandboxId={props.sandboxId} />
       </Show>
 
       <Show when={tab() === 'logs'}>

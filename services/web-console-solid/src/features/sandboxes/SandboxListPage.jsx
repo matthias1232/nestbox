@@ -6,13 +6,17 @@
 import { For, Show, onMount } from 'solid-js';
 import StatusBadge from '../../components/StatusBadge.jsx';
 import Empty from '../../components/Empty.jsx';
+import Drawer from '../../components/Drawer.jsx';
 import { useSandboxes } from './useSandboxes.js';
 import SandboxDetail from './SandboxDetail.jsx';
+import CreateSandboxForm from './CreateSandboxForm.jsx';
 import { createSignal } from 'solid-js';
 
 export default function SandboxListPage(props) {
   const state = useSandboxes();
   const [openId, setOpenId] = createSignal(null);
+  const [creating, setCreating] = createSignal(false);
+  const [created, setCreated] = createSignal(null);
 
   onMount(() => state.load({ cursor: null }));
 
@@ -20,6 +24,14 @@ export default function SandboxListPage(props) {
     if (window.confirm(`Delete sandbox "${sandbox.name}"? Its container and its state are removed.`)) {
       state.destroy(sandbox.id);
     }
+  }
+
+  async function createdSandbox(sandbox) {
+    setCreating(false);
+    setCreated(
+      `Sandbox “${sandbox.name}” created on ${sandbox.node_name || 'the local node'}.`,
+    );
+    await state.load({ cursor: null });
   }
 
   return (
@@ -33,6 +45,9 @@ export default function SandboxListPage(props) {
           </p>
         </div>
         <div class="controls">
+          <button class="primary" onClick={() => { setCreated(null); setCreating(true); }}>
+            New sandbox
+          </button>
           <input
             type="search"
             placeholder="Search by name…"
@@ -44,6 +59,10 @@ export default function SandboxListPage(props) {
           </button>
         </div>
       </header>
+
+      <Show when={created()}>
+        <p class="notice">{created()}</p>
+      </Show>
 
       <Show when={state.error()}>
         <p class="error">{state.error()}</p>
@@ -77,7 +96,7 @@ export default function SandboxListPage(props) {
         fallback={
           <Empty
             title="No sandboxes yet"
-            hint="Create one from the API or wait for a gateway to register."
+            hint="Create one here, choosing a node and its share of that node's memory, CPU, and PIDs."
           />
         }
       >
@@ -183,6 +202,22 @@ export default function SandboxListPage(props) {
         onClose={() => setOpenId(null)}
         onChanged={() => state.load({ cursor: null })}
       />
+
+      {/* The form is mounted only while the drawer is open, so every open reads
+          the node budgets again instead of showing the ones from last time. */}
+      <Drawer
+        open={creating()}
+        title="New sandbox"
+        subtitle="Its limits are checked against the node it lands on."
+        onClose={() => setCreating(false)}
+      >
+        <Show when={creating()}>
+          <CreateSandboxForm
+            onCancel={() => setCreating(false)}
+            onCreated={createdSandbox}
+          />
+        </Show>
+      </Drawer>
     </section>
   );
 }

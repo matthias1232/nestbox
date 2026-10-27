@@ -34,6 +34,26 @@ export function rules(id) {
   return request(`sandboxes/${id}/rules`);
 }
 
+// The agents inside a sandbox, and how they are started.
+export function agents(id) {
+  return request(`sandboxes/${id}/agents`);
+}
+
+// Add one agent. The body carries the pack, the instance name, where its home
+// lives, whether that home survives a rebuild, and the port it serves.
+export function addAgent(id, body) {
+  return request(`sandboxes/${id}/agents`, { method: 'POST', body });
+}
+
+// Remove one agent. `keepPersistent` is part of the DELETE rather than a second
+// call, because keeping or deleting the home is the same decision.
+export function removeAgent(id, instance, keepPersistent) {
+  return request(
+    `sandboxes/${id}/agents/${encodeURIComponent(instance)}${query({ keep_persistent: keepPersistent })}`,
+    { method: 'DELETE' },
+  );
+}
+
 // Run one command in a sandbox. `command` is an argument vector; the console
 // wraps a typed line in `bash -lc` so the operator can type what they would
 // type in a terminal, and the vector shape makes that choice explicit.
