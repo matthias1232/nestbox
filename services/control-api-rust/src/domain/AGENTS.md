@@ -48,13 +48,17 @@ microseconds is that it has none.
 | `telemetry.rs` | Network, DNS, and inference events |
 | `job.rs` | Job, status, progress |
 | `model.rs` | Model, hardware profile, fit classification, resource bars |
-| `model_install.rs` | One model on one node; reservation rule |
+| `model_install.rs` | One model on one node; reservation rule and the free budget the fit runs against |
 | `node.rs` | Node, kind, status, budget (total / reserved / free) |
-| `pack.rs` | Baseline, agent pack, tool, package-manager resolution |
+| `pack.rs` | Baseline, agent pack, pack defaults, tool and package-manager resolution |
 | `builder.rs` | Recipe, agent spec, home mode, persistence, resource limits |
 | `persist.rs` | Persistent root, mount, mount spec, path derivation |
 | `pagination.rs` | Cursor, filter, sort, facet types |
 | `auth.rs` | User, role, permission |
+| `metrics.rs` | `docker stats` sample, one-minute bucket, window with its point budget |
+| `access.rs` | SSH key record (locator, never material), published port, inventory, session |
+| `egress.rs` | The pure `decide` function, compiled rule set, traffic event, map edge |
+| `mcp.rs` | MCP server definition, sandbox attachment, tool call, JSON-RPC recognition |
 
 ## Extending this module
 

@@ -4,10 +4,14 @@
 //! service, and formats the answer. If a handler grows an `if` that decides
 //! something about the domain, that `if` belongs in `services/`.
 
+pub mod access;
 pub mod auth;
 pub mod cluster;
 pub mod events;
+pub mod inventory;
 pub mod jobs;
+pub mod mcp;
+pub mod metrics;
 pub mod models;
 pub mod nodes;
 pub mod packs;
@@ -18,8 +22,11 @@ pub mod providers;
 pub mod recipes;
 pub mod sandbox_agents;
 pub mod sandboxes;
+pub mod sandboxes_terminal;
 pub mod system;
 pub mod telemetry;
+pub mod topology;
+pub mod traffic;
 
 use axum::Router;
 use axum::routing::{delete, get, post, put};
@@ -63,6 +70,96 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/sandboxes/{id}/exec", post(sandboxes::exec))
         .route("/api/v1/sandboxes/{id}/inference", get(telemetry::sandbox_inference))
         .route("/api/v1/sandboxes/{id}/rules", get(policies::sandbox_rules))
+        // Admin Center: resource history, processes, inventory
+        .route(
+            "/api/v1/internal/metrics/ingest",
+            post(metrics::ingest),
+        )
+        .route("/api/v1/sandboxes/{id}/metrics", get(metrics::metrics))
+        .route("/api/v1/sandboxes/{id}/processes", get(metrics::processes))
+        .route("/api/v1/sandboxes/{id}/inventory", get(inventory::get))
+        .route(
+            "/api/v1/sandboxes/{id}/inventory/refresh",
+            post(inventory::refresh),
+        )
+        // Admin Center: terminal, SSH, ports, sessions
+        .route(
+            "/api/v1/sandboxes/{id}/terminal",
+            get(sandboxes_terminal::terminal),
+        )
+        .route("/api/v1/sandboxes/{id}/ssh-key", get(access::ssh_key))
+        .route(
+            "/api/v1/sandboxes/{id}/ssh-key/download",
+            get(access::download_ssh_key),
+        )
+        .route(
+            "/api/v1/sandboxes/{id}/ssh-key/rotate",
+            post(access::rotate_ssh_key),
+        )
+        .route(
+            "/api/v1/sandboxes/{id}/ports",
+            get(access::ports).post(access::add_port),
+        )
+        .route(
+            "/api/v1/sandboxes/{id}/ports/{forward_id}",
+            delete(access::remove_port),
+        )
+        .route("/api/v1/sandboxes/{id}/sessions", get(access::sessions))
+        // Admin Center: traffic, map, effective policies, MCP calls
+        .route("/api/v1/sandboxes/{id}/traffic", get(traffic::traffic))
+        .route(
+            "/api/v1/sandboxes/{id}/traffic/{event_id}/body",
+            get(traffic::body),
+        )
+        .route("/api/v1/sandboxes/{id}/map", get(traffic::map))
+        .route(
+            "/api/v1/sandboxes/{id}/policies/effective",
+            get(traffic::effective_policies),
+        )
+        .route(
+            "/api/v1/sandboxes/{id}/mcp/calls",
+            get(traffic::mcp_calls),
+        )
+        // MCP registry and sandbox attachments
+        .route(
+            "/api/v1/mcp/servers",
+            get(mcp::list_servers).post(mcp::create_server),
+        )
+        .route(
+            "/api/v1/mcp/servers/{key}",
+            get(mcp::get_server)
+                .put(mcp::update_server)
+                .delete(mcp::delete_server),
+        )
+        .route(
+            "/api/v1/sandboxes/{id}/mcp/servers",
+            get(mcp::sandbox_servers).post(mcp::attach_server),
+        )
+        .route(
+            "/api/v1/sandboxes/{id}/mcp/servers/{key}",
+            delete(mcp::detach_server),
+        )
+        .route(
+            "/api/v1/sandboxes/{id}/mcp/servers/{key}/discover",
+            post(mcp::discover),
+        )
+        // Internal: node-token endpoints for the proxy and the runner.
+        //
+        // The policy check answers twice on purpose. Envoy's ext_authz filter
+        // appends the original request path to its `path_prefix`, so the proxy
+        // calls `/internal/policy/check/<the path it is asking about>`. The
+        // handler ignores that suffix — the facts it decides on are in the
+        // headers — but the route has to exist, or every request would be a 404
+        // and therefore (fail closed) a deny.
+        .route("/api/v1/internal/policy/check", post(policies::internal_check))
+        .route(
+            "/api/v1/internal/policy/check/{*suffix}",
+            post(policies::internal_check),
+        )
+        .route(
+            "/api/v1/internal/telemetry/batch",
+            post(telemetry::internal_batch),
+        )
         // Policies
         .route("/api/v1/policies", get(policies::list).post(policies::create))
         .route("/api/v1/policies/global", get(policies::global))
@@ -105,7 +202,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/gateways/{id}/sync", post(cluster::sync))
         .route("/api/v1/supervisors", get(cluster::supervisors))
-        .route("/api/v1/topology", get(cluster::topology))
+        .route("/api/v1/topology", get(topology::topology))
         // Providers
         .route(
             "/api/v1/providers",

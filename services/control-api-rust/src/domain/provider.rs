@@ -10,6 +10,37 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+/// Whether a provider answers probes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderStatus {
+    /// Created for an install whose server is not up yet.
+    Pending,
+    /// The last probe succeeded.
+    Reachable,
+    /// The last probe failed.
+    Unreachable,
+}
+
+impl ProviderStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Reachable => "reachable",
+            Self::Unreachable => "unreachable",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "pending" => Self::Pending,
+            "reachable" => Self::Reachable,
+            "unreachable" => Self::Unreachable,
+            _ => return None,
+        })
+    }
+}
+
 /// What family a provider speaks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -86,6 +117,10 @@ pub struct ProviderProfile {
     pub version: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub status: ProviderStatus,
+    pub node_id: Option<Uuid>,
+    pub model_install_id: Option<Uuid>,
+    pub last_probed_at: Option<DateTime<Utc>>,
 }
 
 impl ProviderProfile {
@@ -216,6 +251,10 @@ mod tests {
             version: 1,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            status: ProviderStatus::Reachable,
+            node_id: None,
+            model_install_id: None,
+            last_probed_at: None,
         };
         assert!(profile.is_usable());
     }
@@ -236,6 +275,10 @@ mod tests {
             version: 1,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            status: ProviderStatus::Reachable,
+            node_id: None,
+            model_install_id: None,
+            last_probed_at: None,
         };
         assert!(!profile.is_usable());
     }
@@ -257,6 +300,10 @@ mod tests {
             version: 1,
             created_at: now,
             updated_at: now,
+            status: ProviderStatus::Reachable,
+            node_id: None,
+            model_install_id: None,
+            last_probed_at: None,
         };
         assert!(profile.needs_refresh(now));
         profile.credential_expiry = Some(now + chrono::Duration::hours(2));

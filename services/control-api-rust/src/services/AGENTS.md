@@ -41,20 +41,21 @@ reading both.
 | `auth_service.rs` | Login, logout, session validation, principal building |
 | `access_control.rs` | Permission evaluation and the refusal message |
 | `sandbox_service.rs` | Lifecycle, placement, bulk actions |
-| `provider_service.rs` | Provider profiles, probe, and the inference environment a sandbox receives |
+| `provider_service.rs` | Provider profiles with their probe status, the pending profile an install creates, the in-use check on delete, and the reachable-only inference environment a sandbox receives |
+| `agent_service.rs` | Agents inside a sandbox: which packs may join, homes and their persistence, the supervisor command |
 | `policy_service.rs` | Validation, diff, scope rules, global override |
 | `telemetry_service.rs` | Ingest, live publish, history queries |
-| `model_service.rs` | Node hardware probing through the runner (CPU, RAM, GPU, unified pool), fit, facets, catalog filters, install jobs |
+| `model_service.rs` | Hardware probing through a node's runner (CPU, RAM, GPU, unified pool), fit against a node's free budget, facets, catalog filters, installs and their reservations |
+| `node_service.rs` | The nodes list, one node with its budget, a node's sandboxes, name-or-id resolution, display rename |
+| `pack_service.rs` | Baselines, agent packs, and tool catalog as data; pack defaults by row, baseline compatibility, package-name resolution |
 | `gateway_service.rs` | Registry, settings, drift, sync |
 | `job_service.rs` | Job creation and progress |
 | `schedule_service.rs` | Schedule evaluation and runs |
-
-## Extending this module
-
-Add the rule here first, as a pure function in `domain` if possible, and only
-then wire it to the store. If the rule needs a permission, add the permission to
-`domain::auth` before writing the check, so the check cannot reference a
-permission that does not exist.
+| `metrics_service.rs` | Sample ingest, ranged query, rollup, retention (`feat/sandbox-metrics`) |
+| `inventory_service.rs` | Snapshot storage and age; never an environment value (`feat/sandbox-metrics`) |
+| `access_service.rs` | SSH key pair as a file with a locator, port pool, sessions (`feat/sandbox-access`) |
+| `mcp_service.rs` | Registry, attachments, discovery through the policy check (`feat/mcp-registry`) |
+| `persist_service.rs` | Persistent roots: derived host paths, mounts, the one-read-write rule, honest usage |
 
 ## Probing a node
 
@@ -63,20 +64,40 @@ returns raw `/proc` and `nvidia-smi` text, and the parsers in `model_service.rs`
 turn it into a `HardwareProfile` for that node's id. Measuring from the control
 plane would describe the control plane's container and call it the machine.
 
-Two rules follow from that, and both are in `model_service.rs`:
+Three rules follow from that, and all are in `model_service.rs`:
 
 1. **A failed probe invents nothing.** No profile is written, the node is marked
    offline (runner unreachable) or unknown (runner answered with an error), and
    the previous measurement, if any, is returned unchanged. With no earlier
    measurement the answer is `503 node.runtime_unavailable`.
 2. **A card is not capacity until a container can have it.** `container_gpu` is
-   measured by the runner, stored on the node, and reported next to the GPUs; a
-   node with devices but without the NVIDIA container runtime says so in its
-   detection note.
+   measured by the runner, stored on the node, and `usable_hardware` clears the
+   GPU fields for the fit when it is false.
+3. **The runner call happens with no transaction open.** `resolve_node_for` and
+   `load_hardware` each open a short scope, so a runner that never answers cannot
+   hold a transaction for its timeout. The scope that reads installs and the
+   catalog begins afterwards.
 
-The measurement happens outside the tenant transaction, so a runner that never
-answers cannot hold a transaction open for its timeout.
+Phase 1 has one runtime adapter, so only the local node is measured this way. A
+remote node without an adapter gets `unmeasured_hardware` — zeroes and a note,
+never a guess about a machine the control plane cannot see.
 
-Phase 1 has one runtime adapter, so only the local node can be probed honestly.
-A remote node needs its own adapter before a probe of it can mean anything, which
-is why no route creates one yet.
+## Persistence rules
+
+1. A mount source is never taken from a request. `persist_service` derives the
+   host path from a validated slug plus the caller's user id, and that derived
+   path is the only source the runtime ever receives.
+2. `sandbox_service::create` reads a sandbox's mounts from the database, inside
+   the transaction that inserted the sandbox row, and passes them to the runtime.
+3. A bind mount is fixed when the container is created. A mount or dismount
+   changes the row, and therefore what the *next* container for that sandbox
+   receives; it does not rewire a running container.
+4. Archive, never delete, by default. Purging removes the record only: the
+   directory lives on the node, which the control plane cannot reach.
+
+## Extending this module
+
+Add the rule here first, as a pure function in `domain` if possible, and only
+then wire it to the store. If the rule needs a permission, add the permission to
+`domain::auth` before writing the check, so the check cannot reference a
+permission that does not exist.

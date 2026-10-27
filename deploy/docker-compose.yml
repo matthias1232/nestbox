@@ -164,6 +164,39 @@ services:
       - control
       - runtime
 
+  # The only way out of the sandbox network. Envoy asks the control API for a
+  # decision per request (default deny, fail closed) and writes one JSON line per
+  # request to stdout, which the control API ingests and redacts.
+  #
+  # It is the one component with NET_ADMIN and NET_RAW, and only for the redirect
+  # rules that catch a tool which ignores HTTP_PROXY. It is not published on the
+  # host: a forward proxy on a LAN interface with no authentication is an open
+  # relay, and the sandboxes reach it over the `runtime` network by service name.
+  egress-proxy:
+    build:
+      context: ../services/egress-proxy
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NESTBOX_NODE_NAME: local
+      # Where a future CONNECT-termination step reads the node token. Until the
+      # proxy authenticates its ingest calls, the value is unused and the file
+      # is not mounted, so a missing secret cannot break the stack.
+      NESTBOX_NODE_TOKEN_FILE: /run/secrets/node_token
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    expose:
+      - "3128"
+    depends_on:
+      - control-api
+    # Upstream: `control` (has a default route, reaches the LAN and the internet).
+    # Downstream: `runtime` is internal, which is what makes the proxy the only
+    # way out for a sandbox.
+    networks:
+      - control
+      - runtime
+
   tool-image-ubuntu-dev:
     build:
       context: ../services/tool-images/ubuntu-dev
