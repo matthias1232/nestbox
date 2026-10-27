@@ -72,9 +72,11 @@ def processes(name: str) -> dict[str, Any]:
                 "user": field(row, "user") or "",
                 "cpu_pct": _to_number(field(row, "%cpu") or ""),
                 "mem_pct": _to_number(field(row, "%mem") or ""),
-                "elapsed": field(row, "etime"),
-                # `args` may be absent on a minimal ps; fall back to `cmd`.
-                "command": field(row, "args", "cmd") or "",
+                # The titles depend on the ps build: procps prints ELAPSED and
+                # COMMAND, a busybox ps prints ETIME and CMD. Accept both rather
+                # than reporting an empty column as "no command".
+                "elapsed": field(row, "etime", "elapsed"),
+                "command": field(row, "args", "cmd", "command") or "",
             }
         )
     return {
