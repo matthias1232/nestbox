@@ -108,7 +108,8 @@ pub async fn insert(scope: &mut TenantScope<'_>, new: NewRecipe<'_>) -> Result<R
 }
 
 /// Replace the editable fields; the revision increases and the state returns
-/// to draft because the image no longer matches.
+/// to draft because the image no longer matches. The previous build error is
+/// cleared: it described content that no longer exists.
 pub async fn update(
     scope: &mut TenantScope<'_>,
     id: Uuid,
@@ -121,7 +122,8 @@ pub async fn update(
         "UPDATE recipes
             SET name = $3, baseline_key = $4, tool_profile_id = $5, tools = $6, agents = $7,
                 resources = $8, project_mounts = $9, node_id = $10,
-                state = 'draft', revision = revision + 1, updated_at = now()
+                state = 'draft', revision = revision + 1, build_error = NULL,
+                updated_at = now()
           WHERE environment_id = $1 AND id = $2
       RETURNING {RECIPE_COLUMNS}"
     );
@@ -172,6 +174,31 @@ pub async fn set_build(
         .await?
         .ok_or(StoreError::NotFound)?;
     row_to_recipe(&row)
+}
+
+/// Record which recipe a sandbox was created from.
+///
+/// Kept in this file rather than in `sandboxes.rs` because the recipe is the
+/// subject: the sandbox remembers its source so "rebuild from recipe" has an
+/// answer, and deleting the recipe only clears the link.
+pub async fn attach_sandbox(
+    scope: &mut TenantScope<'_>,
+    recipe_id: Uuid,
+    sandbox_id: Uuid,
+) -> Result<(), StoreError> {
+    let result = sqlx::query(
+        "UPDATE sandboxes SET recipe_id = $3, updated_at = now()
+          WHERE environment_id = $1 AND id = $2",
+    )
+    .bind(scope.environment_id())
+    .bind(sandbox_id)
+    .bind(recipe_id)
+    .execute(scope.connection())
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(StoreError::NotFound);
+    }
+    Ok(())
 }
 
 /// Delete a recipe. Sandboxes keep running; their `recipe_id` becomes null.

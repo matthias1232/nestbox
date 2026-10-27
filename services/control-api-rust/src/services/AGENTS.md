@@ -45,9 +45,10 @@ reading both.
 | `agent_service.rs` | Agents inside a sandbox: which packs may join, homes and their persistence, the supervisor command |
 | `policy_service.rs` | Validation, diff, scope rules, global override |
 | `telemetry_service.rs` | Ingest, live publish, history queries |
-| `model_service.rs` | Hardware detection (CPU, RAM, GPU, unified pool), fit against a node's free budget, facets, catalog filters, installs and their reservations |
+| `model_service.rs` | Hardware probing through a node's runner (CPU, RAM, GPU, unified pool), fit against a node's free budget, facets, catalog filters, installs and their reservations |
 | `node_service.rs` | The nodes list, one node with its budget, a node's sandboxes, name-or-id resolution, display rename |
 | `pack_service.rs` | Baselines, agent packs, and tool catalog as data; pack defaults by row, baseline compatibility, package-name resolution |
+| `builder_service.rs` | Recipes: validation against the catalogs, the Dockerfile generator, content hash, build job, instantiate |
 | `gateway_service.rs` | Registry, settings, drift, sync |
 | `job_service.rs` | Job creation and progress |
 | `schedule_service.rs` | Schedule evaluation and runs |
@@ -56,6 +57,31 @@ reading both.
 | `access_service.rs` | SSH key pair as a file with a locator, port pool, sessions (`feat/sandbox-access`) |
 | `mcp_service.rs` | Registry, attachments, discovery through the policy check (`feat/mcp-registry`) |
 | `persist_service.rs` | Persistent roots: derived host paths, mounts, the one-read-write rule, honest usage |
+
+## Probing a node
+
+The hardware probe runs on the node, through its runner: `ctx.runtime.hardware()`
+returns raw `/proc` and `nvidia-smi` text, and the parsers in `model_service.rs`
+turn it into a `HardwareProfile` for that node's id. Measuring from the control
+plane would describe the control plane's container and call it the machine.
+
+Three rules follow from that, and all are in `model_service.rs`:
+
+1. **A failed probe invents nothing.** No profile is written, the node is marked
+   offline (runner unreachable) or unknown (runner answered with an error), and
+   the previous measurement, if any, is returned unchanged. With no earlier
+   measurement the answer is `503 node.runtime_unavailable`.
+2. **A card is not capacity until a container can have it.** `container_gpu` is
+   measured by the runner, stored on the node, and `usable_hardware` clears the
+   GPU fields for the fit when it is false.
+3. **The runner call happens with no transaction open.** `resolve_node_for` and
+   `load_hardware` each open a short scope, so a runner that never answers cannot
+   hold a transaction for its timeout. The scope that reads installs and the
+   catalog begins afterwards.
+
+Phase 1 has one runtime adapter, so only the local node is measured this way. A
+remote node without an adapter gets `unmeasured_hardware` — zeroes and a note,
+never a guess about a machine the control plane cannot see.
 
 ## Persistence rules
 
@@ -69,6 +95,31 @@ reading both.
    receives; it does not rewire a running container.
 4. Archive, never delete, by default. Purging removes the record only: the
    directory lives on the node, which the control plane cannot reach.
+
+## The builder
+
+`builder_service.rs` deserves a note because its decisions are not obvious from
+the signatures.
+
+- **The Dockerfile is generated, never stored.** The recipe holds the choices;
+  the catalogs hold what those choices mean; the generator is the only place the
+  two meet. A corrected pack row changes the next build with no migration.
+- **A build is a job that runs detached.** The endpoint records a `recipe_build`
+  job, marks the recipe `building`, and returns. The task is spawned in process
+  because there is no queue worker yet; a restart during a build leaves the row
+  `building`, and a PATCH recovers it. The job body is `builder_service::run_build`,
+  public so a test can run it without a detached task.
+- **`instantiate` writes the sandbox row itself** rather than calling
+  `sandbox_service::create`, because a recipe carries an agent set and a
+  content-addressed image tag that `CreateSandbox` cannot express, and its
+  mounts have to be in the spec the container is created with. It reuses the
+  same pieces (`SandboxName`, the placement rules, `pack_needs_inference`, the
+  status settlement), so the two paths send the same shape to the runtime. Once
+  `CreateSandbox` can carry agents and a recipe image, this should collapse into
+  a call to it.
+- **The catalogs are read through the store, not `pack_service`.** Both read the
+  same rows; going through `pack_service` is the cleaner layering and changes
+  nothing about the recipes.
 
 ## Extending this module
 

@@ -2,9 +2,14 @@
 //!
 //! The classifier lives in `domain::model` because it is a pure rule. This
 //! module supplies the facts it needs — a stored detection result or a fresh
-//! probe — and turns an install request into a job.
-
-use std::process::Command;
+//! probe of the node — and turns an install request into a job.
+//!
+//! The probe runs on the node, not here. A container sees only the devices it
+//! was given, so measuring from the control plane would describe the control
+//! plane's container and call it the machine. The runner ships raw text and the
+//! parsers below turn it into numbers; the result is stored per node, so a node
+//! that is currently unreachable can still be described by its last
+//! measurement.
 
 use uuid::Uuid;
 
@@ -17,8 +22,10 @@ use crate::domain::model::{
 use crate::domain::model_install::{
     reservation_for, FreeBudget, InstallState, ModelInstall,
 };
-use crate::domain::node::{Node, NodeBudget};
+use crate::domain::node::{Node, NodeBudget, NodeStatus};
+use crate::domain::runtime::HardwareReport;
 use crate::error::{ApiError, ErrorCode, StoreError};
+use crate::runtime::RuntimeError;
 use crate::store::TenantScope;
 use crate::store::postgres::model_installs as install_store;
 use crate::store::postgres::models as store;
@@ -30,6 +37,18 @@ pub struct ModelView {
     #[serde(flatten)]
     pub model: Model,
     pub fit: FitReport,
+}
+
+/// A node's hardware next to the node facts that qualify it.
+///
+/// The profile is the measurement; the node carries what is not a measurement —
+/// its status after the probe and whether containers on it may be given a GPU.
+/// A GPU model needs both, because a card that exists on the host is not a card
+/// a container may use.
+#[derive(Debug, Clone)]
+pub struct NodeHardware {
+    pub profile: HardwareProfile,
+    pub node: Node,
 }
 
 /// What the caller wants to see in the catalog.
@@ -81,12 +100,19 @@ pub async fn catalog(
 ) -> Result<CatalogView, ApiError> {
     require(principal, Permission::ModelRead)?;
 
+    // The node and its hardware come first, each in its own short scope: a probe
+    // goes through the node's runner and that call must not happen with a
+    // transaction open.
+    let resolved = resolve_node_for(ctx, principal, query.node.as_deref()).await?;
+    let measured =
+        load_hardware(ctx, principal.environment_id, refresh_hardware, &resolved).await?;
+    // The node as the probe left it: online/offline and `container_gpu` are part
+    // of what the fit and the response depend on.
+    let node = measured.node.clone();
+
     let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
         .await
         .map_err(ApiError::from)?;
-    let node = resolve_node(&mut scope, query.node.as_deref()).await?;
-    let measured =
-        load_hardware(&mut scope, principal.environment_id, refresh_hardware, &node).await?;
     let installs = install_store::list(&mut scope, Some(node.id))
         .await
         .map_err(ApiError::from)?;
@@ -98,7 +124,7 @@ pub async fn catalog(
         .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
 
-    let hardware = usable_hardware(&measured, &node);
+    let hardware = usable_hardware(&measured.profile, &node);
     let free = free_budget(&hardware, &installs);
     for model in &mut models {
         apply_install_state(model, &installs);
@@ -135,11 +161,13 @@ pub async fn requirements(
 ) -> Result<ModelView, ApiError> {
     require(principal, Permission::ModelRead)?;
 
+    let resolved = resolve_node_for(ctx, principal, None).await?;
+    let measured = load_hardware(ctx, principal.environment_id, false, &resolved).await?;
+    let node = measured.node.clone();
+
     let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
         .await
         .map_err(ApiError::from)?;
-    let node = resolve_node(&mut scope, None).await?;
-    let measured = load_hardware(&mut scope, principal.environment_id, false, &node).await?;
     let installs = install_store::list(&mut scope, Some(node.id))
         .await
         .map_err(ApiError::from)?;
@@ -154,7 +182,7 @@ pub async fn requirements(
         })?;
     scope.commit().await.map_err(ApiError::from)?;
 
-    let hardware = usable_hardware(&measured, &node);
+    let hardware = usable_hardware(&measured.profile, &node);
     let free = free_budget(&hardware, &installs);
     apply_install_state(&mut model, &installs);
     Ok(ModelView {
@@ -185,11 +213,13 @@ pub async fn facets(
 ) -> Result<Facets, ApiError> {
     require(principal, Permission::ModelRead)?;
 
+    let resolved = resolve_node_for(ctx, principal, None).await?;
+    let measured = load_hardware(ctx, principal.environment_id, false, &resolved).await?;
+    let node = measured.node.clone();
+
     let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
         .await
         .map_err(ApiError::from)?;
-    let node = resolve_node(&mut scope, None).await?;
-    let measured = load_hardware(&mut scope, principal.environment_id, false, &node).await?;
     let installs = install_store::list(&mut scope, Some(node.id))
         .await
         .map_err(ApiError::from)?;
@@ -199,7 +229,7 @@ pub async fn facets(
         .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
 
-    let hardware = usable_hardware(&measured, &node);
+    let hardware = usable_hardware(&measured.profile, &node);
     let free = free_budget(&hardware, &installs);
     let mut facets = Facets {
         total: stored.total,
@@ -257,21 +287,35 @@ pub async fn installed(
         .collect())
 }
 
-/// The detected hardware, or a fresh probe.
+/// The hardware of one node, as last measured or freshly probed.
+///
+/// `node` is a node name (`local`, `gpu-box-01`) or an id; `None` means the
+/// local node. The node is named because the control plane is not the machine:
+/// the numbers come from that node's own runner.
 pub async fn hardware(
     ctx: &ServiceContext,
     principal: &Principal,
     refresh: bool,
     node_name: Option<&str>,
-) -> Result<HardwareProfile, ApiError> {
-    require(principal, Permission::ModelRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
-        .await
-        .map_err(ApiError::from)?;
-    let node = resolve_node(&mut scope, node_name).await?;
-    let profile = load_hardware(&mut scope, principal.environment_id, refresh, &node).await?;
-    scope.commit().await.map_err(ApiError::from)?;
-    Ok(profile)
+) -> Result<NodeHardware, ApiError> {
+    require(principal, Permission::NodeRead)?;
+    let node = resolve_node_for(ctx, principal, node_name).await?;
+    load_hardware(ctx, principal.environment_id, refresh, &node).await
+}
+
+/// Probe one node's hardware through its own runner, now.
+///
+/// Always measures, and needs `node.manage`: this reaches a machine that may be
+/// remote, so it is an operator action rather than a read.
+pub async fn probe_node(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    node_id: Uuid,
+) -> Result<NodeHardware, ApiError> {
+    require(principal, Permission::NodeManage)?;
+
+    let node = resolve_node_for(ctx, principal, Some(&node_id.to_string())).await?;
+    probe_and_store(ctx, principal.environment_id, node).await
 }
 
 /// One install as `GET /models/installs` returns it.
@@ -371,19 +415,18 @@ pub async fn install(
 ) -> Result<serde_json::Value, ApiError> {
     require(principal, Permission::ModelInstall)?;
 
+    // The node and the model first, each in its own short scope: a bad key is
+    // answered before a probe, and the probe itself runs with no transaction
+    // open.
+    let resolved = resolve_node_for(ctx, principal, node_name).await?;
+    let model = model_by_key(ctx, principal, key).await?;
+    let measured = load_hardware(ctx, principal.environment_id, false, &resolved).await?;
+    // The node as the probe left it: install decides on the fresh `container_gpu`.
+    let node = measured.node.clone();
+
     let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
         .await
         .map_err(ApiError::from)?;
-    let node = resolve_node(&mut scope, node_name).await?;
-    let model = store::get_by_key(&mut scope, key)
-        .await
-        .map_err(|error| match error {
-            StoreError::NotFound => ApiError::not_found(
-                ErrorCode::MODEL_NOT_FOUND,
-                format!("No model with key '{key}'."),
-            ),
-            other => ApiError::from(other),
-        })?;
 
     if let Some(existing) = install_store::get(&mut scope, key, node.id)
         .await
@@ -427,8 +470,7 @@ pub async fn install(
         }
     }
 
-    let measured = load_hardware(&mut scope, principal.environment_id, false, &node).await?;
-    let hardware = usable_hardware(&measured, &node);
+    let hardware = usable_hardware(&measured.profile, &node);
     let installs = install_store::list(&mut scope, Some(node.id))
         .await
         .map_err(ApiError::from)?;
@@ -610,52 +652,347 @@ pub async fn uninstall(
     }))
 }
 
+/// The node a request names, resolved in a transaction of its own.
+///
+/// Hardware may be measured through the node's runner, and that call must not
+/// happen with a transaction open: it can take as long as the runner's timeout,
+/// and a runner that never answers would hold locks for all of it. So the node
+/// and its measurement are resolved first, each in a short scope, and the scope
+/// that reads installs and the catalog begins afterwards.
+async fn resolve_node_for(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    node_ref: Option<&str>,
+) -> Result<Node, ApiError> {
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let node = resolve_node(&mut scope, node_ref).await?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(node)
+}
+
 /// The node a request names, or the local node when it names none.
+///
+/// A name is the stable identifier in URLs (`local`, `gpu-box-01`); an id is
+/// accepted as well, because that is what a client holds after listing. The name
+/// is tried first, so a machine that is literally named like a uuid still wins.
 async fn resolve_node(
     scope: &mut TenantScope<'_>,
-    name: Option<&str>,
+    node_ref: Option<&str>,
 ) -> Result<Node, ApiError> {
-    match name {
-        None => nodes::local(scope).await.map_err(ApiError::from),
-        Some(name) => nodes::get_by_name(scope, name).await.map_err(|error| match error {
+    let Some(value) = node_ref.map(str::trim).filter(|value| !value.is_empty()) else {
+        return nodes::local(scope)
+            .await
+            .map_err(|error| node_missing(error, "local"));
+    };
+
+    match nodes::get_by_name(scope, value).await {
+        Ok(node) => Ok(node),
+        Err(StoreError::NotFound) => match Uuid::parse_str(value) {
+            Ok(id) => nodes::get(scope, id)
+                .await
+                .map_err(|error| node_missing(error, value)),
+            Err(_) => Err(node_missing(StoreError::NotFound, value)),
+        },
+        Err(other) => Err(ApiError::from(other)),
+    }
+}
+
+/// Map a missing node row to the published `node.not_found` code.
+fn node_missing(error: StoreError, what: &str) -> ApiError {
+    match error {
+        StoreError::NotFound => ApiError::not_found(
+            ErrorCode::NODE_NOT_FOUND,
+            format!("No node named '{what}'."),
+        ),
+        other => ApiError::from(other),
+    }
+}
+
+/// One catalog row by key, read in a transaction of its own.
+async fn model_by_key(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    key: &str,
+) -> Result<Model, ApiError> {
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let model = store::get_by_key(&mut scope, key)
+        .await
+        .map_err(|error| match error {
             StoreError::NotFound => ApiError::not_found(
-                ErrorCode::NODE_NOT_FOUND,
-                format!("No node named '{name}'."),
+                ErrorCode::MODEL_NOT_FOUND,
+                format!("No model with key '{key}'."),
             ),
             other => ApiError::from(other),
-        }),
-    }
+        })?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(model)
 }
 
 /// The last measurement of a node, or a fresh probe of the local node.
 ///
+/// Returns the node as well as the profile, because a probe changes the node:
+/// it marks it online and stores the `container_gpu` the runner reported. Using
+/// the node resolved before the probe would classify the first request against a
+/// stale `container_gpu` and report a stale status.
+///
 /// A remote node is not probed from the control plane: that would describe this
-/// container, not the machine. Until its runner reports (package 2 of the node
-/// plan), an unmeasured node gets zeroes and a note, never a guessed number.
+/// container, not the machine. Without an adapter for it, an unmeasured remote
+/// node gets zeroes and a note, never a guessed number.
+///
+/// The probe is the one thing here that may take seconds, so it runs with no
+/// transaction open. A runner that does not answer writes no profile at all and
+/// leaves the node marked offline or unknown; the previous measurement, if any,
+/// is what comes back.
 async fn load_hardware(
-    scope: &mut TenantScope<'_>,
+    ctx: &ServiceContext,
     environment_id: Uuid,
     refresh: bool,
     node: &Node,
-) -> Result<HardwareProfile, ApiError> {
+) -> Result<NodeHardware, ApiError> {
     if !refresh {
-        if let Some(profile) = store::latest_hardware(scope, node.id)
+        let mut scope = TenantScope::begin(&ctx.pool, environment_id)
             .await
-            .map_err(ApiError::from)?
-        {
-            return Ok(profile);
+            .map_err(ApiError::from)?;
+        let stored = store::latest_hardware(&mut scope, node.id)
+            .await
+            .map_err(ApiError::from)?;
+        scope.commit().await.map_err(ApiError::from)?;
+        if let Some(profile) = stored {
+            return Ok(NodeHardware {
+                profile,
+                node: node.clone(),
+            });
         }
     }
 
     if !node.is_local {
-        return Ok(unmeasured_hardware(environment_id, node.id));
+        return Ok(NodeHardware {
+            profile: unmeasured_hardware(environment_id, node.id),
+            node: node.clone(),
+        });
     }
 
-    let profile = probe_hardware(environment_id, node.id);
-    store::insert_hardware(scope, &profile)
+    probe_and_store(ctx, environment_id, node.clone()).await
+}
+
+/// What one probe produced: the profile plus the container-GPU answer.
+///
+/// The flag belongs to the node rather than to the profile, because it is a
+/// property of the Docker daemon, not of the cards, and it changes without the
+/// hardware changing.
+struct Measurement {
+    profile: HardwareProfile,
+    container_gpu: bool,
+}
+
+/// Measure a node and record both the numbers and that the node answered.
+async fn probe_and_store(
+    ctx: &ServiceContext,
+    environment_id: Uuid,
+    node: Node,
+) -> Result<NodeHardware, ApiError> {
+    match probe_hardware(ctx, environment_id, &node).await {
+        Ok(measured) => store_probe(ctx, node, measured).await,
+        Err(error) => node_offline(ctx, environment_id, node, error).await,
+    }
+}
+
+/// Persist a measurement and mark the node online with what it reported.
+async fn store_probe(
+    ctx: &ServiceContext,
+    node: Node,
+    measured: Measurement,
+) -> Result<NodeHardware, ApiError> {
+    let mut scope = TenantScope::begin(&ctx.pool, measured.profile.environment_id)
         .await
         .map_err(ApiError::from)?;
-    Ok(profile)
+    store::insert_hardware(&mut scope, &measured.profile)
+        .await
+        .map_err(ApiError::from)?;
+    nodes::mark_seen(&mut scope, node.id, NodeStatus::Online, measured.container_gpu)
+        .await
+        .map_err(ApiError::from)?;
+    let updated = nodes::get(&mut scope, node.id)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+
+    Ok(NodeHardware {
+        profile: measured.profile,
+        node: updated,
+    })
+}
+
+/// Record that a node did not answer, and fall back to what was known.
+///
+/// Nothing is invented. No profile is written, the node is marked offline when
+/// its runner was unreachable and unknown when the runner answered with an
+/// error, and the previous measurement — if there is one — is returned
+/// unchanged: the last thing that was measured is still the best knowledge, and
+/// a fresh `detected_at` would make it look newer than it is. Without an earlier
+/// measurement there is nothing honest to return, so the answer is `503` and the
+/// runner's own message goes to the log rather than to the client.
+async fn node_offline(
+    ctx: &ServiceContext,
+    environment_id: Uuid,
+    node: Node,
+    error: RuntimeError,
+) -> Result<NodeHardware, ApiError> {
+    let status = match &error {
+        RuntimeError::Unavailable(_) => NodeStatus::Offline,
+        RuntimeError::NotFound(_) | RuntimeError::Rejected(_) => NodeStatus::Unknown,
+    };
+
+    let mut scope = TenantScope::begin(&ctx.pool, environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    nodes::mark_seen(&mut scope, node.id, status, node.container_gpu)
+        .await
+        .map_err(ApiError::from)?;
+    let previous = store::latest_hardware(&mut scope, node.id)
+        .await
+        .map_err(ApiError::from)?;
+    let updated = nodes::get(&mut scope, node.id)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+
+    let Some(profile) = previous else {
+        return Err(ApiError::unavailable(
+            ErrorCode::NODE_RUNTIME_UNAVAILABLE,
+            format!(
+                "The runner of node '{}' did not answer and the node has never been measured.",
+                node.name
+            ),
+        )
+        .with_internal(error.to_string()));
+    };
+
+    Ok(NodeHardware {
+        profile,
+        node: updated,
+    })
+}
+
+/// Ask a node's runner what the node has.
+///
+/// The runner ships files, not conclusions: `/proc/cpuinfo`, `/proc/meminfo`,
+/// and the two `nvidia-smi` outputs. It is asked rather than measured here
+/// because the control plane may run in a container that sees none of the
+/// node's devices, and a container that reports its own limits as the machine's
+/// would be wrong in the direction that matters — it would say "no GPU" about a
+/// GPU box.
+///
+/// Phase 1 has one adapter, so only the local node is measured this way; a
+/// remote node is `unmeasured_hardware` until it has an adapter of its own.
+async fn probe_hardware(
+    ctx: &ServiceContext,
+    environment_id: Uuid,
+    node: &Node,
+) -> Result<Measurement, RuntimeError> {
+    let report = ctx.runtime.hardware().await?;
+    Ok(Measurement {
+        profile: profile_from_report(environment_id, node.id, &report),
+        container_gpu: report.container_gpu,
+    })
+}
+
+/// Turn a runner's raw report into a profile.
+///
+/// Parsing lives here so the numbers are unit-tested Rust rather than a second
+/// implementation in Python; the runner stays a transport. A machine without a
+/// GPU is not an error: it is a fact, and the RAM and core count are what decide
+/// whether a CPU model fits. The detection note explains why the GPU list is
+/// what it is, so the console never has to guess.
+///
+/// Whether containers on the node can *use* a card is `usable_hardware`'s job;
+/// this turns the report into numbers and leaves the gate to the caller.
+fn profile_from_report(
+    environment_id: Uuid,
+    node_id: Uuid,
+    report: &HardwareReport,
+) -> HardwareProfile {
+    let cpu = parse_cpuinfo(&report.cpuinfo);
+    let system_ram_bytes = parse_meminfo_total(&report.meminfo);
+    let gpus = report
+        .nvidia_smi_csv
+        .as_deref()
+        .map(parse_nvidia_smi)
+        .unwrap_or_default();
+    let (driver_version, cuda_version) =
+        parse_nvidia_smi_header(report.nvidia_smi_header.as_deref().unwrap_or_default());
+
+    // A unified-memory machine (DGX Spark / GB10) has no discrete VRAM: the
+    // model and the CPU draw from one pool. That pool is deliberately *not*
+    // inferred from "no discrete card but a lot of RAM", because every CPU-only
+    // VM would then look like a Spark and wrongly pass GPU gates. It is only
+    // reported when the hardware identifies itself as GB10/Grace.
+    let unified = detect_unified_pool(cpu.model.as_deref(), &gpus, system_ram_bytes);
+
+    let notes = match unified.source.clone() {
+        Some(source) => vec![source],
+        None => gpu_notes(report, &gpus),
+    };
+    let note = (!notes.is_empty()).then(|| notes.join(" "));
+    let total_vram: i64 = gpus.iter().map(|gpu| gpu.memory_bytes).sum();
+
+    HardwareProfile {
+        id: Uuid::new_v4(),
+        environment_id,
+        node_id,
+        detected_at: chrono::Utc::now(),
+        hostname: report.hostname.clone(),
+        gpus,
+        total_vram_bytes: total_vram,
+        unified_memory_bytes: unified.bytes,
+        unified_memory_source: unified.source,
+        cuda_version,
+        driver_version,
+        detection_note: note,
+        cpu_model: cpu.model,
+        cpu_cores: cpu.cores,
+        cpu_threads: cpu.threads,
+        system_ram_bytes,
+    }
+}
+
+/// Why the GPU list is what it is.
+///
+/// The runner's own sentence wins over ours where it has one: it stands next to
+/// the node and may name the actual reason. What a container may use is a
+/// separate question, answered by `usable_hardware` from the node's
+/// `container_gpu`.
+fn gpu_notes(report: &HardwareReport, gpus: &[GpuDevice]) -> Vec<String> {
+    let runner_note = report
+        .note
+        .as_deref()
+        .map(str::trim)
+        .filter(|note| !note.is_empty());
+
+    if report.nvidia_smi_csv.is_none() {
+        return vec![runner_note.map(str::to_string).unwrap_or_else(|| {
+            "The runner found no nvidia-smi on this node. GPU models need a GPU host; CPU models \
+             are gated by RAM and cores only."
+                .to_string()
+        })];
+    }
+
+    let mut notes = Vec::new();
+    if gpus.is_empty() {
+        notes.push(
+            "nvidia-smi ran on the node but reported no usable GPU. GPU models cannot be \
+             installed here; CPU models are gated by RAM and cores only."
+                .to_string(),
+        );
+    }
+    if let Some(note) = runner_note {
+        notes.push(format!("Runner: {note}"));
+    }
+    notes
 }
 
 /// A profile for a node that has not reported: zeroes and the reason.
@@ -743,116 +1080,6 @@ fn apply_install_state(model: &mut Model, installs: &[ModelInstall]) {
     if let Some(install) = installs.iter().find(|install| install.model_key == model.key) {
         model.state = install.state.model_state();
         model.installed_version = install.installed_version.clone();
-    }
-}
-
-/// Ask the platform what it has.
-///
-/// The command is a fixed argument vector with no interpolation, so the only way
-/// this can be influenced from outside is by controlling what `nvidia-smi` is on
-/// `PATH` — which is the container's own filesystem, not user input.
-///
-/// Three sources, each read from the kernel's own files rather than from a
-/// tool that may not be installed:
-///
-/// * CPU model, cores, and threads from `/proc/cpuinfo`;
-/// * system RAM from `/proc/meminfo` (`MemTotal`, the kernel's usable figure);
-/// * GPUs from `nvidia-smi`, which is absent on a CPU-only host.
-///
-/// A machine without a GPU is not an error: it is a fact, and the RAM and core
-/// count are what decide whether a CPU model fits. The detection note says why
-/// the GPU list is empty so the console can explain it without guessing.
-pub fn probe_hardware(environment_id: uuid::Uuid, node_id: uuid::Uuid) -> HardwareProfile {
-    let hostname = std::fs::read_to_string("/etc/hostname")
-        .ok()
-        .map(|value| value.trim().to_string());
-
-    let cpuinfo = std::fs::read_to_string("/proc/cpuinfo").unwrap_or_default();
-    let cpu = parse_cpuinfo(&cpuinfo);
-    let meminfo = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
-    let system_ram_bytes = parse_meminfo_total(&meminfo);
-
-    let output = Command::new("nvidia-smi")
-        .args([
-            "--query-gpu=index,name,memory.total,memory.free",
-            "--format=csv,noheader,nounits",
-        ])
-        .output();
-
-    let (gpus, driver_version, cuda_version, gpu_note) = match output {
-        Ok(output) if output.status.success() => {
-            let text = String::from_utf8_lossy(&output.stdout);
-            let gpus = parse_nvidia_smi(&text);
-            let cuda = query_cuda_version();
-            if gpus.is_empty() {
-                (
-                    gpus,
-                    None,
-                    cuda,
-                    Some(
-                        "nvidia-smi ran but reported no usable GPU. GPU models cannot be \
-                         installed; CPU models are gated by RAM and cores only."
-                            .to_string(),
-                    ),
-                )
-            } else {
-                (gpus, driver_query("--query-gpu=driver_version"), cuda, None)
-            }
-        }
-        Ok(_) => (
-            Vec::new(),
-            None,
-            None,
-            Some(
-                "nvidia-smi ran but reported no usable GPU. GPU models cannot be installed; \
-                 CPU models are gated by RAM and cores only."
-                    .to_string(),
-            ),
-        ),
-        Err(_) => (
-            Vec::new(),
-            None,
-            None,
-            Some(
-                "No NVIDIA driver tooling in this environment. GPU models need a GPU host; \
-                 CPU models are gated by RAM and cores only."
-                    .to_string(),
-            ),
-        ),
-    };
-
-    let total_vram: i64 = gpus.iter().map(|gpu| gpu.memory_bytes).sum();
-
-    // A unified-memory machine (DGX Spark / GB10) has no discrete VRAM: the
-    // model and the CPU draw from one pool. That pool is deliberately *not*
-    // inferred from "no discrete card but a lot of RAM", because every CPU-only
-    // VM would then look like a Spark and wrongly pass GPU gates. It is only
-    // reported when the hardware identifies itself as GB10/Grace.
-    let unified = detect_unified_pool(cpu.model.as_deref(), &gpus, system_ram_bytes);
-
-    let note = match (&unified.source, gpu_note) {
-        (Some(source), _) => Some(source.clone()),
-        (None, Some(note)) => Some(note),
-        (None, None) => None,
-    };
-
-    HardwareProfile {
-        id: uuid::Uuid::new_v4(),
-        environment_id,
-        node_id,
-        detected_at: chrono::Utc::now(),
-        hostname,
-        gpus,
-        total_vram_bytes: total_vram,
-        unified_memory_bytes: unified.bytes,
-        unified_memory_source: unified.source,
-        cuda_version,
-        driver_version,
-        detection_note: note,
-        cpu_model: cpu.model,
-        cpu_cores: cpu.cores,
-        cpu_threads: cpu.threads,
-        system_ram_bytes,
     }
 }
 
@@ -988,19 +1215,20 @@ fn detect_unified_pool(
     }
 }
 
-/// The CUDA version from the `nvidia-smi` header (`CUDA Version: 12.4`).
+/// The driver and CUDA versions from the plain `nvidia-smi` header.
 ///
-/// The header is human-formatted, so this reads the line rather than querying a
-/// field that `nvidia-smi` does not offer for CUDA.
-fn query_cuda_version() -> Option<String> {
-    let output = Command::new("nvidia-smi").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    for line in text.lines() {
-        if let Some(index) = line.find("CUDA Version:") {
-            let value = line[index + "CUDA Version:".len()..]
+/// Both are printed in the same table line:
+/// `| NVIDIA-SMI 535.104.05   Driver Version: 535.104.05   CUDA Version: 12.2 |`.
+/// Neither is a query field that `nvidia-smi` offers per device, so the line is
+/// read from the text the runner sends. A field that is not there stays `None`
+/// rather than becoming a guess.
+fn parse_nvidia_smi_header(text: &str) -> (Option<String>, Option<String>) {
+    fn field(text: &str, name: &str) -> Option<String> {
+        for line in text.lines() {
+            let Some(index) = line.find(name) else {
+                continue;
+            };
+            let value = line[index + name.len()..]
                 .trim()
                 .split_whitespace()
                 .next()?
@@ -1010,24 +1238,12 @@ fn query_cuda_version() -> Option<String> {
                 return Some(value.to_string());
             }
         }
-    }
-    None
-}
-
-fn driver_query(field: &str) -> Option<String> {
-    let output = Command::new("nvidia-smi")
-        .args([field, "--format=csv,noheader"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if text.is_empty() {
         None
-    } else {
-        Some(text)
     }
+    (
+        field(text, "Driver Version:"),
+        field(text, "CUDA Version:"),
+    )
 }
 
 /// Parse `index, name, total MiB, free MiB` lines.
@@ -1053,6 +1269,7 @@ fn parse_nvidia_smi(text: &str) -> Vec<GpuDevice> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::RuntimeAdapter;
 
     #[test]
     fn nvidia_smi_output_is_parsed() {
@@ -1072,14 +1289,97 @@ mod tests {
         assert!(parse_nvidia_smi("0, , , ").is_empty());
     }
 
-    #[test]
-    fn a_machine_without_nvidia_smi_reports_a_reason() {
-        // This is the honest path on a host with no GPU tooling, which is also
-        // the path the development appliance takes.
-        let profile = probe_hardware(uuid::Uuid::nil(), uuid::Uuid::nil());
-        if profile.gpus.is_empty() {
-            assert!(profile.detection_note.is_some());
+    /// A report from a plain x86 node with no NVIDIA tooling, as the runner
+    /// sends it: raw files, one sentence about the missing tool, no GPU flag.
+    fn report_without_nvidia_tooling() -> HardwareReport {
+        HardwareReport {
+            hostname: Some("appliance".into()),
+            cpuinfo: "\
+processor\t: 0
+model name\t: Intel(R) Core(TM) i7-2600 CPU @ 3.40GHz
+physical id\t: 0
+core id\t\t: 0
+
+processor\t: 1
+model name\t: Intel(R) Core(TM) i7-2600 CPU @ 3.40GHz
+physical id\t: 0
+core id\t\t: 0
+"
+            .into(),
+            meminfo: "MemTotal:        8176000 kB\n".into(),
+            nvidia_smi_csv: None,
+            nvidia_smi_header: None,
+            container_gpu: false,
+            note: Some(
+                "nvidia-smi is not available on this node; GPU models need a GPU host.".into(),
+            ),
         }
+    }
+
+    #[tokio::test]
+    async fn the_fake_runners_report_parses_to_the_machines_numbers() {
+        // The fake adapter is what every service test runs against, so its
+        // report has to mean the same thing a real node's report means.
+        let report = crate::runtime::fake::FakeRuntime::new()
+            .hardware()
+            .await
+            .expect("the fake adapter always answers");
+
+        assert!(
+            !report.container_gpu,
+            "the fake node cannot give a container a GPU, so no GPU model may be \
+             called installable there"
+        );
+
+        let profile = profile_from_report(uuid::Uuid::nil(), uuid::Uuid::nil(), &report);
+
+        assert_eq!(profile.cpu_model.as_deref(), Some("Fake CPU"));
+        assert_eq!(profile.cpu_cores, Some(2));
+        assert_eq!(profile.cpu_threads, Some(2));
+        assert_eq!(profile.system_ram_bytes, Some(8 * 1024 * 1024 * 1024));
+        assert_eq!(profile.gpu_count(), 0);
+        assert_eq!(profile.total_vram_bytes, 0);
+        assert_eq!(profile.node_id, uuid::Uuid::nil());
+        assert_eq!(
+            profile.detection_note.as_deref(),
+            Some("fake runtime: no GPU"),
+            "the runner's own sentence is what an operator reads"
+        );
+    }
+
+    #[test]
+    fn a_node_without_nvidia_tooling_yields_no_gpu_and_the_runners_reason() {
+        let profile = profile_from_report(
+            uuid::Uuid::nil(),
+            uuid::Uuid::nil(),
+            &report_without_nvidia_tooling(),
+        );
+
+        assert!(profile.gpus.is_empty());
+        assert_eq!(profile.cpu_cores, Some(1));
+        assert!(!profile.is_unified(), "a plain x86 node is not a Spark");
+        assert_eq!(
+            profile.detection_note.as_deref(),
+            Some("nvidia-smi is not available on this node; GPU models need a GPU host.")
+        );
+    }
+
+    #[test]
+    fn the_nvidia_smi_header_yields_driver_and_cuda_versions() {
+        let header = "\
++-----------------------------------------------------------------------------+
+| NVIDIA-SMI 535.104.05   Driver Version: 535.104.05   CUDA Version: 12.2     |
+|-------------------------------+----------------------+----------------------+
+";
+        assert_eq!(
+            parse_nvidia_smi_header(header),
+            (Some("535.104.05".into()), Some("12.2".into()))
+        );
+        assert_eq!(parse_nvidia_smi_header(""), (None, None));
+        assert_eq!(
+            parse_nvidia_smi_header("no versions in here"),
+            (None, None)
+        );
     }
 
     #[test]

@@ -18,6 +18,10 @@ Two different jobs:
   delete a sandbox" rather than "test_delete_403".
 - A test that needs a database skips cleanly when `TEST_DATABASE_URL` is unset,
   so `cargo test` works on a laptop without one.
+- A suite that needs a *migrated* database creates its own database from
+  `TEST_DATABASE_URL` rather than dropping `public` in the shared one, so two
+  suites can run in the same `cargo test` without deleting each other's schema.
+  `recipes.rs` is the pattern.
 
 ## Files
 
@@ -25,3 +29,4 @@ Two different jobs:
 |---|---|
 | `architecture.rs` | Layer boundaries, `AGENTS.md` presence, doc comments |
 | `database.rs` | Schema, row-level security, seed, and the constraints the services rely on (skips without `TEST_DATABASE_URL`) |
+| `recipes.rs` | The builder against a database: drafts, revisions, build outcome, instantiate, capacity |

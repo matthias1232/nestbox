@@ -6,6 +6,7 @@ use serde::Deserialize;
 
 use crate::api::principal::Auth;
 use crate::domain::model::HardwareProfile;
+use crate::domain::node::Node;
 use crate::error::ApiError;
 use crate::services::model_service;
 use crate::services::model_service::CatalogQuery as CatalogFilter;
@@ -53,10 +54,18 @@ impl CatalogQuery {
     }
 }
 
-/// The machine as JSON, in one shape for both the catalog envelope and the
-/// hardware endpoint.
-fn hardware_json(profile: &HardwareProfile) -> serde_json::Value {
+/// The machine as JSON, in one shape for the catalog envelope, the hardware
+/// endpoint, and a node probe, so the three cannot drift apart.
+///
+/// `container_gpu` sits next to the GPUs on purpose: a card the node has but a
+/// container cannot be given is not capacity, and a reader should not have to
+/// join two responses to see that.
+pub(crate) fn hardware_json(profile: &HardwareProfile, node: &Node) -> serde_json::Value {
     serde_json::json!({
+        "node": node.name,
+        "node_id": node.id,
+        "node_status": node.status,
+        "container_gpu": node.container_gpu,
         "hostname": profile.hostname,
         "cpu_model": profile.cpu_model,
         "cpu_cores": profile.cpu_cores,
@@ -93,7 +102,7 @@ pub async fn catalog(
     .await?;
     Ok(Json(serde_json::json!({
         "items": view.items,
-        "hardware": hardware_json(&view.hardware),
+        "hardware": hardware_json(&view.hardware, &view.node),
         "budget": view.budget,
         "node": {
             "id": view.node.id,
@@ -113,20 +122,20 @@ pub async fn installed(
     Ok(Json(serde_json::json!({ "items": models })))
 }
 
-/// The detected hardware.
+/// The detected hardware of one node.
 pub async fn hardware(
     State(state): State<AppState>,
     auth: Auth,
     Query(query): Query<CatalogQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let profile = model_service::hardware(
+    let measured = model_service::hardware(
         &state.services,
         &auth.principal,
         query.refresh_hardware,
         query.node.as_deref(),
     )
     .await?;
-    Ok(Json(hardware_json(&profile)))
+    Ok(Json(hardware_json(&measured.profile, &measured.node)))
 }
 
 /// Counts for the filter chips.
