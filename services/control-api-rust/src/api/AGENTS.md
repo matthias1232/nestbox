@@ -45,7 +45,7 @@ The architecture test enforces the last two.
 | `packs.rs` | Baselines, agent packs, and tool catalog as data, with `?baseline=` resolution |
 | `recipes.rs` | Recipe CRUD, build, instantiate (`feat/recipes-build`) |
 | `persistent_roots.rs` | Roots, mount, dismount, usage |
-| `sandbox_agents.rs` | Agents inside a sandbox (`feat/sandbox-agents`) |
+| `sandbox_agents.rs` | Agents inside a sandbox: list, add, remove with `keep_persistent` |
 | `jobs.rs` | Jobs, schedules |
 
 ## Work packages

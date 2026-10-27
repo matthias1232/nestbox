@@ -34,6 +34,7 @@ the codebase where SQL appears.
 | `environments.rs` | Environments, clusters, nodes, overview counts |
 | `providers.rs` | Provider profiles, secret references |
 | `agent_packs.rs` | Baselines, agent packs, and the tool catalog (global data, no tenant filter) |
+| `persistent_roots.rs` | Persistent roots, mounts, and the agents inside a sandbox |
 | `audit.rs` | Append-only audit writes |
 
 ## Extending this folder
