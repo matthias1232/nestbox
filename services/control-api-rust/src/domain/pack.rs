@@ -136,6 +136,84 @@ impl Tool {
     }
 }
 
+/// A tool as one baseline can install it.
+///
+/// The catalog row carries both names because the console shows the whole
+/// matrix; `package` is the single name a build for `package_manager` would
+/// put in the Dockerfile, and `available` says whether the tool has a name for
+/// that manager at all. Without a baseline, both names are shown and no
+/// resolution is claimed, which is why `package_manager` is absent rather than
+/// guessed.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ToolForBaseline {
+    pub key: String,
+    pub name: String,
+    pub group: String,
+    pub description: Option<String>,
+    pub apt_name: Option<String>,
+    pub rpm_name: Option<String>,
+    /// The name for the resolved package manager; absent without a baseline.
+    pub package: Option<String>,
+    /// The manager `package` was resolved for; absent without a baseline.
+    pub package_manager: Option<PackageManager>,
+    /// False when the resolved manager has no package name for this tool.
+    pub available: bool,
+}
+
+impl ToolForBaseline {
+    /// The catalog answer when no baseline was asked for: both names, no
+    /// resolution, and availability judged by the database constraint that a
+    /// tool has at least one name.
+    pub fn unresolved(tool: Tool) -> Self {
+        let available = tool.apt_name.is_some() || tool.rpm_name.is_some();
+        Self {
+            key: tool.key,
+            name: tool.name,
+            group: tool.group,
+            description: tool.description,
+            apt_name: tool.apt_name,
+            rpm_name: tool.rpm_name,
+            package: None,
+            package_manager: None,
+            available,
+        }
+    }
+
+    /// The catalog answer for one package manager, naming the package a build
+    /// would install or marking the tool as not packaged for it.
+    pub fn resolved(tool: Tool, manager: PackageManager) -> Self {
+        let package = tool.package_for(manager).map(str::to_string);
+        let available = package.is_some();
+        Self {
+            key: tool.key,
+            name: tool.name,
+            group: tool.group,
+            description: tool.description,
+            apt_name: tool.apt_name,
+            rpm_name: tool.rpm_name,
+            package,
+            package_manager: Some(manager),
+            available,
+        }
+    }
+}
+
+/// What a pack runs with when no recipe overrides it.
+///
+/// This is the row a sandbox is created from: the image to pull, the command
+/// that keeps it alive, the ports it publishes, the environment variable names
+/// its provider fills (ADR 0005), and the paths under its home that must
+/// survive a rebuild.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PackDefaults {
+    pub pack_key: String,
+    pub image: String,
+    pub command: Vec<String>,
+    pub ports: Vec<i32>,
+    pub env_slots: Vec<String>,
+    pub home_paths: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,6 +242,30 @@ mod tests {
         limited.base_os = vec!["ubuntu-24.04".into()];
         assert!(limited.supports("ubuntu-24.04"));
         assert!(!limited.supports("rocky-9"));
+    }
+
+    #[test]
+    fn a_tool_without_a_name_for_the_manager_is_flagged() {
+        let build_tools = Tool {
+            key: "build-essential".into(),
+            name: "Build tools".into(),
+            group: "build".into(),
+            description: None,
+            apt_name: Some("build-essential".into()),
+            rpm_name: None,
+        };
+
+        let on_debian = ToolForBaseline::resolved(build_tools.clone(), PackageManager::Apt);
+        assert_eq!(on_debian.package.as_deref(), Some("build-essential"));
+        assert!(on_debian.available);
+
+        let on_rocky = ToolForBaseline::resolved(build_tools.clone(), PackageManager::Dnf);
+        assert_eq!(on_rocky.package, None);
+        assert!(!on_rocky.available, "dnf has no package for build-essential");
+
+        let unresolved = ToolForBaseline::unresolved(build_tools);
+        assert_eq!(unresolved.package, None);
+        assert!(unresolved.available, "it is installable on at least one manager");
     }
 
     #[test]

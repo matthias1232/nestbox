@@ -24,3 +24,4 @@ Two different jobs:
 | File | Responsibility |
 |---|---|
 | `architecture.rs` | Layer boundaries, `AGENTS.md` presence, doc comments |
+| `database.rs` | Schema, row-level security, seed, and the constraints the services rely on (skips without `TEST_DATABASE_URL`) |

@@ -4,15 +4,17 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use super::super::TenantScope;
-use crate::domain::provider::{ProviderKind, ProviderProfile, SecretKind, SecretReference};
+use crate::domain::provider::{ProviderKind, ProviderProfile, ProviderStatus, SecretKind, SecretReference};
 use crate::error::StoreError;
 
 const PROFILE_COLUMNS: &str = "id, environment_id, name, kind, endpoint, model, secret_ref, \
-     credential_expiry, labels, version, created_at, updated_at";
+     credential_expiry, labels, version, created_at, updated_at, status, node_id, \
+     model_install_id, last_probed_at";
 
 fn row_to_profile(row: &sqlx::postgres::PgRow) -> Result<ProviderProfile, StoreError> {
     let kind_raw: String = row.try_get("kind")?;
     let secret_ref: Option<String> = row.try_get("secret_ref")?;
+    let status_raw: String = row.try_get("status")?;
     Ok(ProviderProfile {
         id: row.try_get("id")?,
         environment_id: row.try_get("environment_id")?,
@@ -29,6 +31,10 @@ fn row_to_profile(row: &sqlx::postgres::PgRow) -> Result<ProviderProfile, StoreE
         version: row.try_get("version")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
+        status: ProviderStatus::parse(&status_raw).unwrap_or(ProviderStatus::Reachable),
+        node_id: row.try_get("node_id")?,
+        model_install_id: row.try_get("model_install_id")?,
+        last_probed_at: row.try_get("last_probed_at")?,
     })
 }
 
@@ -134,6 +140,53 @@ pub async fn insert_pending_for_install(
         .fetch_one(scope.connection())
         .await?;
     row_to_profile(&row)
+}
+
+/// Record what the last probe found.
+///
+/// The status is the only field a probe changes, and it changes it for every
+/// caller: the inference environment filters on it, so a stale status is a
+/// sandbox pointed at an endpoint that no longer answers.
+pub async fn set_status(
+    scope: &mut TenantScope<'_>,
+    id: Uuid,
+    status: ProviderStatus,
+) -> Result<(), StoreError> {
+    let affected = sqlx::query(
+        "UPDATE provider_profiles
+            SET status = $3, last_probed_at = now(), updated_at = now()
+          WHERE environment_id = $1 AND id = $2",
+    )
+    .bind(scope.environment_id())
+    .bind(id)
+    .bind(status.as_str())
+    .execute(scope.connection())
+    .await?
+    .rows_affected();
+    if affected == 0 {
+        return Err(StoreError::NotFound);
+    }
+    Ok(())
+}
+
+/// Names of the sandboxes that select this profile.
+///
+/// A profile a sandbox still points at is not deleted quietly: the sandbox
+/// would start with an environment that names an endpoint nobody maintains.
+pub async fn sandboxes_using(
+    scope: &mut TenantScope<'_>,
+    profile_id: Uuid,
+) -> Result<Vec<String>, StoreError> {
+    let rows = sqlx::query(
+        "SELECT name FROM sandboxes
+          WHERE environment_id = $1 AND provider_profile_id = $2 AND status <> 'deleted'
+          ORDER BY name",
+    )
+    .bind(scope.environment_id())
+    .bind(profile_id)
+    .fetch_all(scope.connection())
+    .await?;
+    rows.iter().map(|row| Ok(row.try_get("name")?)).collect()
 }
 
 /// Delete a provider profile.

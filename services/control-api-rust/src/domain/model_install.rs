@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use super::model::Model;
+use super::model::{human_gib, Model, ModelState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -50,6 +50,21 @@ impl InstallState {
     /// job finishes, because the server may still be running.
     pub fn reserves(self) -> bool {
         !matches!(self, Self::Failed)
+    }
+
+    /// The catalog-facing state of this install.
+    ///
+    /// The catalog still reports one state per model; when a node is named, the
+    /// service substitutes the install's state for that node so "already
+    /// installed" and "update available" are answered from `model_installs`.
+    pub fn model_state(self) -> ModelState {
+        match self {
+            Self::Installing => ModelState::Installing,
+            Self::Installed => ModelState::Installed,
+            Self::Updating => ModelState::Updating,
+            Self::Uninstalling => ModelState::Uninstalling,
+            Self::Failed => ModelState::Failed,
+        }
     }
 }
 
@@ -91,6 +106,214 @@ pub fn reservation_for(model: &Model, cpu_path: bool) -> (i64, i64) {
         // A GPU server still needs host RAM to stage the weights; the catalog's
         // RAM figure covers that where present.
         (ram, vram)
+    }
+}
+
+/// One install's share of a node, for the sentence that explains a refusal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReservationHolder {
+    pub model_key: String,
+    pub ram_bytes: i64,
+    pub vram_bytes: i64,
+}
+
+impl ReservationHolder {
+    /// The holding of one install, or nothing when it reserves no memory.
+    ///
+    /// A failed install reserves nothing, and an install whose catalog row has
+    /// no numbers holds zero; neither belongs in a reason string.
+    pub fn of(install: &ModelInstall) -> Option<Self> {
+        if !install.state.reserves() {
+            return None;
+        }
+        let ram = install.reserved_ram_bytes.max(0);
+        let vram = install.reserved_vram_bytes.max(0);
+        if ram == 0 && vram == 0 {
+            return None;
+        }
+        Some(Self {
+            model_key: install.model_key.clone(),
+            ram_bytes: ram,
+            vram_bytes: vram,
+        })
+    }
+}
+
+/// What a node has left after its installs reserved their share.
+///
+/// This is the arithmetic the fit runs against (ADR 0018): the totals come from
+/// the latest measurement, the reservations from the installs on that node, and
+/// the difference is what a new model may use. `free` never goes below zero, so
+/// an over-subscribed node reads as "0 GiB free" rather than a negative number.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FreeBudget {
+    pub ram_total_bytes: i64,
+    pub ram_reserved_bytes: i64,
+    pub ram_free_bytes: i64,
+    pub vram_total_bytes: i64,
+    pub vram_reserved_bytes: i64,
+    pub vram_free_bytes: i64,
+    /// The installs that hold the reserved memory, by model key.
+    pub holders: Vec<ReservationHolder>,
+}
+
+impl FreeBudget {
+    /// Build the budget from explicit holdings; used by the service and tests.
+    pub fn new(
+        ram_total_bytes: i64,
+        vram_total_bytes: i64,
+        holders: Vec<ReservationHolder>,
+    ) -> Self {
+        let ram_reserved_bytes = holders.iter().map(|h| h.ram_bytes).sum::<i64>().max(0);
+        let vram_reserved_bytes = holders.iter().map(|h| h.vram_bytes).sum::<i64>().max(0);
+        Self {
+            ram_total_bytes: ram_total_bytes.max(0),
+            ram_free_bytes: (ram_total_bytes.max(0) - ram_reserved_bytes).max(0),
+            ram_reserved_bytes,
+            vram_total_bytes: vram_total_bytes.max(0),
+            vram_free_bytes: (vram_total_bytes.max(0) - vram_reserved_bytes).max(0),
+            vram_reserved_bytes,
+            holders,
+        }
+    }
+
+    /// Build the budget from the installs on one node.
+    ///
+    /// Failed installs are left out here rather than at the call site, because
+    /// "a failed install holds nothing" is a rule, not a caller's choice.
+    pub fn from_installs(
+        ram_total_bytes: i64,
+        vram_total_bytes: i64,
+        installs: &[ModelInstall],
+    ) -> Self {
+        let holders = installs
+            .iter()
+            .filter_map(ReservationHolder::of)
+            .collect();
+        Self::new(ram_total_bytes, vram_total_bytes, holders)
+    }
+
+    /// Whether a new reservation fits what is left.
+    ///
+    /// The reason names the installs that hold the memory, because "does not
+    /// fit" without "these are holding it" leaves the operator guessing.
+    pub fn check(&self, ram_bytes: i64, vram_bytes: i64) -> Result<(), InsufficientFit> {
+        if ram_bytes > self.ram_free_bytes {
+            return Err(InsufficientFit::Ram {
+                requested: ram_bytes,
+                free: self.ram_free_bytes,
+                total: self.ram_total_bytes,
+                reserved: self.ram_reserved_bytes,
+                reserved_by: self.ram_holders(),
+            });
+        }
+        if vram_bytes > self.vram_free_bytes {
+            return Err(InsufficientFit::Vram {
+                requested: vram_bytes,
+                free: self.vram_free_bytes,
+                total: self.vram_total_bytes,
+                reserved: self.vram_reserved_bytes,
+                reserved_by: self.vram_holders(),
+            });
+        }
+        Ok(())
+    }
+
+    /// The installs that hold RAM, as one readable clause.
+    pub fn ram_holders(&self) -> String {
+        holder_names(&self.holders, true)
+    }
+
+    /// The installs that hold VRAM, as one readable clause.
+    pub fn vram_holders(&self) -> String {
+        holder_names(&self.holders, false)
+    }
+}
+
+fn holder_names(holders: &[ReservationHolder], ram: bool) -> String {
+    let names: Vec<&str> = holders
+        .iter()
+        .filter(|holder| (if ram { holder.ram_bytes } else { holder.vram_bytes }) > 0)
+        .map(|holder| holder.model_key.as_str())
+        .collect();
+    if names.is_empty() {
+        "an install that is no longer recorded".to_string()
+    } else {
+        names.join(", ")
+    }
+}
+
+/// Why an install's reservation does not fit a node.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InsufficientFit {
+    Ram {
+        requested: i64,
+        free: i64,
+        total: i64,
+        reserved: i64,
+        reserved_by: String,
+    },
+    Vram {
+        requested: i64,
+        free: i64,
+        total: i64,
+        reserved: i64,
+        reserved_by: String,
+    },
+}
+
+impl InsufficientFit {
+    /// A sentence for `node.insufficient_resources`, with the numbers that
+    /// produced it.
+    pub fn message(&self) -> String {
+        match self {
+            Self::Ram {
+                requested,
+                free,
+                total,
+                reserved,
+                reserved_by,
+            } => shortage("RAM", *requested, *free, *total, *reserved, reserved_by),
+            Self::Vram {
+                requested,
+                free,
+                total,
+                reserved,
+                reserved_by,
+            } => shortage(
+                "GPU memory",
+                *requested,
+                *free,
+                *total,
+                *reserved,
+                reserved_by,
+            ),
+        }
+    }
+}
+
+fn shortage(
+    resource: &str,
+    requested: i64,
+    free: i64,
+    total: i64,
+    reserved: i64,
+    reserved_by: &str,
+) -> String {
+    if reserved > 0 {
+        format!(
+            "{} of {} of {resource} are reserved by {reserved_by}; the install needs {} and only {} are free.",
+            human_gib(reserved),
+            human_gib(total),
+            human_gib(requested),
+            human_gib(free)
+        )
+    } else {
+        format!(
+            "The node has {} of {resource} free; the install needs {}.",
+            human_gib(free),
+            human_gib(requested)
+        )
     }
 }
 
@@ -153,5 +376,94 @@ mod tests {
     fn a_failed_install_holds_nothing() {
         assert!(!InstallState::Failed.reserves());
         assert!(InstallState::Uninstalling.reserves());
+    }
+
+    fn install(key: &str, state: InstallState, ram: i64, vram: i64) -> ModelInstall {
+        ModelInstall {
+            id: Uuid::nil(),
+            environment_id: Uuid::nil(),
+            model_key: key.into(),
+            node_id: Uuid::nil(),
+            state,
+            installed_version: None,
+            reserved_ram_bytes: ram,
+            reserved_vram_bytes: vram,
+            provider_profile_id: None,
+            job_id: None,
+            error: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn the_free_budget_is_the_total_minus_the_reservations() {
+        let installs = [install("qwen3-1.7b", InstallState::Installed, 5 * GIB, 0)];
+        let budget = FreeBudget::from_installs(16 * GIB, 0, &installs);
+        assert_eq!(budget.ram_reserved_bytes, 5 * GIB);
+        assert_eq!(budget.ram_free_bytes, 11 * GIB);
+        assert!(budget.check(8 * GIB, 0).is_ok());
+        assert_eq!(budget.ram_holders(), "qwen3-1.7b");
+    }
+
+    #[test]
+    fn a_failed_install_is_not_subtracted() {
+        let installs = [
+            install("qwen3-1.7b", InstallState::Failed, 5 * GIB, 0),
+            install("gemma-4-12b", InstallState::Installed, 4 * GIB, 0),
+        ];
+        let budget = FreeBudget::from_installs(16 * GIB, 0, &installs);
+        assert_eq!(budget.ram_reserved_bytes, 4 * GIB);
+        assert_eq!(budget.ram_free_bytes, 12 * GIB);
+        assert_eq!(budget.ram_holders(), "gemma-4-12b");
+    }
+
+    #[test]
+    fn removing_an_install_gives_the_memory_back() {
+        let with_install = [install("qwen3-1.7b", InstallState::Installed, 5 * GIB, 0)];
+        let before = FreeBudget::from_installs(16 * GIB, 0, &with_install);
+        let after = FreeBudget::from_installs(16 * GIB, 0, &[]);
+        assert_eq!(before.ram_free_bytes, 11 * GIB);
+        assert_eq!(after.ram_free_bytes, 16 * GIB);
+        assert_eq!(after.ram_reserved_bytes, 0);
+    }
+
+    #[test]
+    fn free_never_goes_negative_when_reservations_exceed_the_measurement() {
+        let installs = [install("huge", InstallState::Installed, 20 * GIB, 0)];
+        let budget = FreeBudget::from_installs(16 * GIB, 0, &installs);
+        assert_eq!(budget.ram_reserved_bytes, 20 * GIB);
+        assert_eq!(budget.ram_free_bytes, 0);
+    }
+
+    #[test]
+    fn a_reservation_beyond_the_free_budget_names_the_install_that_holds_it() {
+        let installs = [install("qwen3-1.7b", InstallState::Installed, 10 * GIB, 0)];
+        let budget = FreeBudget::from_installs(16 * GIB, 0, &installs);
+        let error = budget
+            .check(8 * GIB, 0)
+            .expect_err("8 GiB cannot fit 6 GiB free");
+        assert_eq!(
+            error,
+            InsufficientFit::Ram {
+                requested: 8 * GIB,
+                free: 6 * GIB,
+                total: 16 * GIB,
+                reserved: 10 * GIB,
+                reserved_by: "qwen3-1.7b".into(),
+            }
+        );
+        let message = error.message();
+        assert!(message.contains("10 GiB of 16 GiB of RAM are reserved by qwen3-1.7b"));
+        assert!(message.contains("only 6.0 GiB are free"));
+    }
+
+    #[test]
+    fn an_install_maps_to_the_catalog_state_it_represents() {
+        assert_eq!(
+            InstallState::Installed.model_state(),
+            ModelState::Installed
+        );
+        assert_eq!(InstallState::Failed.model_state(), ModelState::Failed);
     }
 }

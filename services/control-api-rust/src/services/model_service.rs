@@ -6,15 +6,23 @@
 
 use std::process::Command;
 
+use uuid::Uuid;
+
 use super::{require, ServiceContext};
 use crate::domain::auth::{Permission, Principal};
 use crate::domain::job::JobKind;
 use crate::domain::model::{
-    classify, FitReport, GpuDevice, HardwareProfile, Model, ModelState,
+    classify, Fit, FitReport, GpuDevice, HardwareProfile, Model, ModelState,
 };
-use crate::error::{ApiError, ErrorCode};
+use crate::domain::model_install::{
+    reservation_for, FreeBudget, InstallState, ModelInstall,
+};
+use crate::domain::node::{Node, NodeBudget};
+use crate::error::{ApiError, ErrorCode, StoreError};
 use crate::store::TenantScope;
+use crate::store::postgres::model_installs as install_store;
 use crate::store::postgres::models as store;
+use crate::store::postgres::nodes;
 
 /// One catalog entry with its verdict.
 #[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
@@ -31,6 +39,8 @@ pub struct ModelView {
 /// by the verdict `classify` already produced.
 #[derive(Debug, Clone, Default)]
 pub struct CatalogQuery {
+    /// The node the verdict is for. `None` is the local node.
+    pub node: Option<String>,
     pub family: Option<String>,
     pub publisher: Option<String>,
     pub runtime: Option<String>,
@@ -53,33 +63,68 @@ impl CatalogQuery {
     }
 }
 
-/// The catalog, classified against this machine.
+/// The catalog for one node, with the budget the verdict ran against.
+#[derive(Debug, Clone)]
+pub struct CatalogView {
+    pub items: Vec<ModelView>,
+    pub hardware: HardwareProfile,
+    pub budget: NodeBudget,
+    pub node: Node,
+}
+
+/// The catalog, classified against what one node has left.
 pub async fn catalog(
     ctx: &ServiceContext,
     principal: &Principal,
     refresh_hardware: bool,
     query: &CatalogQuery,
-) -> Result<Vec<ModelView>, ApiError> {
+) -> Result<CatalogView, ApiError> {
     require(principal, Permission::ModelRead)?;
-
-    let hardware = detect_or_load(ctx, principal, refresh_hardware).await?;
 
     let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
         .await
         .map_err(ApiError::from)?;
-    let models = store::list_catalog(&mut scope, &query.store_filter())
+    let node = resolve_node(&mut scope, query.node.as_deref()).await?;
+    let measured =
+        load_hardware(&mut scope, principal.environment_id, refresh_hardware, &node).await?;
+    let installs = install_store::list(&mut scope, Some(node.id))
+        .await
+        .map_err(ApiError::from)?;
+    let mut models = store::list_catalog(&mut scope, &query.store_filter())
+        .await
+        .map_err(ApiError::from)?;
+    let sandbox_counts = nodes::sandbox_counts(&mut scope)
         .await
         .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
 
-    Ok(models
+    let hardware = usable_hardware(&measured, &node);
+    let free = free_budget(&hardware, &installs);
+    for model in &mut models {
+        apply_install_state(model, &installs);
+    }
+
+    let budget = budget_of(
+        &hardware,
+        &free,
+        &installs,
+        sandbox_counts.get(&node.id).copied().unwrap_or(0),
+    );
+    let items = models
         .into_iter()
         .map(|model| ModelView {
-            fit: classify(&model, &hardware),
+            fit: classify(&model, &hardware, &free),
             model,
         })
         .filter(|view| query.fits.is_none_or(|wanted| view.fit.fit.fits() == wanted))
-        .collect())
+        .collect();
+
+    Ok(CatalogView {
+        items,
+        hardware,
+        budget,
+        node,
+    })
 }
 
 /// One model with its verdict, for the detail view.
@@ -89,15 +134,19 @@ pub async fn requirements(
     key: &str,
 ) -> Result<ModelView, ApiError> {
     require(principal, Permission::ModelRead)?;
-    let hardware = detect_or_load(ctx, principal, false).await?;
 
     let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
         .await
         .map_err(ApiError::from)?;
-    let model = store::get_by_key(&mut scope, key)
+    let node = resolve_node(&mut scope, None).await?;
+    let measured = load_hardware(&mut scope, principal.environment_id, false, &node).await?;
+    let installs = install_store::list(&mut scope, Some(node.id))
+        .await
+        .map_err(ApiError::from)?;
+    let mut model = store::get_by_key(&mut scope, key)
         .await
         .map_err(|error| match error {
-            crate::error::StoreError::NotFound => ApiError::not_found(
+            StoreError::NotFound => ApiError::not_found(
                 ErrorCode::MODEL_NOT_FOUND,
                 format!("No model with key '{key}'."),
             ),
@@ -105,8 +154,11 @@ pub async fn requirements(
         })?;
     scope.commit().await.map_err(ApiError::from)?;
 
+    let hardware = usable_hardware(&measured, &node);
+    let free = free_budget(&hardware, &installs);
+    apply_install_state(&mut model, &installs);
     Ok(ModelView {
-        fit: classify(&model, &hardware),
+        fit: classify(&model, &hardware, &free),
         model,
     })
 }
@@ -132,9 +184,13 @@ pub async fn facets(
     principal: &Principal,
 ) -> Result<Facets, ApiError> {
     require(principal, Permission::ModelRead)?;
-    let hardware = detect_or_load(ctx, principal, false).await?;
 
     let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let node = resolve_node(&mut scope, None).await?;
+    let measured = load_hardware(&mut scope, principal.environment_id, false, &node).await?;
+    let installs = install_store::list(&mut scope, Some(node.id))
         .await
         .map_err(ApiError::from)?;
     let stored = store::catalog_facets(&mut scope).await.map_err(ApiError::from)?;
@@ -143,6 +199,8 @@ pub async fn facets(
         .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
 
+    let hardware = usable_hardware(&measured, &node);
+    let free = free_budget(&hardware, &installs);
     let mut facets = Facets {
         total: stored.total,
         fits: 0,
@@ -153,8 +211,9 @@ pub async fn facets(
         cpu_only: stored.cpu_only,
         unified_only: stored.unified_only,
     };
-    for model in models {
-        let report = classify(&model, &hardware);
+    for mut model in models {
+        apply_install_state(&mut model, &installs);
+        let report = classify(&model, &hardware, &free);
         if report.fit.fits() {
             facets.fits += 1;
         }
@@ -166,18 +225,36 @@ pub async fn facets(
     Ok(facets)
 }
 
-/// Only the installed models.
+/// Only the models installed on the local node.
+///
+/// Install state lives in `model_installs` (ADR 0018), so this reads the
+/// catalog for names and numbers and the install rows for what is present.
 pub async fn installed(
     ctx: &ServiceContext,
     principal: &Principal,
 ) -> Result<Vec<Model>, ApiError> {
     require(principal, Permission::ModelRead)?;
+
     let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
         .await
         .map_err(ApiError::from)?;
-    let models = store::list_installed(&mut scope).await.map_err(ApiError::from)?;
+    let node = resolve_node(&mut scope, None).await?;
+    let installs = install_store::list(&mut scope, Some(node.id))
+        .await
+        .map_err(ApiError::from)?;
+    let models = store::list_catalog(&mut scope, &store::CatalogFilter::default())
+        .await
+        .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
-    Ok(models)
+
+    Ok(models
+        .into_iter()
+        .filter_map(|mut model| {
+            apply_install_state(&mut model, &installs);
+            matches!(model.state, ModelState::Installed | ModelState::Updating)
+                .then_some(model)
+        })
+        .collect())
 }
 
 /// The detected hardware, or a fresh probe.
@@ -185,148 +262,488 @@ pub async fn hardware(
     ctx: &ServiceContext,
     principal: &Principal,
     refresh: bool,
+    node_name: Option<&str>,
 ) -> Result<HardwareProfile, ApiError> {
     require(principal, Permission::ModelRead)?;
-    detect_or_load(ctx, principal, refresh).await
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let node = resolve_node(&mut scope, node_name).await?;
+    let profile = load_hardware(&mut scope, principal.environment_id, refresh, &node).await?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(profile)
 }
 
-/// Install a model as a job.
+/// One install as `GET /models/installs` returns it.
+#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
+pub struct InstallView {
+    pub id: Uuid,
+    pub model_key: String,
+    pub model_name: String,
+    pub node_id: Uuid,
+    pub node_name: String,
+    pub state: InstallState,
+    pub installed_version: Option<String>,
+    pub reserved_ram_bytes: i64,
+    pub reserved_vram_bytes: i64,
+    pub provider_profile_id: Option<Uuid>,
+    pub job_id: Option<Uuid>,
+    pub error: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Every install in the environment, optionally narrowed to one node.
+pub async fn installs(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    node_name: Option<&str>,
+) -> Result<Vec<InstallView>, ApiError> {
+    require(principal, Permission::ModelRead)?;
+
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let node_filter = match node_name {
+        Some(_) => Some(resolve_node(&mut scope, node_name).await?),
+        None => None,
+    };
+    let installs = install_store::list(&mut scope, node_filter.as_ref().map(|node| node.id))
+        .await
+        .map_err(ApiError::from)?;
+    let models = store::list_catalog(&mut scope, &store::CatalogFilter::default())
+        .await
+        .map_err(ApiError::from)?;
+    let nodes = nodes::list(&mut scope).await.map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+
+    let model_names: std::collections::HashMap<&str, &str> = models
+        .iter()
+        .map(|model| (model.key.as_str(), model.name.as_str()))
+        .collect();
+    let node_names: std::collections::HashMap<Uuid, &str> = nodes
+        .iter()
+        .map(|node| (node.id, node.name.as_str()))
+        .collect();
+
+    Ok(installs
+        .into_iter()
+        .map(|install| InstallView {
+            model_name: model_names
+                .get(install.model_key.as_str())
+                .map(|name| (*name).to_string())
+                .unwrap_or_else(|| install.model_key.clone()),
+            node_name: node_names
+                .get(&install.node_id)
+                .map(|name| (*name).to_string())
+                .unwrap_or_else(|| install.node_id.to_string()),
+            id: install.id,
+            model_key: install.model_key,
+            node_id: install.node_id,
+            state: install.state,
+            installed_version: install.installed_version,
+            reserved_ram_bytes: install.reserved_ram_bytes,
+            reserved_vram_bytes: install.reserved_vram_bytes,
+            provider_profile_id: install.provider_profile_id,
+            job_id: install.job_id,
+            error: install.error,
+            created_at: install.created_at,
+            updated_at: install.updated_at,
+        })
+        .collect())
+}
+
+/// Install a model on a node.
 ///
-/// Refused when the machine cannot run it: the whole point of the fit report is
-/// that the button is disabled with a reason, not that the install fails later.
+/// The install reserves memory on the node, creates the provider profile in
+/// state `pending`, and enqueues the job. It does **not** download weights or
+/// start a model server: that is phase 2, and the response says so.
+///
+/// Refused when the node's free budget cannot hold the reservation
+/// (`node.insufficient_resources`), when the model cannot run on the node at all
+/// (`model.not_installable`), or when it is already installed there
+/// (`model.already_installed`).
 pub async fn install(
     ctx: &ServiceContext,
     principal: &Principal,
     key: &str,
+    node_name: Option<&str>,
 ) -> Result<serde_json::Value, ApiError> {
     require(principal, Permission::ModelInstall)?;
-
-    let hardware = detect_or_load(ctx, principal, false).await?;
 
     let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
         .await
         .map_err(ApiError::from)?;
-
+    let node = resolve_node(&mut scope, node_name).await?;
     let model = store::get_by_key(&mut scope, key)
         .await
         .map_err(|error| match error {
-            crate::error::StoreError::NotFound => ApiError::not_found(
+            StoreError::NotFound => ApiError::not_found(
                 ErrorCode::MODEL_NOT_FOUND,
                 format!("No model with key '{key}'."),
             ),
             other => ApiError::from(other),
         })?;
 
-    let report = classify(&model, &hardware);
+    if let Some(existing) = install_store::get(&mut scope, key, node.id)
+        .await
+        .map_err(ApiError::from)?
+    {
+        if existing.state == InstallState::Failed {
+            // A failed attempt holds nothing; removing its row is what lets the
+            // operator try again without a second install record. Its profile
+            // goes too, unless a sandbox has selected it in the meantime.
+            if let Some(profile_id) = existing.provider_profile_id {
+                let sandboxes = install_store::sandboxes_using_profile(&mut scope, profile_id)
+                    .await
+                    .map_err(ApiError::from)?;
+                if !sandboxes.is_empty() {
+                    return Err(ApiError::conflict(
+                        ErrorCode::PROVIDER_IN_USE,
+                        format!(
+                            "The profile of the failed install is selected by sandbox {}; \
+                             remove it there before installing again.",
+                            sandboxes.join(", ")
+                        ),
+                    ));
+                }
+                super::provider_service::delete_for_install(&mut scope, profile_id)
+                    .await
+                    .map_err(ApiError::from)?;
+            }
+            install_store::delete(&mut scope, existing.id)
+                .await
+                .map_err(ApiError::from)?;
+        } else {
+            return Err(ApiError::conflict(
+                ErrorCode::MODEL_ALREADY_INSTALLED,
+                format!(
+                    "{} is already {} on node '{}'. Uninstall it first.",
+                    model.name,
+                    existing.state.as_str(),
+                    node.name
+                ),
+            ));
+        }
+    }
+
+    let measured = load_hardware(&mut scope, principal.environment_id, false, &node).await?;
+    let hardware = usable_hardware(&measured, &node);
+    let installs = install_store::list(&mut scope, Some(node.id))
+        .await
+        .map_err(ApiError::from)?;
+    let free = free_budget(&hardware, &installs);
+    let report = classify(&model, &hardware, &free);
+
     if !report.fit.allows_install() {
-        scope.commit().await.map_err(ApiError::from)?;
-        return Err(ApiError::conflict(
-            ErrorCode::MODEL_NOT_INSTALLABLE,
-            report.reason,
+        return Err(match report.fit {
+            Fit::InsufficientRam | Fit::InsufficientVram | Fit::NoGpu => ApiError::unprocessable(
+                ErrorCode::NODE_INSUFFICIENT_RESOURCES,
+                report.reason,
+            ),
+            _ => ApiError::conflict(ErrorCode::MODEL_NOT_INSTALLABLE, report.reason),
+        });
+    }
+
+    let (reserved_ram_bytes, reserved_vram_bytes) =
+        reservation_for(&model, report.cpu_path);
+    if let Err(short) = free.check(reserved_ram_bytes, reserved_vram_bytes) {
+        return Err(ApiError::unprocessable(
+            ErrorCode::NODE_INSUFFICIENT_RESOURCES,
+            short.message(),
         ));
     }
 
+    let install = install_store::insert(
+        &mut scope,
+        install_store::NewInstall {
+            model_key: &model.key,
+            node_id: node.id,
+            reserved_ram_bytes,
+            reserved_vram_bytes,
+            job_id: None,
+        },
+    )
+    .await
+    .map_err(ApiError::from)?;
+
+    let profile = super::provider_service::create_for_install(&mut scope, &install, &node)
+        .await
+        .map_err(ApiError::from)?;
+    install_store::set_provider(&mut scope, install.id, Some(profile.id))
+        .await
+        .map_err(ApiError::from)?;
+
     let job = crate::store::postgres::jobs::create(
         &mut scope,
-        if model.state == ModelState::Installed {
-            JobKind::ModelUpdate
-        } else {
-            JobKind::ModelInstall
-        },
+        JobKind::ModelInstall,
         &[model.id],
-        &serde_json::json!({ "model_key": model.key, "version": model.version }),
+        &serde_json::json!({
+            "model_key": model.key,
+            "version": model.version,
+            "node": node.name,
+            "reserved_ram_bytes": reserved_ram_bytes,
+            "reserved_vram_bytes": reserved_vram_bytes,
+        }),
         None,
         Some(principal.user_id),
     )
     .await
     .map_err(ApiError::from)?;
-
-    store::set_state(&mut scope, &model.key, ModelState::Installing, None)
+    install_store::set_job(&mut scope, install.id, job.id)
         .await
         .map_err(ApiError::from)?;
 
+    crate::store::postgres::audit::record(
+        &mut scope,
+        crate::store::postgres::audit::NewAuditEvent {
+            actor_id: Some(principal.user_id),
+            actor_label: &principal.display_name,
+            kind: "model.install",
+            subject_type: Some("model_install"),
+            subject_id: Some(install.id),
+            detail: &serde_json::json!({
+                "model_key": model.key,
+                "node": node.name,
+                "reserved_ram_bytes": reserved_ram_bytes,
+                "reserved_vram_bytes": reserved_vram_bytes,
+                "provider_profile_id": profile.id,
+                "job_id": job.id,
+            }),
+            request_id: None,
+        },
+    )
+    .await
+    .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
 
     Ok(serde_json::json!({
         "job_id": job.id,
+        "install_id": install.id,
         "model_key": model.key,
+        "node": node.name,
+        "state": InstallState::Installing.as_str(),
+        "reserved_ram_bytes": reserved_ram_bytes,
+        "reserved_vram_bytes": reserved_vram_bytes,
+        "provider_profile_id": profile.id,
         "fit": report.fit,
+        "note": "Memory is reserved and the provider profile is pending; weights are not \
+                 downloaded and no model server is started in this phase.",
     }))
 }
 
-/// Uninstall a model as a job.
+/// Remove a model from a node and release what it reserved.
+///
+/// A profile that a sandbox selects is not deleted silently: the uninstall is
+/// refused with `provider.in_use` and the sandbox names, because the workload
+/// would otherwise keep an endpoint that no longer resolves.
 pub async fn uninstall(
     ctx: &ServiceContext,
     principal: &Principal,
     key: &str,
+    node_name: Option<&str>,
 ) -> Result<serde_json::Value, ApiError> {
     require(principal, Permission::ModelInstall)?;
 
     let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
         .await
         .map_err(ApiError::from)?;
-    let model = store::get_by_key(&mut scope, key)
+    let node = resolve_node(&mut scope, node_name).await?;
+    let install = install_store::get(&mut scope, key, node.id)
         .await
-        .map_err(|error| match error {
-            crate::error::StoreError::NotFound => ApiError::not_found(
-                ErrorCode::MODEL_NOT_FOUND,
-                format!("No model with key '{key}'."),
-            ),
-            other => ApiError::from(other),
+        .map_err(ApiError::from)?
+        .ok_or_else(|| {
+            ApiError::not_found(
+                ErrorCode::MODEL_INSTALL_NOT_FOUND,
+                format!("'{key}' is not installed on node '{}'.", node.name),
+            )
         })?;
 
-    let job = crate::store::postgres::jobs::create(
+    if let Some(profile_id) = install.provider_profile_id {
+        let sandboxes = install_store::sandboxes_using_profile(&mut scope, profile_id)
+            .await
+            .map_err(ApiError::from)?;
+        if !sandboxes.is_empty() {
+            return Err(ApiError::conflict(
+                ErrorCode::PROVIDER_IN_USE,
+                format!(
+                    "The provider profile of '{}' is selected by sandbox {}; remove it there first.",
+                    install.model_key,
+                    sandboxes.join(", ")
+                ),
+            ));
+        }
+        super::provider_service::delete_for_install(&mut scope, profile_id)
+            .await
+            .map_err(ApiError::from)?;
+    }
+
+    install_store::delete(&mut scope, install.id)
+        .await
+        .map_err(ApiError::from)?;
+    crate::store::postgres::audit::record(
         &mut scope,
-        JobKind::ModelUninstall,
-        &[model.id],
-        &serde_json::json!({ "model_key": model.key }),
-        None,
-        Some(principal.user_id),
+        crate::store::postgres::audit::NewAuditEvent {
+            actor_id: Some(principal.user_id),
+            actor_label: &principal.display_name,
+            kind: "model.uninstall",
+            subject_type: Some("model_install"),
+            subject_id: Some(install.id),
+            detail: &serde_json::json!({
+                "model_key": install.model_key,
+                "node": node.name,
+                "released_ram_bytes": install.reserved_ram_bytes,
+                "released_vram_bytes": install.reserved_vram_bytes,
+            }),
+            request_id: None,
+        },
     )
     .await
     .map_err(ApiError::from)?;
-
-    store::set_state(&mut scope, &model.key, ModelState::Uninstalling, None)
-        .await
-        .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
 
-    Ok(serde_json::json!({ "job_id": job.id, "model_key": model.key }))
+    Ok(serde_json::json!({
+        "model_key": install.model_key,
+        "node": node.name,
+        "released_ram_bytes": install.reserved_ram_bytes,
+        "released_vram_bytes": install.reserved_vram_bytes,
+    }))
 }
 
-/// Load the latest detection, or probe the machine if there is none or a refresh
-/// was requested.
-async fn detect_or_load(
-    ctx: &ServiceContext,
-    principal: &Principal,
+/// The node a request names, or the local node when it names none.
+async fn resolve_node(
+    scope: &mut TenantScope<'_>,
+    name: Option<&str>,
+) -> Result<Node, ApiError> {
+    match name {
+        None => nodes::local(scope).await.map_err(ApiError::from),
+        Some(name) => nodes::get_by_name(scope, name).await.map_err(|error| match error {
+            StoreError::NotFound => ApiError::not_found(
+                ErrorCode::NODE_NOT_FOUND,
+                format!("No node named '{name}'."),
+            ),
+            other => ApiError::from(other),
+        }),
+    }
+}
+
+/// The last measurement of a node, or a fresh probe of the local node.
+///
+/// A remote node is not probed from the control plane: that would describe this
+/// container, not the machine. Until its runner reports (package 2 of the node
+/// plan), an unmeasured node gets zeroes and a note, never a guessed number.
+async fn load_hardware(
+    scope: &mut TenantScope<'_>,
+    environment_id: Uuid,
     refresh: bool,
+    node: &Node,
 ) -> Result<HardwareProfile, ApiError> {
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
-        .await
-        .map_err(ApiError::from)?;
-
-    // Phase 1: the local node. Package 2 of the node plan routes this through
-    // the node's runner and takes the node as a parameter.
-    let node = crate::store::postgres::nodes::local(&mut scope)
-        .await
-        .map_err(ApiError::from)?;
-
     if !refresh {
-        if let Some(profile) = store::latest_hardware(&mut scope, node.id)
+        if let Some(profile) = store::latest_hardware(scope, node.id)
             .await
             .map_err(ApiError::from)?
         {
-            scope.commit().await.map_err(ApiError::from)?;
             return Ok(profile);
         }
     }
 
-    let profile = probe_hardware(principal.environment_id, node.id);
-    store::insert_hardware(&mut scope, &profile)
+    if !node.is_local {
+        return Ok(unmeasured_hardware(environment_id, node.id));
+    }
+
+    let profile = probe_hardware(environment_id, node.id);
+    store::insert_hardware(scope, &profile)
         .await
         .map_err(ApiError::from)?;
-    scope.commit().await.map_err(ApiError::from)?;
     Ok(profile)
+}
+
+/// A profile for a node that has not reported: zeroes and the reason.
+fn unmeasured_hardware(environment_id: Uuid, node_id: Uuid) -> HardwareProfile {
+    HardwareProfile {
+        id: Uuid::new_v4(),
+        environment_id,
+        node_id,
+        detected_at: chrono::Utc::now(),
+        hostname: None,
+        gpus: Vec::new(),
+        total_vram_bytes: 0,
+        unified_memory_bytes: None,
+        unified_memory_source: None,
+        cuda_version: None,
+        driver_version: None,
+        detection_note: Some(
+            "This node has not been probed, so its capacity is unknown. No install can be \
+             judged against it until its runner reports its hardware."
+                .to_string(),
+        ),
+        cpu_model: None,
+        cpu_cores: None,
+        cpu_threads: None,
+        system_ram_bytes: None,
+    }
+}
+
+/// The measured hardware as a model may use it on this node.
+///
+/// A node whose runner reports no NVIDIA container runtime cannot give a
+/// container a GPU, so its GPU fields are cleared: every GPU model is `no_gpu`
+/// there whatever the host sees (ADR 0018).
+fn usable_hardware(profile: &HardwareProfile, node: &Node) -> HardwareProfile {
+    if node.container_gpu {
+        return profile.clone();
+    }
+
+    let mut usable = profile.clone();
+    usable.gpus.clear();
+    usable.total_vram_bytes = 0;
+    usable.unified_memory_bytes = None;
+    usable.unified_memory_source = None;
+    let runtime_note = "This node's runner reports no NVIDIA container runtime, so GPU models \
+                        are no_gpu here.";
+    usable.detection_note = Some(match profile.detection_note.as_deref() {
+        Some(note) => format!("{note} {runtime_note}"),
+        None => runtime_note.to_string(),
+    });
+    usable
+}
+
+/// What this node has left, given its installs.
+fn free_budget(hardware: &HardwareProfile, installs: &[ModelInstall]) -> FreeBudget {
+    FreeBudget::from_installs(
+        hardware.addressable_ram_bytes(),
+        hardware.addressable_memory_bytes(),
+        installs,
+    )
+}
+
+/// The budget the console shows next to the catalog.
+fn budget_of(
+    hardware: &HardwareProfile,
+    free: &FreeBudget,
+    installs: &[ModelInstall],
+    sandboxes: i64,
+) -> NodeBudget {
+    NodeBudget {
+        ram_total_bytes: free.ram_total_bytes,
+        ram_reserved_bytes: free.ram_reserved_bytes,
+        ram_free_bytes: free.ram_free_bytes,
+        vram_total_bytes: free.vram_total_bytes,
+        vram_reserved_bytes: free.vram_reserved_bytes,
+        vram_free_bytes: free.vram_free_bytes,
+        cpu_cores: hardware.cores(),
+        gpu_count: hardware.gpu_count(),
+        installs: installs.iter().filter(|i| i.state.reserves()).count() as i32,
+        sandboxes: sandboxes as i32,
+    }
+}
+
+/// Substitute the install state for one node into the catalog row.
+fn apply_install_state(model: &mut Model, installs: &[ModelInstall]) {
+    if let Some(install) = installs.iter().find(|install| install.model_key == model.key) {
+        model.state = install.state.model_state();
+        model.installed_version = install.installed_version.clone();
+    }
 }
 
 /// Ask the platform what it has.
@@ -747,5 +1164,71 @@ model name\t: NVIDIA GB10
         let pool = detect_unified_pool(Some("NVIDIA GB10"), &[], None);
         assert_eq!(pool.bytes, None);
         assert!(pool.source.expect("note").contains("unknown"));
+    }
+
+    fn node(container_gpu: bool) -> Node {
+        Node {
+            id: uuid::Uuid::nil(),
+            name: "local".into(),
+            display_name: "Local".into(),
+            kind: crate::domain::node::NodeKind::Local,
+            status: crate::domain::node::NodeStatus::Online,
+            is_local: true,
+            runner_url: String::new(),
+            container_gpu,
+            zone: String::new(),
+            region: String::new(),
+            description: None,
+            last_seen: None,
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    fn measured_gpu() -> HardwareProfile {
+        HardwareProfile {
+            id: uuid::Uuid::nil(),
+            environment_id: uuid::Uuid::nil(),
+            node_id: uuid::Uuid::nil(),
+            detected_at: chrono::Utc::now(),
+            hostname: Some("host".into()),
+            gpus: vec![GpuDevice {
+                index: 0,
+                name: "NVIDIA H100".into(),
+                memory_bytes: 80 * 1024 * 1024 * 1024,
+                free_bytes: None,
+            }],
+            total_vram_bytes: 80 * 1024 * 1024 * 1024,
+            unified_memory_bytes: None,
+            unified_memory_source: None,
+            cuda_version: None,
+            driver_version: None,
+            detection_note: None,
+            cpu_model: None,
+            cpu_cores: Some(8),
+            cpu_threads: None,
+            system_ram_bytes: Some(64 * 1024 * 1024 * 1024),
+        }
+    }
+
+    #[test]
+    fn a_node_without_container_gpu_offers_no_gpu_whatever_the_host_reports() {
+        // ADR 0018: the runner's `container_gpu` is the gate, not the host's
+        // `nvidia-smi`. Without an NVIDIA runtime in Docker, a GPU model is
+        // `no_gpu` even though the machine has a card.
+        let usable = usable_hardware(&measured_gpu(), &node(false));
+        assert!(!usable.has_gpu());
+        assert_eq!(usable.addressable_memory_bytes(), 0);
+        assert!(usable
+            .detection_note
+            .unwrap_or_default()
+            .contains("no NVIDIA container runtime"));
+    }
+
+    #[test]
+    fn a_node_with_container_gpu_keeps_what_was_measured() {
+        let measured = measured_gpu();
+        let usable = usable_hardware(&measured, &node(true));
+        assert_eq!(usable.gpus.len(), 1);
+        assert_eq!(usable.addressable_memory_bytes(), measured.addressable_memory_bytes());
     }
 }
