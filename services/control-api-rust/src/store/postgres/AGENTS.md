@@ -25,7 +25,7 @@ the codebase where SQL appears.
 | `sandboxes.rs` | Sandbox list, read, insert, status change, delete |
 | `auth.rs` | Users, sessions, API tokens, scopes |
 | `policies.rs` | Policy documents, versions, network rules, drafts |
-| `telemetry.rs` | Event insert, query, partition maintenance |
+| `telemetry.rs` | Event insert, query, batch insert, ingest's node lookup, MCP tool calls, partition maintenance |
 | `gateways.rs` | Gateways, supervisors, sync state |
 | `models.rs` | Model catalog, hardware profiles, inference rows, the catalog-sync upsert |
 | `model_installs.rs` | One model on one node: reservation, state, provider link, its job |
@@ -44,3 +44,17 @@ Add the statement to the file of its aggregate. Take `&mut TenantScope`. Name
 the columns. Map to a domain type. If the query needs a new index, add it in a
 migration in the same change, and say in the migration comment which query it
 serves.
+
+## Two rows that live with `telemetry.rs` for a reason
+
+- **The node lookup** (`node_identity`) reads `nodes`, whose aggregate file is
+  `nodes.rs`. It lives in `telemetry.rs` because it exists only for the ingest
+  path's authentication, and moving it would make the ingest dependency look like
+  a general one. `nodes` has no environment column and no policy; the query is
+  deliberately unscoped and takes the admin pool.
+- **The MCP tool-call insert** (`insert_tool_calls`) writes `mcp_tool_calls`,
+  whose aggregate file is `mcp.rs`. It lives here because it is the same wire
+  observation as the traffic row it hangs off — same event id, same tenant, same
+  transaction boundary — while `mcp.rs` owns the server catalogue and what
+  discovery found. If the two ever need one transaction, this is the place to
+  join them.

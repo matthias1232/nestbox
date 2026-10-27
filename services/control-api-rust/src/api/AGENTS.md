@@ -36,7 +36,7 @@ The architecture test enforces the last two.
 | `system.rs` | Health, readiness, runtime, OpenAPI, environments, audit |
 | `sandboxes.rs` | Sandbox list, detail, create, actions, logs, exec |
 | `policies.rs` | Policies, rules, drafts, traffic windows |
-| `telemetry.rs` | History, facets, ingest |
+| `telemetry.rs` | History, facets, ingest, and the node-token batch from an egress proxy |
 | `events.rs` | SSE streams |
 | `cluster.rs` | Gateways, supervisors |
 | `providers.rs` | Provider profiles, probe |

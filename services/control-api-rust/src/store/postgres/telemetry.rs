@@ -49,6 +49,275 @@ pub async fn insert(pool: &sqlx::PgPool, event: NewEvent<'_>) -> Result<Uuid, St
     Ok(id)
 }
 
+/// One event in a proxy batch, with the id the ingest path assigned.
+///
+/// The id is assigned before the insert, not by the database, because the same
+/// id keys the body row and the MCP call: an event and its body must not drift
+/// apart, and a retried batch must be recognisable.
+pub struct BatchEvent<'a> {
+    pub id: Uuid,
+    pub environment_id: Uuid,
+    pub sandbox_id: Option<Uuid>,
+    pub gateway_id: Option<Uuid>,
+    pub kind: EventKind,
+    pub source: Option<&'a str>,
+    pub ts: DateTime<Utc>,
+    pub detail: serde_json::Value,
+}
+
+/// Insert one batch of events in one transaction.
+///
+/// One transaction for two reasons: a batch is the unit the proxy retries, so a
+/// half-stored batch is worse than a rejected one; and the tenant scope is set
+/// once, which is what lets the insert satisfy row-level security on
+/// `telemetry_events` when the API connects as the application role.
+///
+/// A retried batch collides on `(id, ts)` and is skipped rather than duplicated.
+pub async fn insert_batch(
+    pool: &sqlx::PgPool,
+    environment_id: Uuid,
+    events: &[BatchEvent<'_>],
+) -> Result<u64, StoreError> {
+    if events.is_empty() {
+        return Ok(0);
+    }
+
+    let mut scope = TenantScope::begin(pool, environment_id).await?;
+    let mut written = 0u64;
+
+    for event in events {
+        let redacted = redaction::redact_json(&event.detail);
+        let result = sqlx::query(
+            "INSERT INTO telemetry_events
+                (id, environment_id, sandbox_id, gateway_id, kind, source, ts, detail)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (id, ts) DO NOTHING",
+        )
+        .bind(event.id)
+        .bind(scope.environment_id())
+        .bind(event.sandbox_id)
+        .bind(event.gateway_id)
+        .bind(event.kind.as_str())
+        .bind(event.source)
+        .bind(event.ts)
+        .bind(redacted)
+        .execute(scope.connection())
+        .await?;
+        written += result.rows_affected();
+    }
+
+    scope.commit().await?;
+    Ok(written)
+}
+
+/// The node a token belongs to.
+///
+/// `token_ref` is a locator (`file://…`), never a value: the token itself lives
+/// in a 0600 file on both sides (ADR 0005).
+pub struct NodeIdentity {
+    pub id: Uuid,
+    pub name: String,
+    pub token_ref: Option<String>,
+}
+
+/// Look a node up by name or id, for the ingest path.
+///
+/// `nodes` are global rows without an environment, so this query is not
+/// tenant-scoped. It runs on the admin pool for the same reason ingest does: a
+/// node reports for the environments whose sandboxes it runs.
+pub async fn node_identity(
+    pool: &sqlx::PgPool,
+    reference: &str,
+) -> Result<Option<NodeIdentity>, StoreError> {
+    let row = sqlx::query(
+        "SELECT id, name, node_token_ref
+           FROM nodes
+          WHERE name = $1 OR id::text = $1
+          LIMIT 1",
+    )
+    .bind(reference)
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    Ok(Some(NodeIdentity {
+        id: row.try_get("id")?,
+        name: row.try_get("name")?,
+        token_ref: row.try_get("node_token_ref")?,
+    }))
+}
+
+/// Whether an environment exists.
+///
+/// Checked before a batch is stored so a node cannot attach events to a tenant
+/// that does not exist; `environments` carries no row-level policy (the login
+/// path needs it before a scope exists), so this is a plain read.
+pub async fn environment_exists(
+    pool: &sqlx::PgPool,
+    environment_id: Uuid,
+) -> Result<bool, StoreError> {
+    let found: Option<Uuid> = sqlx::query_scalar("SELECT id FROM environments WHERE id = $1")
+        .bind(environment_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(found.is_some())
+}
+
+/// Which of these sandboxes belong to the environment.
+///
+/// The caller compares the answer with what the batch claimed. A node that names
+/// a sandbox in another tenant is not a parsing mistake to be tolerated: it is
+/// the one cross-tenant write this endpoint could perform.
+pub async fn sandboxes_in_environment(
+    scope: &mut TenantScope<'_>,
+    sandbox_ids: &[Uuid],
+) -> Result<Vec<Uuid>, StoreError> {
+    if sandbox_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows = sqlx::query(
+        "SELECT id
+           FROM sandboxes
+          WHERE environment_id = $1 AND id = ANY($2)",
+    )
+    .bind(scope.environment_id())
+    .bind(sandbox_ids)
+    .fetch_all(scope.connection())
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(row.try_get("id")?);
+    }
+    Ok(out)
+}
+
+/// The largest MCP result stored. Arguments are bounded by the request body cap
+/// (64 KiB); a result is what a server chose to send, so it needs its own cut.
+pub const MAX_RESULT_BYTES: usize = 16_384;
+
+/// One MCP call as the proxy saw it, ready to store.
+///
+/// The text fields are owned here because the ingest path builds these from a
+/// request that has already been decoded into memory; borrowing would tie the
+/// batch's lifetime to a struct that outlives it for no gain.
+#[derive(Clone)]
+pub struct NewToolCall {
+    pub id: Uuid,
+    pub sandbox_id: Option<Uuid>,
+    pub ts: DateTime<Utc>,
+    pub server_host: String,
+    pub server_key: Option<String>,
+    pub session_id: Option<String>,
+    pub method: String,
+    pub tool_name: Option<String>,
+    pub arguments: Option<serde_json::Value>,
+    pub result: Option<serde_json::Value>,
+    pub is_error: bool,
+    pub duration_ms: Option<i32>,
+    pub request_id: Option<String>,
+    pub event_id: Option<Uuid>,
+}
+
+/// Insert the MCP calls of one batch.
+///
+/// This lives here rather than in `mcp.rs` because it is the ingest path's
+/// write, on the same event id and tenant as the traffic row it came from; the
+/// registry aggregate owns the server catalogue, not the wire record. Redaction
+/// and the result cap are applied here, so an MCP payload cannot reach the
+/// database unredacted.
+pub async fn insert_tool_calls(
+    pool: &sqlx::PgPool,
+    environment_id: Uuid,
+    calls: &[NewToolCall],
+) -> Result<u64, StoreError> {
+    if calls.is_empty() {
+        return Ok(0);
+    }
+
+    let mut scope = TenantScope::begin(pool, environment_id).await?;
+    let mut written = 0u64;
+
+    for call in calls {
+        let arguments = call
+            .arguments
+            .as_ref()
+            .map(redaction::redact_json);
+        let result = call.result.as_ref().map(|value| {
+            let redacted = redaction::redact_json(value);
+            cap_result(redacted, MAX_RESULT_BYTES)
+        });
+        let inserted = sqlx::query(
+            "INSERT INTO mcp_tool_calls
+                (id, environment_id, sandbox_id, ts, server_host, server_key,
+                 session_id, method, tool_name, arguments, result, is_error,
+                 duration_ms, request_id, event_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+             ON CONFLICT (id, ts) DO NOTHING",
+        )
+        .bind(call.id)
+        .bind(scope.environment_id())
+        .bind(call.sandbox_id)
+        .bind(call.ts)
+        .bind(&call.server_host)
+        .bind(call.server_key.as_deref())
+        .bind(call.session_id.as_deref())
+        .bind(&call.method)
+        .bind(call.tool_name.as_deref())
+        .bind(arguments)
+        .bind(result)
+        .bind(call.is_error)
+        .bind(call.duration_ms)
+        .bind(call.request_id.as_deref())
+        .bind(call.event_id)
+        .execute(scope.connection())
+        .await?;
+        written += inserted.rows_affected();
+    }
+
+    scope.commit().await?;
+    Ok(written)
+}
+
+/// Replace a result that is too large with a labelled preview.
+///
+/// Cutting the JSON text would produce a document that no longer parses, so the
+/// value is replaced by an object that says what happened and carries a readable
+/// prefix. `truncated` is the field the console shows; a silent cut would look
+/// like a server that returned less.
+fn cap_result(value: serde_json::Value, max: usize) -> serde_json::Value {
+    let text = match serde_json::to_string(&value) {
+        Ok(text) => text,
+        // A value that cannot be serialised cannot be stored as JSON either.
+        Err(_) => return serde_json::json!({ "truncated": true, "bytes": 0 }),
+    };
+    if text.len() <= max {
+        return value;
+    }
+    serde_json::json!({
+        "truncated": true,
+        "bytes": text.len(),
+        "preview": preview(&text, max),
+    })
+}
+
+/// The longest prefix of `text` that ends on a character boundary below `max`.
+fn preview(text: &str, max: usize) -> &str {
+    if text.len() <= max {
+        return text;
+    }
+    let mut end = 0usize;
+    for (index, _) in text.char_indices() {
+        if index > max {
+            break;
+        }
+        end = index;
+    }
+    &text[..end]
+}
+
 /// A stored event, as returned by a query.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct StoredEvent {

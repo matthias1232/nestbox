@@ -44,7 +44,7 @@ reading both.
 | `provider_service.rs` | Provider profiles with their probe status, the pending profile an install creates, the in-use check on delete, and the reachable-only inference environment a sandbox receives |
 | `agent_service.rs` | Agents inside a sandbox: which packs may join, homes and their persistence, the supervisor command |
 | `policy_service.rs` | Validation, diff, scope rules, global override |
-| `telemetry_service.rs` | Ingest, live publish, history queries |
+| `telemetry_service.rs` | Ingest (one event, and the proxy's access-log batch with bodies and MCP calls), live publish, history queries |
 | `model_service.rs` | Hardware probing through a node's runner (CPU, RAM, GPU, unified pool), fit against a node's free budget, facets, catalog filters, installs and their reservations |
 | `node_service.rs` | The nodes list, one node with its budget, a node's sandboxes, name-or-id resolution, display rename |
 | `pack_service.rs` | Baselines, agent packs, and tool catalog as data; pack defaults by row, baseline compatibility, package-name resolution |
@@ -96,6 +96,29 @@ never a guess about a machine the control plane cannot see.
    receives; it does not rewire a running container.
 4. Archive, never delete, by default. Purging removes the record only: the
    directory lives on the node, which the control plane cannot reach.
+
+## The proxy's telemetry batch
+
+`telemetry_service::ingest_batch` is the one write path that takes a tenant from
+the request body instead of from a principal, because the caller is a node, not a
+user. That inversion is why the checks around it are explicit:
+
+1. **The node token is resolved, not compared to a constant.** The node row's
+   `node_token_ref` is a locator; `security::secrets::resolve` reads it and the
+   comparison is constant-time over SHA-256 hashes. No header, unknown node, no
+   locator, unreadable or permissive file, and a mismatch are all the same 401 —
+   a probe learns nothing from the difference.
+2. **The environment is validated, and every named sandbox must be in it.** A
+   batch that names another tenant's sandbox is refused whole; a partial write
+   would put one tenant's traffic in another tenant's timeline.
+3. **Limits are rules, not conventions.** 500 events per batch, 64 KiB per body
+   side (cut and flagged `truncated`), 4 MiB of body text per batch. An oversized
+   batch is refused before the first row.
+4. **Redaction is in the store.** Events, bodies, MCP arguments, and MCP results
+   all pass `security::redaction` on the way to the database, so a new caller
+   cannot store a body verbatim by forgetting a call.
+5. **Ids are derived from the request id.** A retried batch collides on
+   `(id, ts)` and is skipped, so a timeout does not double a timeline.
 
 ## The builder
 
