@@ -11,6 +11,7 @@
 
 use uuid::Uuid;
 
+use super::pack_service;
 use super::{require, ServiceContext};
 use crate::domain::auth::{Permission, Principal};
 use crate::domain::pagination::{ListParams, Page};
@@ -247,21 +248,6 @@ pub fn pack_needs_inference(pack_key: &str) -> bool {
     matches!(pack_key, "hermes")
 }
 
-/// The image and command a pack runs by default.
-///
-/// Kept as one function so a new pack is one match arm, and so the API and the
-/// console cannot disagree about what a pack name means. A pack that needs no
-/// explicit command returns an empty vector, which lets the image's own
-/// entrypoint decide.
-pub fn pack_defaults(pack_key: &str) -> (&'static str, Vec<&'static str>) {
-    match pack_key {
-        "hermes" => ("nestbox-hermes:local", vec!["sleep", "infinity"]),
-        "openclaw" => ("nestbox-openclaw:local", vec![]),
-        "git" => ("nestbox-tool-git:local", vec!["sleep", "infinity"]),
-        _ => ("nestbox-ubuntu-dev:local", vec!["sleep", "infinity"]),
-    }
-}
-
 /// Create a sandbox: validate, place, persist, then ask the runtime.
 ///
 /// Order matters. The row is written first so a failed runtime call leaves a
@@ -280,23 +266,27 @@ pub async fn create(
     let memory_limit = crate::domain::runtime::normalize_memory_limit(&request.memory_limit)
         .map_err(ApiError::validation)?;
 
-    let (default_image, default_command) = pack_defaults(&request.pack_key);
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+
+    // The image and command come from `agent_packs`, not from a `match`: an
+    // unknown pack is a 404 and a disabled or misspelled one cannot silently
+    // become the default shell (ADR 0020). A plain sandbox records no baseline,
+    // so compatibility is checked here only where one is known.
+    let defaults = pack_service::pack_defaults(&mut scope, &request.pack_key, None).await?;
     let image = if request.image.trim().is_empty() {
-        default_image.to_string()
+        defaults.image
     } else {
         request.image.clone()
     };
     let command: Vec<String> = if request.command.is_empty() {
-        default_command.iter().map(|part| part.to_string()).collect()
+        defaults.command
     } else {
         request.command.clone()
     };
 
     reject_unpinned_image(&image, request.image_digest.as_deref())?;
-
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
-        .await
-        .map_err(ApiError::from)?;
 
     let cluster_id = env_store::default_cluster(&mut scope)
         .await
@@ -754,15 +744,6 @@ mod tests {
         assert!(pack_needs_inference("hermes"));
         assert!(!pack_needs_inference("ubuntu-dev"));
         assert!(!pack_needs_inference("openclaw"));
-    }
-
-    #[test]
-    fn every_pack_has_a_default_image_and_command() {
-        for pack in ["ubuntu-dev", "hermes", "openclaw", "git", "unknown"] {
-            let (image, command) = pack_defaults(pack);
-            assert!(!image.is_empty());
-            let _ = command;
-        }
     }
 
     #[test]

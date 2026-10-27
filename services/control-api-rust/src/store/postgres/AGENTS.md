@@ -31,6 +31,7 @@ the codebase where SQL appears.
 | `jobs.rs` | Jobs, targets, schedules |
 | `environments.rs` | Environments, clusters, nodes, overview counts |
 | `providers.rs` | Provider profiles, secret references |
+| `agent_packs.rs` | Baselines, agent packs, and the tool catalog (global data, no tenant filter) |
 | `audit.rs` | Append-only audit writes |
 
 ## Extending this folder

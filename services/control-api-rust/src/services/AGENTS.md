@@ -45,6 +45,7 @@ reading both.
 | `policy_service.rs` | Validation, diff, scope rules, global override |
 | `telemetry_service.rs` | Ingest, live publish, history queries |
 | `model_service.rs` | Hardware detection (CPU, RAM, GPU, unified pool), fit, facets, catalog filters, install jobs |
+| `pack_service.rs` | Baselines, agent packs, and tool catalog as data; pack defaults by row, baseline compatibility, package-name resolution |
 | `gateway_service.rs` | Registry, settings, drift, sync |
 | `job_service.rs` | Job creation and progress |
 | `schedule_service.rs` | Schedule evaluation and runs |

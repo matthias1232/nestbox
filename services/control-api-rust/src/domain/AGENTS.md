@@ -50,7 +50,7 @@ microseconds is that it has none.
 | `model.rs` | Model, hardware profile, fit classification, resource bars |
 | `model_install.rs` | One model on one node; reservation rule |
 | `node.rs` | Node, kind, status, budget (total / reserved / free) |
-| `pack.rs` | Baseline, agent pack, tool, package-manager resolution |
+| `pack.rs` | Baseline, agent pack, pack defaults, tool and package-manager resolution |
 | `builder.rs` | Recipe, agent spec, home mode, persistence, resource limits |
 | `persist.rs` | Persistent root, mount, mount spec, path derivation |
 | `pagination.rs` | Cursor, filter, sort, facet types |
