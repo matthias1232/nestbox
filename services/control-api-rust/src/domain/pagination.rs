@@ -50,6 +50,15 @@ pub struct Facets {
 }
 
 impl Facets {
+    /// The sum of one field's counts: an exact row total when every row has a
+    /// value for that field, which `status` does.
+    pub fn total_of(&self, field: &str) -> i64 {
+        self.values
+            .get(field)
+            .map(|counts| counts.values().sum())
+            .unwrap_or(0)
+    }
+
     /// Record a count for a field value.
     pub fn add(&mut self, field: &str, value: &str, count: i64) {
         self.values

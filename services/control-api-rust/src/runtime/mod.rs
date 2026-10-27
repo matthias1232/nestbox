@@ -7,7 +7,7 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::domain::runtime::{RuntimeFacts, SandboxSpec};
+use crate::domain::runtime::{ExecResult, RuntimeFacts, SandboxSpec};
 
 /// Fehler aus der Ausführungsschicht.
 #[derive(Debug, Error)]
@@ -50,6 +50,17 @@ pub trait RuntimeAdapter: Send + Sync {
 
     /// Liest die letzten `tail` Logzeilen.
     async fn logs(&self, name: &str, tail: u32) -> Result<String, RuntimeError>;
+
+    /// Run one command inside a running sandbox and return its output.
+    ///
+    /// The command is an argument vector: the adapter never builds a shell
+    /// string, so a name or an argument from a request cannot become syntax.
+    async fn exec(
+        &self,
+        name: &str,
+        command: &[String],
+        timeout_seconds: u32,
+    ) -> Result<ExecResult, RuntimeError>;
 }
 
 pub mod fake;

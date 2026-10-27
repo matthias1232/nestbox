@@ -55,6 +55,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/sandboxes/{id}/actions", post(sandboxes::action))
         .route("/api/v1/sandboxes/{id}/logs", get(sandboxes::logs))
+        .route("/api/v1/sandboxes/{id}/exec", post(sandboxes::exec))
         .route("/api/v1/sandboxes/{id}/inference", get(telemetry::sandbox_inference))
         .route("/api/v1/sandboxes/{id}/rules", get(policies::sandbox_rules))
         // Policies

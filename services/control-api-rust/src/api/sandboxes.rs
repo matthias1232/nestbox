@@ -187,3 +187,33 @@ pub async fn logs(
         content,
     }))
 }
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct ExecRequest {
+    /// An argument vector, e.g. `["bash", "-lc", "hermes --version"]`.
+    pub command: Vec<String>,
+    #[serde(default = "default_exec_timeout")]
+    pub timeout_seconds: u32,
+}
+
+fn default_exec_timeout() -> u32 {
+    60
+}
+
+/// Run one command inside a running sandbox and return its output.
+pub async fn exec(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ExecRequest>,
+) -> Result<Json<crate::domain::runtime::ExecResult>, ApiError> {
+    let result = sandbox_service::exec(
+        &state.services,
+        &auth.principal,
+        id,
+        body.command,
+        body.timeout_seconds,
+    )
+    .await?;
+    Ok(Json(result))
+}

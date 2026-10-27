@@ -11,7 +11,7 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 
-use crate::domain::runtime::{RuntimeFacts, SandboxSpec};
+use crate::domain::runtime::{ExecResult, RuntimeFacts, SandboxSpec};
 use crate::runtime::{RuntimeAdapter, RuntimeError};
 
 /// Take a lock, recovering from poisoning.
@@ -140,6 +140,25 @@ impl RuntimeAdapter for FakeRuntime {
         if !guard.contains_key(name) {
             return Err(RuntimeError::NotFound(name.to_string()));
         }
-        Ok(format!("{name}: letzte {tail} Zeilen (Testausgabe)"))
+        Ok(format!("{name}: last {tail} lines (fake output)"))
+    }
+
+    async fn exec(
+        &self,
+        name: &str,
+        command: &[String],
+        _timeout_seconds: u32,
+    ) -> Result<ExecResult, RuntimeError> {
+        let guard = lock(&self.sandboxes);
+        if !guard.contains_key(name) {
+            return Err(RuntimeError::NotFound(name.to_string()));
+        }
+        // Echo the vector back joined by spaces so a test can assert that the
+        // argument boundaries survived the trip.
+        Ok(ExecResult {
+            exit_code: Some(0),
+            output: command.join(" "),
+            truncated: false,
+        })
     }
 }

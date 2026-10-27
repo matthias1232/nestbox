@@ -12,6 +12,7 @@ import * as api from '../../api/sandboxes.js';
 const TABS = [
   { id: 'overview', label: 'Overview' },
   { id: 'logs', label: 'Logs' },
+  { id: 'shell', label: 'Shell' },
   { id: 'rules', label: 'Rules' },
   { id: 'inference', label: 'Model requests' },
 ];
@@ -24,6 +25,27 @@ export default function SandboxDetail(props) {
   const [inference, setInference] = createSignal([]);
   const [error, setError] = createSignal(null);
   const [loading, setLoading] = createSignal(false);
+  const [commandLine, setCommandLine] = createSignal('');
+  const [shellHistory, setShellHistory] = createSignal([]);
+  const [running, setRunning] = createSignal(false);
+
+  async function runCommand(event) {
+    event.preventDefault();
+    const line = commandLine().trim();
+    const id = props.sandboxId;
+    if (!line || !id || running()) return;
+    setRunning(true);
+    setError(null);
+    try {
+      const result = await api.exec(id, ['bash', '-lc', line], 120);
+      setShellHistory([...shellHistory(), { line, ...result }]);
+      setCommandLine('');
+    } catch (failure) {
+      setShellHistory([...shellHistory(), { line, exit_code: null, output: failure.message, failed: true }]);
+    } finally {
+      setRunning(false);
+    }
+  }
 
   createEffect(() => {
     const id = props.sandboxId;
@@ -65,7 +87,10 @@ export default function SandboxDetail(props) {
     }
   }
 
-  const sandbox = () => detail()?.sandbox || null;
+  // The detail response flattens the stored row at the top level and nests the
+  // runtime facts under `runtime`, so the two can be told apart without a
+  // second request. `null` while loading keeps the fallbacks honest.
+  const sandbox = () => (detail() && detail().id ? detail() : null);
   const runtime = () => detail()?.runtime || null;
 
   return (
@@ -141,7 +166,56 @@ export default function SandboxDetail(props) {
       </Show>
 
       <Show when={tab() === 'logs'}>
-        <pre class="logs">{logs() || 'No log output.'}</pre>
+        <Show
+          when={logs()}
+          fallback={
+            <p class="muted small">
+              The container has written nothing to stdout or stderr yet. A pack
+              that only keeps the sandbox alive (`sleep infinity`) produces no
+              lines until a process inside it writes some.
+            </p>
+          }
+        >
+          <pre class="logs">{logs()}</pre>
+        </Show>
+        <div class="actions">
+          <button class="tiny" onClick={() => loadTab('logs')}>Reload</button>
+        </div>
+      </Show>
+
+      <Show when={tab() === 'shell'}>
+        <p class="muted small">
+          Each line runs as <code>bash -lc</code> inside the container and is
+          recorded in the audit trail. Output is capped; long-running work belongs
+          in a job.
+        </p>
+        <div class="shell-log">
+          <For each={shellHistory()}>
+            {(entry) => (
+              <div class={entry.failed || (entry.exit_code !== 0 && entry.exit_code !== null) ? 'shell-entry bad' : 'shell-entry'}>
+                <div class="shell-cmd mono">$ {entry.line}
+                  <span class="muted small"> · exit {entry.exit_code ?? '—'}{entry.truncated ? ' · truncated' : ''}</span>
+                </div>
+                <pre class="logs">{entry.output || '(no output)'}</pre>
+              </div>
+            )}
+          </For>
+        </div>
+        <form class="shell-form" onSubmit={runCommand}>
+          <input
+            class="mono"
+            value={commandLine()}
+            placeholder={sandbox()?.pack_key === 'hermes' ? 'hermes -z "Reply with exactly: OK"' : 'uname -a'}
+            onInput={(e) => setCommandLine(e.currentTarget.value)}
+            disabled={running() || sandbox()?.status !== 'running'}
+          />
+          <button type="submit" disabled={running() || sandbox()?.status !== 'running'}>
+            {running() ? 'Running…' : 'Run'}
+          </button>
+        </form>
+        <Show when={sandbox() && sandbox().status !== 'running'}>
+          <p class="muted small">The sandbox must be running to accept a command.</p>
+        </Show>
       </Show>
 
       <Show when={tab() === 'rules'}>

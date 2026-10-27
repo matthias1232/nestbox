@@ -178,3 +178,74 @@ def logs(name: str, tail: int = 200) -> dict[str, str | int]:
         return {"name": name, "tail": tail, "logs": container.logs(tail=tail, timestamps=True).decode(errors="replace")}
     except NotFound as exc:
         raise HTTPException(404, "sandbox not found") from exc
+
+
+class ExecRequest(BaseModel):
+    """One command to run inside a sandbox.
+
+    The command is an argument vector, never a shell string. A caller that
+    wants a shell asks for ``["bash", "-lc", "..."]`` explicitly, which is
+    visible in the audit record. The output is capped so a runaway command
+    cannot fill the API's memory with a single response.
+    """
+
+    command: list[str] = Field(min_length=1, max_length=64)
+    workdir: str | None = None
+    timeout_seconds: int = Field(default=60, ge=1, le=600)
+    max_output_bytes: int = Field(default=65536, ge=1024, le=1_048_576)
+
+
+@app.post("/v1/sandboxes/{name}/exec")
+def exec_in_sandbox(name: str, body: ExecRequest) -> dict[str, Any]:
+    """Run one command in a running sandbox and return its output.
+
+    Phase 1 is a request/response exec rather than an interactive PTY: it is
+    what the smoke test, the console's "run" box, and a scheduled health probe
+    need, and it keeps the transport to plain JSON. A streaming PTY is a
+    separate, later endpoint.
+    """
+    for part in body.command:
+        if "\x00" in part:
+            raise HTTPException(422, "command arguments must not contain NUL")
+    try:
+        container = client.containers.get(container_name(name))
+    except NotFound as exc:
+        raise HTTPException(404, "sandbox not found") from exc
+    if container.status != "running":
+        raise HTTPException(409, "sandbox is not running")
+
+    import threading
+
+    result: dict[str, Any] = {}
+
+    def run() -> None:
+        try:
+            exit_code, output = container.exec_run(
+                body.command,
+                workdir=body.workdir,
+                demux=False,
+                tty=False,
+                environment=None,
+            )
+            result["exit_code"] = exit_code
+            result["output"] = output or b""
+        except DockerException as exc:  # pragma: no cover - surfaced below
+            result["error"] = str(exc)
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(body.timeout_seconds)
+    if worker.is_alive():
+        raise HTTPException(504, f"command did not finish within {body.timeout_seconds}s")
+    if "error" in result:
+        raise HTTPException(400, f"exec failed: {result['error']}")
+
+    raw: bytes = result.get("output", b"")
+    truncated = len(raw) > body.max_output_bytes
+    text = raw[: body.max_output_bytes].decode(errors="replace")
+    return {
+        "name": name,
+        "exit_code": result.get("exit_code"),
+        "output": text,
+        "truncated": truncated,
+    }

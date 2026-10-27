@@ -28,4 +28,12 @@ on it.
 |---|---|
 | `useSandboxes.js` | Paging, filters, selection, actions; no JSX |
 | `SandboxListPage.jsx` | Table, facets, bulk bar |
-| `SandboxDetail.jsx` | Drawer with overview, logs, rules, inference |
+| `SandboxDetail.jsx` | Drawer with overview, logs, shell, rules, inference |
+
+## The shell tab
+
+A typed line runs as `bash -lc <line>` through `POST /sandboxes/{id}/exec`. It
+is request/response, not a PTY: the output comes back when the command ends,
+capped at 64 KiB, with the exit code. That is enough to ask Hermes a question
+or inspect a file, and it keeps every run in the audit trail as an argument
+vector. An interactive terminal is a later transport, not a change to this one.

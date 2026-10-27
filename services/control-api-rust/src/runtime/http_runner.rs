@@ -8,7 +8,9 @@ use async_trait::async_trait;
 use reqwest::StatusCode;
 use serde::Deserialize;
 
-use crate::domain::runtime::{NetworkInterface, RuntimeFacts, RuntimeResources, SandboxSpec};
+use crate::domain::runtime::{
+    ExecResult, NetworkInterface, RuntimeFacts, RuntimeResources, SandboxSpec,
+};
 use crate::runtime::{RuntimeAdapter, RuntimeError};
 
 /// Antwort des Runners für eine Sandbox.
@@ -210,6 +212,27 @@ impl RuntimeAdapter for HttpRunner {
             .await?;
         Ok(response.logs)
     }
+
+    async fn exec(
+        &self,
+        name: &str,
+        command: &[String],
+        timeout_seconds: u32,
+    ) -> Result<ExecResult, RuntimeError> {
+        let payload = serde_json::json!({
+            "command": command,
+            "timeout_seconds": timeout_seconds.clamp(1, 600),
+        });
+        let result: ExecResult = self
+            .send(
+                reqwest::Method::POST,
+                &format!("/v1/sandboxes/{name}/exec"),
+                Some(&payload),
+            )
+            .await?;
+        Ok(result)
+    }
+
 }
 
 impl HttpRunner {
@@ -223,4 +246,5 @@ impl HttpRunner {
             .await?;
         Ok(facts.into())
     }
+
 }

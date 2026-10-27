@@ -56,9 +56,9 @@ const SANDBOX_COLUMNS: &str = "
 
 /// List sandboxes with keyset paging and facets.
 ///
-/// The `total_estimate` uses the planner's row count estimate rather than
-/// `COUNT(*)`: an exact count over tens of thousands of rows on every page turns
-/// a fast request into a scan, and the console only needs "about N".
+/// The `total_estimate` is the sum of the status facet, which is one indexed
+/// `GROUP BY` per page rather than a separate `COUNT(*)`. The facet query is
+/// already paid for (ADR 0006), so the total comes free and is exact.
 pub async fn list(
     scope: &mut TenantScope<'_>,
     params: &ListParams,
@@ -184,8 +184,13 @@ pub async fn list(
         None
     };
 
-    let total_estimate = estimate_total(scope, environment_id).await?;
     let facets = facets(scope).await?;
+    // The status facet is already an exact per-tenant count (ADR 0006 asks for
+    // facets on every page), so the total is its sum. The planner estimate was
+    // table-wide, not per tenant, and reads zero until the first ANALYZE —
+    // which made a page of two rows report "0 total".
+    let total_estimate = facets.total_of("status");
+    let _ = environment_id;
 
     Ok(Page {
         items,
@@ -193,26 +198,6 @@ pub async fn list(
         total_estimate,
         facets,
     })
-}
-
-/// The planner's estimate for the table's rows for this tenant.
-async fn estimate_total(
-    scope: &mut TenantScope<'_>,
-    environment_id: Uuid,
-) -> Result<i64, StoreError> {
-    // The estimate comes from the table statistics. It is refreshed by autovacuum
-    // and by the maintenance job, and it is labelled approximate in the API.
-    let row = sqlx::query(
-        "SELECT COALESCE(
-                    (SELECT reltuples::bigint FROM pg_class WHERE relname = 'sandboxes'),
-                    0
-                ) AS estimate",
-    )
-    .fetch_one(scope.connection())
-    .await?;
-    let estimate: i64 = row.try_get("estimate")?;
-    let _ = environment_id;
-    Ok(estimate.max(0))
 }
 
 /// Status and pack counts for the filter sidebar, in one round trip each.

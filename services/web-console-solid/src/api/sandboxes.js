@@ -33,3 +33,13 @@ export function inference(id, limit = 50) {
 export function rules(id) {
   return request(`sandboxes/${id}/rules`);
 }
+
+// Run one command in a sandbox. `command` is an argument vector; the console
+// wraps a typed line in `bash -lc` so the operator can type what they would
+// type in a terminal, and the vector shape makes that choice explicit.
+export function exec(id, command, timeoutSeconds = 60) {
+  return request(`sandboxes/${id}/exec`, {
+    method: 'POST',
+    body: { command, timeout_seconds: timeoutSeconds },
+  });
+}

@@ -474,6 +474,75 @@ pub async fn logs(
         .map_err(|error| ApiError::internal("The runtime did not return logs.").with_internal(error.to_string()))
 }
 
+/// Run one command inside a sandbox.
+///
+/// Write permission, not read: a command changes the sandbox. Every run is an
+/// audit event that records the vector, so "who ran what" is answerable, and
+/// the output is not recorded, because it may contain a secret the sandbox
+/// legitimately holds.
+pub async fn exec(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    id: Uuid,
+    command: Vec<String>,
+    timeout_seconds: u32,
+) -> Result<crate::domain::runtime::ExecResult, ApiError> {
+    require(principal, Permission::SandboxWrite)?;
+
+    if command.is_empty() || command.len() > 64 {
+        return Err(ApiError::validation(
+            "A command is an argument vector of 1 to 64 parts.",
+        ));
+    }
+    if command.iter().any(|part| part.contains('\0')) {
+        return Err(ApiError::validation("Command arguments must not contain NUL."));
+    }
+
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let sandbox = store::get(&mut scope, id).await.map_err(ApiError::from)?;
+    if sandbox.status != SandboxStatus::Running {
+        scope.commit().await.map_err(ApiError::from)?;
+        return Err(ApiError::conflict(
+            ErrorCode::SANDBOX_INVALID_STATE,
+            format!("Cannot run a command in a sandbox that is '{}'.", sandbox.status.as_str()),
+        ));
+    }
+
+    crate::store::postgres::audit::record(
+        &mut scope,
+        crate::store::postgres::audit::NewAuditEvent {
+            actor_id: Some(principal.user_id),
+            actor_label: &principal.display_name,
+            kind: "sandbox.exec",
+            subject_type: Some("sandbox"),
+            subject_id: Some(sandbox.id),
+            detail: &serde_json::json!({ "name": sandbox.name, "command": command }),
+            request_id: None,
+        },
+    )
+    .await
+    .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+
+    ctx.runtime
+        .exec(&sandbox.name, &command, timeout_seconds.clamp(1, 600))
+        .await
+        .map_err(|error| match error {
+            crate::runtime::RuntimeError::NotFound(_) => ApiError::not_found(
+                ErrorCode::SANDBOX_NOT_FOUND,
+                "The runtime has no container for this sandbox.",
+            ),
+            crate::runtime::RuntimeError::Rejected(message) => ApiError::conflict(
+                ErrorCode::SANDBOX_INVALID_STATE,
+                message,
+            ),
+            other => ApiError::internal("The runtime could not run the command.")
+                .with_internal(other.to_string()),
+        })
+}
+
 /// Update a sandbox's status and publish the change.
 async fn set_status(
     ctx: &ServiceContext,

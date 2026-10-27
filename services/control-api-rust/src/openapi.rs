@@ -44,6 +44,7 @@ pub const OPERATIONS: &[Operation] = &[
     op("DELETE", "/api/v1/sandboxes/{id}", "Delete a sandbox and its container", "sandboxes", "operator", true, false),
     op("POST", "/api/v1/sandboxes/{id}/actions", "Start, stop, or restart a sandbox", "sandboxes", "operator", true, false),
     op("GET", "/api/v1/sandboxes/{id}/logs", "Recent log lines of a sandbox", "sandboxes", "viewer", false, false),
+    op("POST", "/api/v1/sandboxes/{id}/exec", "Run one command inside a sandbox", "sandboxes", "operator", true, false),
     op("GET", "/api/v1/sandboxes/{id}/inference", "Model requests made by a sandbox", "telemetry", "viewer", false, false),
     op("GET", "/api/v1/sandboxes/{id}/rules", "Network rules attached to a sandbox", "policies", "viewer", false, false),
     op("GET", "/api/v1/policies", "List policies and the global override", "policies", "viewer", false, false),

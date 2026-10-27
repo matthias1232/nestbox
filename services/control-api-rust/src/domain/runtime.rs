@@ -73,6 +73,18 @@ pub struct SandboxSpec {
     pub pids_limit: i64,
 }
 
+/// What a command run inside a sandbox produced.
+///
+/// `truncated` is a separate flag rather than a marker inside the text, so a
+/// caller can tell "the output ended" from "the output was cut" without parsing.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct ExecResult {
+    pub exit_code: Option<i64>,
+    pub output: String,
+    #[serde(default)]
+    pub truncated: bool,
+}
+
 /// Convert an operator-facing memory limit into the form Docker accepts.
 ///
 /// Operators write `2Gi` because that is what Kubernetes and every cloud console
