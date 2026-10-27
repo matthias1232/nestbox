@@ -45,7 +45,7 @@ reading both.
 | `agent_service.rs` | Agents inside a sandbox: which packs may join, homes and their persistence, the supervisor command |
 | `policy_service.rs` | Validation, diff, scope rules, global override |
 | `telemetry_service.rs` | Ingest, live publish, history queries |
-| `model_service.rs` | Hardware detection (CPU, RAM, GPU, unified pool), fit against a node's free budget, facets, catalog filters, installs and their reservations |
+| `model_service.rs` | Hardware probing through a node's runner (CPU, RAM, GPU, unified pool), fit against a node's free budget, facets, catalog filters, installs and their reservations |
 | `node_service.rs` | The nodes list, one node with its budget, a node's sandboxes, name-or-id resolution, display rename |
 | `pack_service.rs` | Baselines, agent packs, and tool catalog as data; pack defaults by row, baseline compatibility, package-name resolution |
 | `gateway_service.rs` | Registry, settings, drift, sync |
@@ -56,6 +56,31 @@ reading both.
 | `access_service.rs` | SSH key pair as a file with a locator, port pool, sessions (`feat/sandbox-access`) |
 | `mcp_service.rs` | Registry, attachments, discovery through the policy check (`feat/mcp-registry`) |
 | `persist_service.rs` | Persistent roots: derived host paths, mounts, the one-read-write rule, honest usage |
+
+## Probing a node
+
+The hardware probe runs on the node, through its runner: `ctx.runtime.hardware()`
+returns raw `/proc` and `nvidia-smi` text, and the parsers in `model_service.rs`
+turn it into a `HardwareProfile` for that node's id. Measuring from the control
+plane would describe the control plane's container and call it the machine.
+
+Three rules follow from that, and all are in `model_service.rs`:
+
+1. **A failed probe invents nothing.** No profile is written, the node is marked
+   offline (runner unreachable) or unknown (runner answered with an error), and
+   the previous measurement, if any, is returned unchanged. With no earlier
+   measurement the answer is `503 node.runtime_unavailable`.
+2. **A card is not capacity until a container can have it.** `container_gpu` is
+   measured by the runner, stored on the node, and `usable_hardware` clears the
+   GPU fields for the fit when it is false.
+3. **The runner call happens with no transaction open.** `resolve_node_for` and
+   `load_hardware` each open a short scope, so a runner that never answers cannot
+   hold a transaction for its timeout. The scope that reads installs and the
+   catalog begins afterwards.
+
+Phase 1 has one runtime adapter, so only the local node is measured this way. A
+remote node without an adapter gets `unmeasured_hardware` — zeroes and a note,
+never a guess about a machine the control plane cannot see.
 
 ## Persistence rules
 

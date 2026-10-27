@@ -40,8 +40,8 @@ The architecture test enforces the last two.
 | `events.rs` | SSE streams |
 | `cluster.rs` | Gateways, supervisors |
 | `providers.rs` | Provider profiles, probe |
-| `models.rs` | Catalog per node with filters, hardware, facets, requirements, installs with reservations, sync |
-| `nodes.rs` | Nodes with budget and sandbox count, one node, its sandboxes, display rename (probe: `feat/node-hardware-probe`) |
+| `models.rs` | Catalog per node with filters, per-node hardware, facets, requirements, installs with reservations, sync |
+| `nodes.rs` | Nodes with budget and sandbox count, one node, its sandboxes, display rename, probe through the runner |
 | `packs.rs` | Baselines, agent packs, and tool catalog as data, with `?baseline=` resolution |
 | `recipes.rs` | Recipe CRUD, build, instantiate (`feat/recipes-build`) |
 | `persistent_roots.rs` | Roots, mount, dismount, usage |
@@ -54,6 +54,11 @@ The architecture test enforces the last two.
 | `mcp.rs` | MCP registry and sandbox attachments (`feat/mcp-registry`) |
 | `sandboxes_terminal.rs` | The terminal WebSocket (`feat/terminal`) |
 | `topology.rs` | The cluster graph and its live edges (`feat/live-traffic`) |
+
+`models::hardware_json` is the one shape for a machine: the catalog envelope,
+`GET /models/hardware`, and `POST /nodes/{id}/probe` all use it, so it always
+names the node, its status, and whether containers there can have a GPU next to
+the measurement. A second shape would let those three drift apart.
 
 ## Work packages
 

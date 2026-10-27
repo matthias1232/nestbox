@@ -4,8 +4,9 @@
 //! arithmetic that turns a node into a budget lives in
 //! `services::node_service`.
 //!
-//! `probe` is still a stub: measuring a node's hardware belongs to the runner on
-//! that node, which is the `feat/node-hardware-probe` package.
+//! `probe` is the exception: measuring hardware is the model service's job,
+//! because the same measurement decides which models fit. It goes through the
+//! runner on that node, never through the control plane's own container.
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -17,6 +18,7 @@ use crate::api::principal::Auth;
 use crate::domain::pagination::Page;
 use crate::domain::sandbox::SandboxSummary;
 use crate::error::ApiError;
+use crate::services::model_service;
 use crate::services::node_service::{self, NodeView};
 use crate::state::AppState;
 
@@ -83,13 +85,16 @@ pub async fn update_display(
 
 /// Probe a node's hardware through its runner.
 ///
-/// Stub: the answer comes from the runner on the node, not from the control
-/// plane that happens to share a host with it. Implemented by
-/// `feat/node-hardware-probe`.
+/// The answer comes from the runner on the node, not from the control plane that
+/// may share a host with it, and needs `node.manage`: this reaches a machine.
 pub async fn probe(
-    State(_state): State<AppState>,
-    _auth: Auth,
-    Path(_id): Path<Uuid>,
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::not_implemented("POST /nodes/{id}/probe"))
+    let measured = model_service::probe_node(&state.services, &auth.principal, id).await?;
+    Ok(Json(crate::api::models::hardware_json(
+        &measured.profile,
+        &measured.node,
+    )))
 }
