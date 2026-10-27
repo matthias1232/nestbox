@@ -152,33 +152,9 @@ def inspect_sandbox(name: str) -> dict[str, Any]:
         raise HTTPException(404, "sandbox not found") from exc
 
 
-@app.post("/v1/sandboxes/{name}/{action}")
-def lifecycle(name: str, action: str) -> dict[str, Any]:
-    if action not in {"start", "stop", "restart", "remove"}:
-        raise HTTPException(422, "unsupported lifecycle action")
-    try:
-        container = client.containers.get(container_name(name))
-        if action == "remove":
-            container.remove(force=True)
-            return {"name": name, "status": "deleted"}
-        getattr(container, action)()
-        return details(container)
-    except NotFound as exc:
-        raise HTTPException(404, "sandbox not found") from exc
-    except DockerException as exc:
-        raise HTTPException(400, f"lifecycle action failed: {exc}") from exc
-
-
-@app.get("/v1/sandboxes/{name}/logs")
-def logs(name: str, tail: int = 200) -> dict[str, str | int]:
-    if not 1 <= tail <= 1000:
-        raise HTTPException(422, "tail must be between 1 and 1000")
-    try:
-        container = client.containers.get(container_name(name))
-        return {"name": name, "tail": tail, "logs": container.logs(tail=tail, timestamps=True).decode(errors="replace")}
-    except NotFound as exc:
-        raise HTTPException(404, "sandbox not found") from exc
-
+# Registered before the `/{name}/{action}` lifecycle route on purpose: FastAPI
+# matches routes in declaration order, and the catch-all would otherwise claim
+# `/exec` and answer "unsupported lifecycle action".
 
 class ExecRequest(BaseModel):
     """One command to run inside a sandbox.
@@ -249,3 +225,31 @@ def exec_in_sandbox(name: str, body: ExecRequest) -> dict[str, Any]:
         "output": text,
         "truncated": truncated,
     }
+
+
+@app.post("/v1/sandboxes/{name}/{action}")
+def lifecycle(name: str, action: str) -> dict[str, Any]:
+    if action not in {"start", "stop", "restart", "remove"}:
+        raise HTTPException(422, "unsupported lifecycle action")
+    try:
+        container = client.containers.get(container_name(name))
+        if action == "remove":
+            container.remove(force=True)
+            return {"name": name, "status": "deleted"}
+        getattr(container, action)()
+        return details(container)
+    except NotFound as exc:
+        raise HTTPException(404, "sandbox not found") from exc
+    except DockerException as exc:
+        raise HTTPException(400, f"lifecycle action failed: {exc}") from exc
+
+
+@app.get("/v1/sandboxes/{name}/logs")
+def logs(name: str, tail: int = 200) -> dict[str, str | int]:
+    if not 1 <= tail <= 1000:
+        raise HTTPException(422, "tail must be between 1 and 1000")
+    try:
+        container = client.containers.get(container_name(name))
+        return {"name": name, "tail": tail, "logs": container.logs(tail=tail, timestamps=True).decode(errors="replace")}
+    except NotFound as exc:
+        raise HTTPException(404, "sandbox not found") from exc
