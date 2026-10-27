@@ -1,53 +1,91 @@
 //! Nodes: the machines sandboxes and models run on.
 //!
-//! Handlers are filled by the `feat/nodes-api` package. The routes are
-//! registered here so the contract is fixed before the implementation lands.
+//! Every handler here reads a request, delegates, and formats the answer; the
+//! arithmetic that turns a node into a budget lives in
+//! `services::node_service`.
+//!
+//! `probe` is still a stub: measuring a node's hardware belongs to the runner on
+//! that node, which is the `feat/node-hardware-probe` package.
 
 use axum::Json;
 use axum::extract::{Path, State};
+use serde::Deserialize;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::api::principal::Auth;
+use crate::domain::pagination::Page;
+use crate::domain::sandbox::SandboxSummary;
 use crate::error::ApiError;
+use crate::services::node_service::{self, NodeView};
 use crate::state::AppState;
 
 /// Every node with its budget and sandbox count.
 pub async fn list(
-    State(_state): State<AppState>,
-    _auth: Auth,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::not_implemented("GET /nodes"))
+    State(state): State<AppState>,
+    auth: Auth,
+) -> Result<Json<Vec<NodeView>>, ApiError> {
+    let nodes = node_service::list(&state.services, &auth.principal).await?;
+    Ok(Json(nodes))
 }
 
 /// One node.
 pub async fn get(
-    State(_state): State<AppState>,
-    _auth: Auth,
-    Path(_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::not_implemented("GET /nodes/{id}"))
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<NodeView>, ApiError> {
+    let node = node_service::get(&state.services, &auth.principal, id).await?;
+    Ok(Json(node))
 }
 
 /// Sandboxes on a node.
+///
+/// The same page shape as `GET /sandboxes`, filtered to the node: the console
+/// links here from the node drawer and must not have to learn a second list.
 pub async fn sandboxes(
-    State(_state): State<AppState>,
-    _auth: Auth,
-    Path(_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::not_implemented("GET /nodes/{id}/sandboxes"))
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Page<SandboxSummary>>, ApiError> {
+    let page = node_service::sandboxes(&state.services, &auth.principal, id).await?;
+    Ok(Json(page))
+}
+
+/// The fields a caller may change on a node.
+///
+/// Deliberately only the display fields: `name` is the stable identifier in
+/// URLs, and status, kind, and `container_gpu` are measured by the runner.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateDisplayRequest {
+    pub display_name: String,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 /// Rename or describe a node.
 pub async fn update_display(
-    State(_state): State<AppState>,
-    _auth: Auth,
-    Path(_id): Path<Uuid>,
-    Json(_body): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::not_implemented("PUT /nodes/{id}/display"))
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<UpdateDisplayRequest>,
+) -> Result<Json<NodeView>, ApiError> {
+    let node = node_service::update_display(
+        &state.services,
+        &auth.principal,
+        id,
+        &body.display_name,
+        body.description.as_deref(),
+    )
+    .await?;
+    Ok(Json(node))
 }
 
 /// Probe a node's hardware through its runner.
+///
+/// Stub: the answer comes from the runner on the node, not from the control
+/// plane that happens to share a host with it. Implemented by
+/// `feat/node-hardware-probe`.
 pub async fn probe(
     State(_state): State<AppState>,
     _auth: Auth,

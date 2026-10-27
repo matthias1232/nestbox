@@ -45,9 +45,25 @@ reading both.
 | `policy_service.rs` | Validation, diff, scope rules, global override |
 | `telemetry_service.rs` | Ingest, live publish, history queries |
 | `model_service.rs` | Hardware detection (CPU, RAM, GPU, unified pool), fit against a node's free budget, facets, catalog filters, installs and their reservations |
+| `node_service.rs` | The nodes list, one node with its budget, a node's sandboxes, name-or-id resolution, display rename |
+| `pack_service.rs` | Baselines, agent packs, and tool catalog as data; pack defaults by row, baseline compatibility, package-name resolution |
 | `gateway_service.rs` | Registry, settings, drift, sync |
 | `job_service.rs` | Job creation and progress |
 | `schedule_service.rs` | Schedule evaluation and runs |
+| `persist_service.rs` | Persistent roots: derived host paths, mounts, the one-read-write rule, honest usage |
+
+## Persistence rules
+
+1. A mount source is never taken from a request. `persist_service` derives the
+   host path from a validated slug plus the caller's user id, and that derived
+   path is the only source the runtime ever receives.
+2. `sandbox_service::create` reads a sandbox's mounts from the database, inside
+   the transaction that inserted the sandbox row, and passes them to the runtime.
+3. A bind mount is fixed when the container is created. A mount or dismount
+   changes the row, and therefore what the *next* container for that sandbox
+   receives; it does not rewire a running container.
+4. Archive, never delete, by default. Purging removes the record only: the
+   directory lives on the node, which the control plane cannot reach.
 
 ## Extending this module
 

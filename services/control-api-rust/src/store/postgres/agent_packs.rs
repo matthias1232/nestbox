@@ -118,3 +118,78 @@ pub async fn tools_by_key(
         .await?;
     rows.iter().map(row_to_tool).collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    /// A pool from `TEST_DATABASE_URL`, with the migrations applied, or `None`
+    /// when no disposable database is configured.
+    async fn test_pool() -> Option<sqlx::PgPool> {
+        let url = std::env::var("TEST_DATABASE_URL").ok()?;
+        let pool = sqlx::PgPool::connect(&url).await.ok()?;
+        sqlx::migrate!("./migrations").run(&pool).await.ok()?;
+        Some(pool)
+    }
+
+    /// Every seeded pack must carry an image and a command.
+    ///
+    /// The sandbox service now takes both from these rows instead of a `match`
+    /// (ADR 0020), so a missing value stopped being invisible: an empty image
+    /// cannot be pulled, and an empty command silently runs whatever the
+    /// image's entrypoint does. A pack that is its own image
+    /// (`install_kind = image`) is the documented exception — its entrypoint
+    /// *is* the command, which is what the old `match` returned for openclaw.
+    ///
+    /// Runs against the real seed when `TEST_DATABASE_URL` is set and skips
+    /// otherwise, like the rest of the database checks.
+    #[tokio::test]
+    async fn every_seeded_pack_has_an_image_and_a_command() {
+        let Some(pool) = test_pool().await else {
+            eprintln!("skipping: TEST_DATABASE_URL is not set");
+            return;
+        };
+        let mut scope = TenantScope::begin(&pool, Uuid::nil())
+            .await
+            .expect("tenant scope");
+        let packs = list_packs(&mut scope).await.expect("packs");
+        scope.commit().await.expect("commit");
+
+        assert_eq!(packs.len(), 9, "the migration seeds nine packs");
+        for pack in &packs {
+            assert!(
+                !pack.default_image.trim().is_empty(),
+                "pack '{}' has no default image",
+                pack.key
+            );
+            if pack.install_kind == InstallKind::Image {
+                continue;
+            }
+            assert!(
+                !pack.default_command.is_empty(),
+                "pack '{}' has no default command",
+                pack.key
+            );
+        }
+    }
+
+    /// The compatibility field must be usable as written: every `base_os` entry
+    /// names a baseline, or the pack would be offered for an OS that does not
+    /// exist and filtered out for every real one.
+    #[tokio::test]
+    async fn every_pack_base_os_names_a_known_baseline() {
+        let Some(pool) = test_pool().await else {
+            eprintln!("skipping: TEST_DATABASE_URL is not set");
+            return;
+        };
+        let unknown: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM agent_packs p, unnest(p.base_os) AS os
+              WHERE NOT EXISTS (SELECT 1 FROM baselines b WHERE b.key = os)",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("query");
+        assert_eq!(unknown, 0, "a pack names a baseline that does not exist");
+    }
+}

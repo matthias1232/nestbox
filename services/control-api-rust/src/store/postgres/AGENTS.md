@@ -29,9 +29,11 @@ the codebase where SQL appears.
 | `gateways.rs` | Gateways, supervisors, sync state |
 | `models.rs` | Model catalog, hardware profiles, inference rows |
 | `model_installs.rs` | One model on one node: reservation, state, provider link, its job |
+| `nodes.rs` | Nodes, the local node, seed marks, display fields, sandbox counts per node |
 | `jobs.rs` | Jobs, targets, schedules |
 | `environments.rs` | Environments, clusters, nodes, overview counts |
 | `providers.rs` | Provider profiles, secret references |
+| `agent_packs.rs` | Baselines, agent packs, and the tool catalog (global data, no tenant filter) |
 | `audit.rs` | Append-only audit writes |
 
 ## Extending this folder

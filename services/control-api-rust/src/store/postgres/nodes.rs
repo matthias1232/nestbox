@@ -113,6 +113,22 @@ pub async fn update_display(
     row_to_node(&row)
 }
 
+/// How many sandboxes of this environment sit on one node.
+///
+/// The single-node form of `sandbox_counts`, for the detail view: a caller that
+/// asks about one node should not summarise the whole table to get its number.
+pub async fn sandbox_count(scope: &mut TenantScope<'_>, node_id: Uuid) -> Result<i64, StoreError> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM sandboxes
+          WHERE environment_id = $1 AND node_id = $2 AND status <> 'deleted'",
+    )
+    .bind(scope.environment_id())
+    .bind(node_id)
+    .fetch_one(scope.connection())
+    .await?;
+    Ok(count)
+}
+
 /// How many sandboxes of this environment sit on each node.
 pub async fn sandbox_counts(
     scope: &mut TenantScope<'_>,
