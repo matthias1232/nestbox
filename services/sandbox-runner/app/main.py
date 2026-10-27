@@ -24,6 +24,18 @@ from app import terminal as terminal_transport
 app = FastAPI(title="Nestbox Sandbox Runtime", version="1.0.0")
 client = docker.from_env()
 
+# Uvicorn configures its own loggers and leaves the root logger bare, so a module
+# logger's `info` would be dropped and only its warnings would reach the console
+# through the last-resort handler. The egress wiring is exactly the thing an
+# operator needs to see in the log next to the access lines, so give the root one
+# handler if nobody else did.
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=os.getenv("NESTBOX_LOG_LEVEL", "INFO"),
+        format="%(levelname)s:     %(name)s - %(message)s",
+    )
+logger = logging.getLogger("nestbox.runner")
+
 # Admin Center adapters. Each module owns its routes and its own Docker client,
 # so the packages that fill them in can change one file without touching the
 # request path that already ships. `terminal` answers 1011 until the PTY pump
@@ -170,6 +182,21 @@ def egress_proxy_endpoint(network: Any, name: str) -> dict[str, Any] | None:
     return None
 
 
+def egress_proxy_aliases(proxy: Any) -> list[str]:
+    """The names the proxy answers to on the sandbox network.
+
+    Read from the container, not from the network: `network inspect` lists the
+    endpoint but not its aliases, so a check against that view reports "no alias"
+    for a proxy that has one and would reconnect it on every create.
+    """
+    try:
+        proxy.reload()
+    except DockerException:
+        return []
+    endpoint = (proxy.attrs.get("NetworkSettings", {}).get("Networks") or {}).get(NETWORK) or {}
+    return list(endpoint.get("Aliases") or [])
+
+
 def attach_egress_proxy(network: Any, proxy: Any) -> str:
     """Put the proxy on the sandbox network under the name the env names it.
 
@@ -185,9 +212,9 @@ def attach_egress_proxy(network: Any, proxy: Any) -> str:
     leaves the sandbox isolated, which is the safe direction.
     """
     endpoint = egress_proxy_endpoint(network, proxy.name)
+    if endpoint is not None and EGRESS_PROXY_HOST in egress_proxy_aliases(proxy):
+        return "attached"
     if endpoint is not None:
-        if EGRESS_PROXY_HOST in (endpoint.get("Aliases") or []):
-            return "attached"
         # Present without the name a sandbox asks for: reconnect so the alias
         # exists. Envoy keeps its listener; only the endpoint is re-added.
         try:
@@ -227,13 +254,15 @@ def redirect_rule_status(proxy: Any) -> str:
             check = proxy.exec_run(["iptables", "-C", *match], demux=False)
             if check.exit_code == 0:
                 continue
-            if check.exit_code == 127:
+            if check.exit_code in (126, 127):
                 return "unavailable: the proxy image has no iptables"
             added = proxy.exec_run(["iptables", "-A", *match], demux=False)
-            if added.exit_code == 127:
+            if added.exit_code in (126, 127):
                 return "unavailable: the proxy image has no iptables"
             if added.exit_code != 0:
                 detail = (added.output or b"").decode(errors="replace").strip()
+                if "executable file not found" in detail:
+                    return "unavailable: the proxy image has no iptables"
                 return f"failed: {detail or added.exit_code}"
     except DockerException as exc:
         return f"failed: {exc}"
@@ -355,13 +384,14 @@ def egress() -> dict[str, Any]:
     proxy = find_egress_proxy()
     endpoint = egress_proxy_endpoint(network, proxy.name) if proxy else None
     missing = redirect_missing(proxy) if endpoint is not None else "proxy not attached"
+    aliases = egress_proxy_aliases(proxy) if proxy else []
     return {
         "network": NETWORK,
         "network_isolation": "internal" if network.attrs.get("Internal", False) else "open",
         "proxy": proxy.name if proxy else None,
         "attached": endpoint is not None,
         "alias": EGRESS_PROXY_HOST,
-        "alias_present": bool(endpoint and EGRESS_PROXY_HOST in (endpoint.get("Aliases") or [])),
+        "alias_present": EGRESS_PROXY_HOST in aliases,
         "proxy_url": f"http://{EGRESS_PROXY_HOST}:{EGRESS_PROXY_PORT}",
         "redirects": "prepared" if not missing else missing,
     }
@@ -382,6 +412,8 @@ def redirect_missing(proxy: Any) -> str:
             check = proxy.exec_run(["iptables", "-C", *match], demux=False)
         except DockerException as exc:
             return f"unavailable ({exc})"
+        if check.exit_code in (126, 127):
+            return "unavailable: the proxy image has no iptables"
         if check.exit_code != 0:
             return f"port {port} has no redirect"
     return ""
@@ -417,7 +449,6 @@ def create_sandbox(body: SandboxRequest) -> dict[str, Any]:
     # `/v1/egress`; it is not fatal, because a sandbox without a reachable proxy
     # is isolated rather than exposed.
     egress_state = prepare_egress(network)
-    logger = logging.getLogger("nestbox.runner")
     if egress_state["proxy"] == "missing" or not egress_state["attached"].startswith("attached"):
         logger.warning("egress proxy not reachable from the sandbox network: %s", egress_state)
     else:
