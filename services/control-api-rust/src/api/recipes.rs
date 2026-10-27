@@ -1,75 +1,155 @@
 //! Recipes: the builder.
 //!
-//! Handlers are filled by the `feat/recipes-build` package.
+//! A handler parses, the service decides. The only thing that lives here is
+//! the wire shape, because that is what the console sees and what the OpenAPI
+//! document describes.
 
 use axum::Json;
 use axum::extract::{Path, State};
+use axum::http::StatusCode;
+use serde::Deserialize;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::api::principal::Auth;
+use crate::domain::builder::{AgentSpec, ProjectMount, Recipe, ResourceLimits};
 use crate::error::ApiError;
+use crate::services::builder_service::{self, RecipeInput};
 use crate::state::AppState;
+
+/// A create or edit body.
+///
+/// The whole recipe is sent, not a patch of fields: "what the operator saw" is
+/// then the recipe, and a forgotten field cannot be mistaken for "keep it".
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct RecipeRequest {
+    pub name: String,
+    /// The baseline key, e.g. `ubuntu-24.04`.
+    pub baseline_key: String,
+    /// Tools by `tool_catalog` key.
+    #[serde(default)]
+    pub tools: Vec<String>,
+    #[serde(default)]
+    pub agents: Vec<AgentSpec>,
+    #[serde(default)]
+    pub resources: ResourceLimits,
+    #[serde(default)]
+    pub project_mounts: Vec<ProjectMount>,
+    /// The node to build and run on, by name. Omitted means the local node.
+    #[serde(default)]
+    pub node: Option<String>,
+}
+
+impl RecipeRequest {
+    fn into_input(self) -> RecipeInput {
+        RecipeInput {
+            name: self.name,
+            baseline_key: self.baseline_key,
+            tools: self.tools,
+            agents: self.agents,
+            resources: self.resources,
+            project_mounts: self.project_mounts,
+            node: self.node,
+        }
+    }
+}
+
+/// The body of an instantiate request.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct InstantiateRequest {
+    /// The sandbox to create. A recipe is a template, so the name is per
+    /// sandbox and not stored on the recipe.
+    pub name: String,
+}
 
 /// List recipes.
 pub async fn list(
-    State(_state): State<AppState>,
-    _auth: Auth,
+    State(state): State<AppState>,
+    auth: Auth,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::not_implemented("GET /recipes"))
+    let recipes = builder_service::list(&state.services, &auth.principal).await?;
+    Ok(Json(serde_json::json!({ "items": recipes })))
 }
 
 /// Create a draft.
 pub async fn create(
-    State(_state): State<AppState>,
-    _auth: Auth,
-    Json(_body): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::not_implemented("POST /recipes"))
+    State(state): State<AppState>,
+    auth: Auth,
+    Json(body): Json<RecipeRequest>,
+) -> Result<(StatusCode, Json<Recipe>), ApiError> {
+    let recipe =
+        builder_service::create(&state.services, &auth.principal, body.into_input()).await?;
+    Ok((StatusCode::CREATED, Json(recipe)))
 }
 
 /// Read a recipe.
 pub async fn get(
-    State(_state): State<AppState>,
-    _auth: Auth,
-    Path(_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::not_implemented("GET /recipes/{id}"))
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Recipe>, ApiError> {
+    Ok(Json(
+        builder_service::get(&state.services, &auth.principal, id).await?,
+    ))
 }
 
-/// Edit a recipe.
+/// Edit a recipe; bumps the revision and returns it to draft.
 pub async fn update(
-    State(_state): State<AppState>,
-    _auth: Auth,
-    Path(_id): Path<Uuid>,
-    Json(_body): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::not_implemented("PATCH /recipes/{id}"))
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<RecipeRequest>,
+) -> Result<Json<Recipe>, ApiError> {
+    Ok(Json(
+        builder_service::update(&state.services, &auth.principal, id, body.into_input()).await?,
+    ))
 }
 
 /// Delete a recipe.
 pub async fn delete(
-    State(_state): State<AppState>,
-    _auth: Auth,
-    Path(_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::not_implemented("DELETE /recipes/{id}"))
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    builder_service::delete(&state.services, &auth.principal, id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
-/// Build the image.
+/// Build the image: a job when something is built, a reuse when nothing changed.
 pub async fn build(
-    State(_state): State<AppState>,
-    _auth: Auth,
-    Path(_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::not_implemented("POST /recipes/{id}/build"))
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let outcome = builder_service::build(&state.services, &auth.principal, id).await?;
+    let status = if outcome.job_id.is_some() {
+        StatusCode::ACCEPTED
+    } else {
+        StatusCode::OK
+    };
+    Ok((
+        status,
+        Json(serde_json::json!({
+            "job_id": outcome.job_id,
+            "reused": outcome.reused,
+            "recipe": outcome.recipe,
+        })),
+    ))
 }
 
 /// Create a sandbox from a built recipe.
 pub async fn instantiate(
-    State(_state): State<AppState>,
-    _auth: Auth,
-    Path(_id): Path<Uuid>,
-    Json(_body): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::not_implemented("POST /recipes/{id}/instantiate"))
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<InstantiateRequest>,
+) -> Result<(StatusCode, Json<crate::domain::sandbox::Sandbox>), ApiError> {
+    let sandbox = builder_service::instantiate(
+        &state.services,
+        &auth.principal,
+        id,
+        &body.name,
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(sandbox)))
 }
