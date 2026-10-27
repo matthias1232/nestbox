@@ -100,6 +100,42 @@ pub async fn insert(
     row_to_profile(&row)
 }
 
+/// Insert the profile an install uses, in state `pending`.
+///
+/// Separate from `insert` because the install path sets columns an operator
+/// does not: the status (nothing answers yet), the node, and the install the
+/// profile belongs to. The status column arrives in 0016 with a default of
+/// `reachable` for existing cloud profiles; this insert overrides it.
+pub async fn insert_pending_for_install(
+    scope: &mut TenantScope<'_>,
+    name: &str,
+    endpoint: &str,
+    model: Option<&str>,
+    node_id: Uuid,
+    model_install_id: Uuid,
+) -> Result<ProviderProfile, StoreError> {
+    let sql = format!(
+        "WITH inserted AS (
+            INSERT INTO provider_profiles
+                (environment_id, name, kind, endpoint, model, status, node_id,
+                 model_install_id, last_probed_at)
+            VALUES ($1, $2, 'local_openai_compatible', $3, $4, 'pending', $5, $6, NULL)
+         RETURNING {PROFILE_COLUMNS}
+         )
+         SELECT {PROFILE_COLUMNS} FROM inserted"
+    );
+    let row = sqlx::query(&sql)
+        .bind(scope.environment_id())
+        .bind(name)
+        .bind(endpoint)
+        .bind(model)
+        .bind(node_id)
+        .bind(model_install_id)
+        .fetch_one(scope.connection())
+        .await?;
+    row_to_profile(&row)
+}
+
 /// Delete a provider profile.
 pub async fn delete(scope: &mut TenantScope<'_>, id: Uuid) -> Result<(), StoreError> {
     let affected = sqlx::query(

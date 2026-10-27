@@ -23,6 +23,9 @@ pub enum ProviderKind {
     OpenaiCompatible,
     /// An OpenAI-compatible server on this machine.
     LocalVllm,
+    /// The server an installed model runs as, on its node: one container per
+    /// install, `http://model-<key>:8000/v1` on the overlay.
+    LocalOpenaiCompatible,
     /// The OmniRoute gateway used by the appliance itself.
     Omniroute,
 }
@@ -35,6 +38,7 @@ impl ProviderKind {
             Self::Anthropic => "anthropic",
             Self::OpenaiCompatible => "openai_compatible",
             Self::LocalVllm => "local_vllm",
+            Self::LocalOpenaiCompatible => "local_openai_compatible",
             Self::Omniroute => "omniroute",
         }
     }
@@ -46,6 +50,7 @@ impl ProviderKind {
             "anthropic" => Self::Anthropic,
             "openai_compatible" => Self::OpenaiCompatible,
             "local_vllm" => Self::LocalVllm,
+            "local_openai_compatible" => Self::LocalOpenaiCompatible,
             "omniroute" => Self::Omniroute,
             _ => return None,
         })
@@ -56,7 +61,7 @@ impl ProviderKind {
     /// This is what the console uses to label a model "local" rather than
     /// "cloud", and it is derived from the profile rather than stored twice.
     pub fn is_local(self) -> bool {
-        matches!(self, Self::LocalVllm)
+        matches!(self, Self::LocalVllm | Self::LocalOpenaiCompatible)
     }
 }
 

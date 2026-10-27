@@ -13,8 +13,10 @@ use uuid::Uuid;
 
 use super::{require, ServiceContext};
 use crate::domain::auth::{Permission, Principal};
+use crate::domain::model_install::ModelInstall;
+use crate::domain::node::Node;
 use crate::domain::provider::{ProviderKind, ProviderProfile};
-use crate::error::{ApiError, ErrorCode};
+use crate::error::{ApiError, ErrorCode, StoreError};
 use crate::security::secrets;
 use crate::store::TenantScope;
 use crate::store::postgres::providers as store;
@@ -71,6 +73,49 @@ pub struct NewProvider {
     /// A locator, never a value.
     pub secret_ref: Option<String>,
     pub labels: serde_json::Value,
+}
+
+/// Create the provider profile that makes an installed model selectable.
+///
+/// Called from the install path, so the profile exists the moment the install
+/// starts. Two things follow from that: the endpoint does not answer yet, which
+/// is why the status is `pending`, and the profile is not handed to a sandbox
+/// until a probe has seen it answer (the inference environment filters on
+/// `reachable`).
+///
+/// Nothing is downloaded and no model server is started in this phase; the
+/// install reserves memory and records intent, the server follows in phase 2.
+pub async fn create_for_install(
+    scope: &mut TenantScope<'_>,
+    install: &ModelInstall,
+    node: &Node,
+) -> Result<ProviderProfile, StoreError> {
+    // A container name is a DNS label, so the dots and colons of a model key
+    // become hyphens: `qwen3-1.7b` serves at `model-qwen3-1-7b`.
+    let host = install.model_key.replace(['.', ':', '/'], "-").to_lowercase();
+    let name = format!("local/{}@{}", install.model_key, node.name);
+    let endpoint = format!("http://model-{host}:8000/v1");
+    store::insert_pending_for_install(
+        scope,
+        &name,
+        &endpoint,
+        Some(&install.model_key),
+        install.node_id,
+        install.id,
+    )
+    .await
+}
+
+/// Remove the profile an uninstall leaves behind.
+///
+/// A profile that a sandbox still selects is not deleted silently: the caller
+/// checks for use first and refuses with `provider.in_use`. This function is the
+/// mechanical removal once that check has passed.
+pub async fn delete_for_install(
+    scope: &mut TenantScope<'_>,
+    profile_id: Uuid,
+) -> Result<(), StoreError> {
+    store::delete(scope, profile_id).await
 }
 
 /// Register a provider profile.
