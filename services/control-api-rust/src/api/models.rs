@@ -5,10 +5,10 @@ use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 
 use crate::api::principal::Auth;
-use crate::domain::model::HardwareProfile;
 use crate::error::ApiError;
 use crate::services::model_service;
 use crate::services::model_service::CatalogQuery as CatalogFilter;
+use crate::services::model_service::NodeHardware;
 use crate::state::AppState;
 
 /// Query parameters of the catalog.
@@ -37,6 +37,19 @@ pub struct CatalogQuery {
     pub fits: Option<bool>,
 }
 
+/// Query parameters of the hardware endpoint.
+///
+/// Separate from the catalog query because the hardware belongs to a node: the
+/// catalog is a list of models, this is "what does that machine have".
+#[derive(Debug, Deserialize)]
+pub struct HardwareQuery {
+    /// Force a fresh probe through the node's runner instead of the stored one.
+    #[serde(default)]
+    pub refresh_hardware: bool,
+    /// A node name (`local`) or id; the local node when omitted.
+    pub node: Option<String>,
+}
+
 impl CatalogQuery {
     fn filter(&self) -> CatalogFilter {
         CatalogFilter {
@@ -50,10 +63,20 @@ impl CatalogQuery {
     }
 }
 
-/// The machine as JSON, in one shape for both the catalog envelope and the
-/// hardware endpoint.
-fn hardware_json(profile: &HardwareProfile) -> serde_json::Value {
+/// The machine as JSON, in one shape for the catalog envelope, the hardware
+/// endpoint, and a node probe.
+///
+/// `container_gpu` sits next to the GPUs on purpose: a card the node has but a
+/// container cannot be given is not capacity, and a reader should not have to
+/// join two responses to see that.
+pub(crate) fn hardware_json(measured: &NodeHardware) -> serde_json::Value {
+    let profile = &measured.profile;
+    let node = &measured.node;
     serde_json::json!({
+        "node": node.name,
+        "node_id": node.id,
+        "node_status": node.status,
+        "container_gpu": node.container_gpu,
         "hostname": profile.hostname,
         "cpu_model": profile.cpu_model,
         "cpu_cores": profile.cpu_cores,
@@ -88,7 +111,9 @@ pub async fn catalog(
         &query.filter(),
     )
     .await?;
-    let hardware = model_service::hardware(&state.services, &auth.principal, false).await?;
+    // The catalog is classified against the local node until package 3 adds the
+    // node filter; the envelope describes the same machine the fit used.
+    let hardware = model_service::hardware(&state.services, &auth.principal, false, None).await?;
     Ok(Json(serde_json::json!({
         "items": models,
         "hardware": hardware_json(&hardware),
@@ -104,15 +129,20 @@ pub async fn installed(
     Ok(Json(serde_json::json!({ "items": models })))
 }
 
-/// The detected hardware.
+/// The detected hardware of one node.
 pub async fn hardware(
     State(state): State<AppState>,
     auth: Auth,
-    Query(query): Query<CatalogQuery>,
+    Query(query): Query<HardwareQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let profile =
-        model_service::hardware(&state.services, &auth.principal, query.refresh_hardware).await?;
-    Ok(Json(hardware_json(&profile)))
+    let measured = model_service::hardware(
+        &state.services,
+        &auth.principal,
+        query.refresh_hardware,
+        query.node.as_deref(),
+    )
+    .await?;
+    Ok(Json(hardware_json(&measured)))
 }
 
 /// Counts for the filter chips.

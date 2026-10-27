@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use crate::api::principal::Auth;
 use crate::error::ApiError;
+use crate::services::model_service;
 use crate::state::AppState;
 
 /// Every node with its budget and sandbox count.
@@ -49,9 +50,10 @@ pub async fn update_display(
 
 /// Probe a node's hardware through its runner.
 pub async fn probe(
-    State(_state): State<AppState>,
-    _auth: Auth,
-    Path(_id): Path<Uuid>,
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::not_implemented("POST /nodes/{id}/probe"))
+    let measured = model_service::probe_node(&state.services, &auth.principal, id).await?;
+    Ok(Json(crate::api::models::hardware_json(&measured)))
 }

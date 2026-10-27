@@ -40,13 +40,18 @@ The architecture test enforces the last two.
 | `events.rs` | SSE streams |
 | `cluster.rs` | Gateways, supervisors, topology |
 | `providers.rs` | Provider profiles, probe |
-| `models.rs` | Catalog with filters, hardware, facets, requirements, installs, sync |
-| `nodes.rs` | Nodes, budget, probe (handlers: `feat/nodes-api`) |
+| `models.rs` | Catalog with filters, per-node hardware, facets, requirements, installs, sync |
+| `nodes.rs` | Nodes, budget, probe through the runner (`nodes-api` fills list/detail; `node-hardware-probe` fills probe) |
 | `packs.rs` | Baselines, agent packs, tool catalog (`feat/packs-as-data`) |
 | `recipes.rs` | Recipe CRUD, build, instantiate (`feat/recipes-build`) |
 | `persistent_roots.rs` | Roots, mount, dismount, usage (`feat/persistent-roots`) |
 | `sandbox_agents.rs` | Agents inside a sandbox (`feat/sandbox-agents`) |
 | `jobs.rs` | Jobs, schedules |
+
+`models::hardware_json` is the one shape for a machine: `GET /models/hardware`,
+the catalog envelope, and `POST /nodes/{id}/probe` all return it, so it always
+names the node, its status, and whether containers there can have a GPU next to
+the measurement. A second shape would let those three drift apart.
 
 ## Work packages
 
