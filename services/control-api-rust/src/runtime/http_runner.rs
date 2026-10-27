@@ -76,7 +76,14 @@ impl HttpRunner {
         Self {
             base_url: base_url.into(),
             network: network.into(),
-            client: reqwest::Client::new(),
+            // A hung runner must not hold an API worker forever. Docker's own
+            // stop grace period is 10 s and an exec may run for minutes, so the
+            // bound is generous but finite.
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(660))
+                .connect_timeout(std::time::Duration::from_secs(5))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
         }
     }
 

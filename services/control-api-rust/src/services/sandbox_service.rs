@@ -102,8 +102,13 @@ pub async fn list(
         .map(|fact| (fact.name.clone(), fact))
         .collect();
 
-    let items = page
-        .items
+    let mut settled = Vec::with_capacity(page.items.len());
+    for sandbox in page.items {
+        let live = index.get(&sandbox.name);
+        settled.push(reconcile_transitional(ctx, principal, sandbox, live).await);
+    }
+
+    let items = settled
         .into_iter()
         .map(|sandbox| {
             let live = index.get(&sandbox.name);
@@ -141,6 +146,7 @@ pub async fn get(
     // A runtime that cannot be reached is a normal state, not an error: the
     // stored state is still worth showing.
     let runtime = ctx.runtime.inspect(&sandbox.name).await.ok();
+    let sandbox = reconcile_transitional(ctx, principal, sandbox, runtime.as_ref()).await;
     Ok(SandboxDetail { sandbox, runtime })
 }
 
@@ -156,6 +162,60 @@ pub struct CreateSandbox {
     pub memory_limit: String,
     pub cpu_limit: f64,
     pub pids_limit: i64,
+}
+
+/// Settle a row stuck in a transitional state when the runtime has moved on.
+///
+/// `starting` and `stopping` are written before the runtime call and replaced
+/// after it. If the process dies in between — a deploy during a stop, a crash,
+/// a lost connection — the row keeps the transitional status forever and every
+/// lifecycle button is disabled. The runtime still knows the truth, so a read
+/// that sees both compares them and writes the settled state. The desired
+/// state is not changed by this; only a transitional one is resolved.
+async fn reconcile_transitional(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox: Sandbox,
+    live: Option<&crate::domain::runtime::RuntimeFacts>,
+) -> Sandbox {
+    let Some(facts) = live else {
+        return sandbox;
+    };
+    if !matches!(
+        sandbox.status,
+        SandboxStatus::Starting | SandboxStatus::Stopping
+    ) {
+        return sandbox;
+    }
+    let Some(target) = settled_status_from_runtime(&facts.status) else {
+        return sandbox;
+    };
+    let health = health_from_runtime(facts);
+    match set_status(ctx, principal, sandbox.id, sandbox.version, target, health).await {
+        Ok(updated) => {
+            tracing::info!(sandbox = %updated.name, from = sandbox.status.as_str(), to = target.as_str(), "settled a transitional sandbox from runtime state");
+            updated
+        }
+        Err(error) => {
+            // A version conflict means another writer settled it first, which
+            // is fine; anything else is logged and the stale row is shown.
+            tracing::debug!(sandbox = %sandbox.name, code = error.code.0, "reconcile skipped");
+            sandbox
+        }
+    }
+}
+
+/// The settled status a runtime state corresponds to, if it is settled.
+///
+/// Docker's own transitional states (`restarting`, `removing`) yield `None`:
+/// the row stays transitional until the runtime makes up its mind.
+pub fn settled_status_from_runtime(runtime_status: &str) -> Option<SandboxStatus> {
+    match runtime_status {
+        "running" => Some(SandboxStatus::Running),
+        "exited" | "created" | "paused" | "stopped" => Some(SandboxStatus::Stopped),
+        "dead" => Some(SandboxStatus::Failed),
+        _ => None,
+    }
 }
 
 /// Translate what the runtime reports into the stored health.
@@ -634,6 +694,15 @@ mod tests {
     fn a_locally_built_image_is_allowed() {
         // It has no registry digest by construction; the tag is the marker.
         assert!(reject_unpinned_image("nestbox-hermes:local", None).is_ok());
+    }
+
+    #[test]
+    fn only_settled_runtime_states_resolve_a_transitional_row() {
+        assert_eq!(settled_status_from_runtime("running"), Some(SandboxStatus::Running));
+        assert_eq!(settled_status_from_runtime("exited"), Some(SandboxStatus::Stopped));
+        assert_eq!(settled_status_from_runtime("dead"), Some(SandboxStatus::Failed));
+        assert_eq!(settled_status_from_runtime("restarting"), None);
+        assert_eq!(settled_status_from_runtime("removing"), None);
     }
 
     #[test]
