@@ -29,7 +29,7 @@ DECLARE
         'secret_references', 'address_pools', 'address_assignments',
         'gateway_endpoints', 'certificates', 'ingress_rules', 'forwards',
         'service_exposures', 'jobs', 'job_logs', 'job_targets', 'schedules',
-        'audit_events', 'telemetry_events', 'sandbox_migrations', 'models',
+        'audit_events', 'telemetry_events', 'sandbox_migrations',
         'hardware_profiles', 'inference_requests'
     ];
 BEGIN
@@ -51,7 +51,10 @@ BEGIN
         FROM pg_class c
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'public'
-          AND c.relkind = 'p'
+          -- Ordinary tables and partitioned parents both need the policy. The
+          -- first version of this only matched 'p', which silently skipped every
+          -- regular table and left them without a policy.
+          AND c.relkind IN ('r', 'p')
           AND c.relrowsecurity
     LOOP
         -- Drop first so the migration is re-runnable in a rebuilt dev database.
@@ -93,11 +96,25 @@ CREATE POLICY tenant_isolation ON job_targets
           AND j.environment_id = current_setting('app.environment_id', true)::uuid
     ));
 
--- Environments themselves are scoped by id, not by an environment_id column.
-DROP POLICY IF EXISTS tenant_isolation ON environments;
-CREATE POLICY tenant_isolation ON environments
-    USING (id = current_setting('app.environment_id', true)::uuid)
-    WITH CHECK (id = current_setting('app.environment_id', true)::uuid);
+-- The model catalogue is shared: a seeded entry has no environment and is
+-- visible everywhere, while an environment-specific entry is scoped. A blanket
+-- policy here would make the catalogue appear empty.
+ALTER TABLE models ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON models;
+CREATE POLICY tenant_isolation ON models
+    USING (
+        environment_id IS NULL
+        OR environment_id = current_setting('app.environment_id', true)::uuid
+    )
+    WITH CHECK (
+        environment_id IS NULL
+        OR environment_id = current_setting('app.environment_id', true)::uuid
+    );
+
+-- `environments` deliberately has no row-level policy. The login path must list
+-- every environment a user belongs to before an environment is chosen, and the
+-- membership check in `user_scopes` is what authorises access. A policy here
+-- would make the switcher empty.
 
 COMMENT ON POLICY tenant_isolation ON sandboxes IS
   'Second line of defence. The repository filter is the first.';
