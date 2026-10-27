@@ -32,6 +32,7 @@ component never contains a URL.
 | `cluster.js` | gateways, settings, sync, supervisors, topology |
 | `providers.js` | profiles, probe; locators only, never a value |
 | `models.js` | catalog with filters, hardware, facets, requirements, installs, install, uninstall |
+| `nodes.js` | nodes with their budget, one node, its sandboxes, probe, display rename |
 | `jobs.js` | jobs, logs, schedules |
 
 ## Extending

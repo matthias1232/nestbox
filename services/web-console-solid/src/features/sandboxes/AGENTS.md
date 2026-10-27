@@ -12,6 +12,9 @@ on it.
   interesting information.
 - Address, uptime, and resource limits, because "is it running" is not the same
   as "is it reachable".
+- The node each sandbox runs on. The list already carries `node_name` and
+  `node_id`; the column is the only place the console says which machine holds
+  the container.
 - The log tail without leaving the page, because a failure is diagnosed from the
   log.
 
@@ -21,6 +24,9 @@ on it.
 - A lifecycle action is disabled when the current status does not permit it, and
   the reason is the domain rule, not a guess in the component.
 - A destructive action asks once, and says what will be destroyed.
+- The node name links to the nodes screen only when `onOpenNode` is passed by the
+  integrator; this feature does not own that route, and a dead link is worse than
+  plain text.
 
 ## Files
 

@@ -129,6 +129,27 @@ pub async fn run_schedule(
 
     scope.commit().await.map_err(ApiError::from)?;
 
+    // The catalog sync is the one scheduled kind that does work today: it
+    // fetches from the public repositories. It runs detached for the same
+    // reason a build does — ten seconds of network calls must not hold the HTTP
+    // response — and the job row is the record of what happened either way.
+    if kind == crate::domain::job::JobKind::CatalogSync {
+        let ctx = ctx.clone();
+        let environment_id = principal.environment_id;
+        let job_id = job.id;
+        tokio::spawn(async move {
+            if let Err(error) =
+                crate::services::catalog_sync::run(&ctx, environment_id, job_id).await
+            {
+                tracing::error!(
+                    code = error.code.0,
+                    job = %job_id,
+                    "the scheduled catalog sync could not record its outcome"
+                );
+            }
+        });
+    }
+
     Ok(serde_json::json!({ "job_id": job.id, "schedule": schedule.name }))
 }
 

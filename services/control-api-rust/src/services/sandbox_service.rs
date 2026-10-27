@@ -322,6 +322,21 @@ pub async fn create(
         ));
     }
 
+    // A sandbox that cannot fit is refused before a row exists: the node's
+    // budget is what its model installs left free, and a 32 GiB request on a
+    // 7.8 GiB machine is a typo the operator should see now rather than an
+    // OOM kill later. A node nobody has measured has no numbers to check
+    // against, so the request is allowed and the response says the capacity is
+    // unknown rather than being refused for a measurement that does not exist.
+    let budget = crate::services::node_service::free_budget(&mut scope, node.id).await?;
+    if budget.ram_total_bytes > 0 {
+        let wanted = crate::domain::runtime::memory_bytes(&request.memory_limit)
+            .map_err(ApiError::validation)?;
+        budget.can_host(wanted, request.cpu_limit).map_err(|error| {
+            ApiError::unprocessable(ErrorCode::NODE_INSUFFICIENT_RESOURCES, error.message())
+        })?;
+    }
+
     let spec = serde_json::json!({
         "pack_key": request.pack_key,
         "memory_limit": memory_limit,

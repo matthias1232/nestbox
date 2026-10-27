@@ -296,6 +296,31 @@ pub fn budget_from(
     budget
 }
 
+/// What a node has left, for a caller that is about to place something on it.
+///
+/// A node that has never been measured reports zeros; the caller decides whether
+/// that means "refuse" or "allow, and say the capacity is unknown".
+pub async fn free_budget(
+    scope: &mut TenantScope<'_>,
+    node_id: Uuid,
+) -> Result<NodeBudget, ApiError> {
+    let profile = hardware_store::latest_hardware(scope, node_id)
+        .await
+        .map_err(ApiError::from)?;
+    let (ram_bytes, vram_bytes, installs) = model_installs::reserved_on(scope, node_id)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(budget_from(
+        profile.as_ref(),
+        Reservations {
+            ram_bytes,
+            vram_bytes,
+            installs,
+        },
+        0,
+    ))
+}
+
 /// One node with its budget, reading the two facts its row does not carry.
 async fn view(
     scope: &mut TenantScope<'_>,
@@ -305,20 +330,15 @@ async fn view(
     let profile = hardware_store::latest_hardware(scope, node.id)
         .await
         .map_err(ApiError::from)?;
-    let (ram_bytes, vram_bytes, installs) = model_installs::reserved_on(scope, node.id)
-        .await
-        .map_err(ApiError::from)?;
-
-    let reservations = Reservations {
-        ram_bytes,
-        vram_bytes,
-        installs,
-    };
-    let budget = budget_from(profile.as_ref(), reservations, sandboxes);
+    let measured = profile.is_some();
+    let detected_at = profile.as_ref().map(|profile| profile.detected_at);
+    let mut budget = free_budget(scope, node.id).await?;
+    // The one number `free_budget` leaves out, because it is not capacity.
+    budget.sandboxes = count_i32(sandboxes);
 
     Ok(NodeView {
-        hardware_known: profile.is_some(),
-        detected_at: profile.as_ref().map(|profile| profile.detected_at),
+        hardware_known: measured,
+        detected_at,
         budget,
         node,
     })

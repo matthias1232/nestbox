@@ -52,9 +52,9 @@ pub async fn create(
 pub async fn list(
     State(state): State<AppState>,
     auth: Auth,
-) -> Result<Json<Vec<PersistentRoot>>, ApiError> {
+) -> Result<Json<serde_json::Value>, ApiError> {
     let roots = persist_service::list(&state.services, &auth.principal).await?;
-    Ok(Json(roots))
+    Ok(Json(serde_json::json!({ "items": roots })))
 }
 
 /// One root with its mounts.
