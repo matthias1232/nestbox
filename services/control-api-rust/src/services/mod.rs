@@ -20,6 +20,7 @@ pub mod policy_service;
 pub mod provider_service;
 pub mod sandbox_service;
 pub mod telemetry_service;
+pub mod traffic_service;
 
 pub use access_control::require;
 
