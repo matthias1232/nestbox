@@ -97,6 +97,7 @@ export default function SandboxListPage(props) {
                 <th>Status</th>
                 <th>Health</th>
                 <th>Pack</th>
+                <th>Node</th>
                 <th>Address</th>
                 <th class="narrow">Uptime</th>
                 <th>Actions</th>
@@ -130,6 +131,23 @@ export default function SandboxListPage(props) {
                     <td><StatusBadge status={sandbox.status} /></td>
                     <td><StatusBadge status={sandbox.health} /></td>
                     <td class="mono small">{sandbox.pack_key}</td>
+                    <td class="mono small">
+                      {/* The machine the container actually runs on. This page
+                          does not know the route to the nodes screen, so the
+                          integrator passes `onOpenNode`; without it the name is
+                          shown, just not clickable. */}
+                      <Show when={sandbox.node_name} fallback={<span class="muted">—</span>}>
+                        <Show when={props.onOpenNode} fallback={<span>{sandbox.node_name}</span>}>
+                          <button
+                            class="link"
+                            title="Show this node"
+                            onClick={() => props.onOpenNode(sandbox.node_id)}
+                          >
+                            {sandbox.node_name}
+                          </button>
+                        </Show>
+                      </Show>
+                    </td>
                     <td class="mono small">{sandbox.address || '—'}</td>
                     <td class="narrow mono small">{shortUptime(sandbox)}</td>
                     <td class="actions">

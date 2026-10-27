@@ -11,6 +11,7 @@ a new colour asks for a token; it does not invent a hex value.
 |---|---|
 | `tokens.css` | Colour, spacing, radius, and type scale |
 | `app.css` | Reset, shell layout, tables, forms, drawer, graph |
+| `nodes.css` | Node budget bars and the node drawer; imported by `features/nodes/NodesPage.jsx` |
 
 ## Rules
 
