@@ -25,8 +25,8 @@
 //!   its budget instead of holding the job open indefinitely;
 //! * a row is never deleted. A model that disappears upstream keeps its row and
 //!   its last `synced_at`, so the console does not silently lose history;
-//! * a row without a stated size gets no gate and is not written at all (see
-//!   `derive`);
+//! * a row without a stated size is written with null gates, and the classifier
+//!   reports it as unknown rather than installable (ADR 0019, `derive`);
 //! * the row is keyed by `(source, source_id)`, so a rename upstream updates the
 //!   existing row instead of creating a second one.
 //!
@@ -391,12 +391,10 @@ async fn sync_source(
     report.note = fetched.note;
 
     for candidate in &fetched.candidates {
-        let Some(row) = row_for(candidate) else {
-            // The source stated no size, so the row would carry no gate and
-            // read as installable on any machine. Refusing it is the point.
-            report.skipped += 1;
-            continue;
-        };
+        // A repository that states no size still yields a row: it is written
+        // with null gates, and `classify` reports `unknown` rather than reading
+        // the missing requirement as zero (ADR 0019).
+        let row = row_for(candidate);
 
         match write_row(ctx, environment_id, &row).await {
             Ok(Upserted::Inserted) => report.added += 1,
@@ -449,12 +447,12 @@ async fn write_row(
 
 /// Turn what a source stated into the row it may write.
 ///
-/// Returns `None` when the source stated no size: no gate means the fit
-/// classifier would compare the machine against zero, which is a wrong answer
-/// rather than a missing one.
-fn row_for(candidate: &Candidate) -> Option<SyncedModel> {
+/// A source that states no size yields null gates rather than a refusal: the row
+/// is still worth listing, and `classify` reports it as `unknown` instead of
+/// installable (ADR 0019). The gate figures themselves are never estimated.
+fn row_for(candidate: &Candidate) -> SyncedModel {
     let requirements = derive::requirements(candidate.weights_bytes, candidate.artifact);
-    let gate = requirements.gate?;
+    let gate = requirements.gate;
     let artifact = artifact_label(candidate.artifact);
     let family = candidate
         .family_hint
@@ -463,7 +461,7 @@ fn row_for(candidate: &Candidate) -> Option<SyncedModel> {
         .unwrap_or_else(|| candidate.source.to_string())
         .to_lowercase();
 
-    Some(SyncedModel {
+    SyncedModel {
         source: candidate.source.to_string(),
         source_id: candidate.source_id.clone(),
         key: key_for(candidate.source, &candidate.source_id),
@@ -476,9 +474,9 @@ fn row_for(candidate: &Candidate) -> Option<SyncedModel> {
         context_length: candidate.context_length,
         quantization: candidate.quantization.clone(),
         weights_bytes: candidate.weights_bytes,
-        min_vram_bytes: Some(gate.min_vram_bytes),
-        recommended_vram_bytes: Some(gate.recommended_vram_bytes),
-        min_gpu_count: gate.min_gpu_count,
+        min_vram_bytes: gate.map(|gate| gate.min_vram_bytes),
+        recommended_vram_bytes: gate.map(|gate| gate.recommended_vram_bytes),
+        min_gpu_count: gate.map_or(1, |gate| gate.min_gpu_count),
         min_ram_bytes: requirements.min_ram_bytes,
         recommended_ram_bytes: requirements.recommended_ram_bytes,
         min_cpu_cores: None,
@@ -491,11 +489,11 @@ fn row_for(candidate: &Candidate) -> Option<SyncedModel> {
         publisher: candidate.publisher.clone(),
         license: candidate.license.clone(),
         description: candidate.description.clone(),
-        unified_memory_only: gate.unified_memory_only,
+        unified_memory_only: gate.is_some_and(|gate| gate.unified_memory_only),
         is_cpu_only: false,
         source_uri: candidate.source_uri.clone(),
         version: candidate.version.clone(),
-    })
+    }
 }
 
 /// The label a file kind is stored under in `arch` and `artifact_format`.
@@ -720,15 +718,23 @@ mod tests {
     }
 
     #[test]
-    fn a_candidate_without_a_size_is_not_written() {
-        let candidate = candidate(None);
-        assert!(row_for(&candidate).is_none());
+    fn a_candidate_without_a_size_is_written_with_no_gate() {
+        // Written, not refused: the classifier has an `unknown` verdict for
+        // exactly this row, so the catalogue can list the model without
+        // claiming it fits anywhere.
+        let row = row_for(&candidate(None));
+        assert!(row.min_vram_bytes.is_none());
+        assert!(row.recommended_vram_bytes.is_none());
+        assert!(row.min_ram_bytes.is_none());
+        assert_eq!(row.min_gpu_count, 1);
+        assert!(!row.unified_memory_only);
+        assert_eq!(row.parameters, "8B");
     }
 
     #[test]
     fn a_candidate_with_a_size_gets_its_gate_from_that_size() {
         let candidate = candidate(Some(8 * 1024 * 1024 * 1024));
-        let row = row_for(&candidate).expect("a sized candidate becomes a row");
+        let row = row_for(&candidate);
         assert_eq!(row.min_vram_bytes, Some(14 * 1024 * 1024 * 1024));
         assert_eq!(row.runtime, "cuda");
         assert_eq!(row.source, "huggingface");

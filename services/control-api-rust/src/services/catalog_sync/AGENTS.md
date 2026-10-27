@@ -53,12 +53,12 @@ Rules every source keeps:
 - a GGUF row also states a RAM gate (`file + 2 GiB` working set, mapped not
   copied); a safetensors row states none, because it has no CPU path.
 
-**With no stated size there is no gate, and the row is not written.** A row whose
-`min_vram_bytes` is null is compared against zero by `domain::model::classify`,
-which reports it as installable on every machine — the exact failure the
-catalogue exists to prevent. Such a candidate is logged as `skipped`. If the
-classifier grows a real `unknown` verdict, the sync can start storing these rows;
-until then refusing them is the honest option.
+**With no stated size there is no gate — and the row is still written.** The
+sync stores it with null `min_vram_bytes` / `min_ram_bytes`, and
+`domain::model::classify` answers `Fit::Unknown` with a reason that says the
+requirement is not published, never `installable` (ADR 0019). `unknown` is a
+first-class verdict: it is not in `fits()`, and it disables install. The gate
+figures are never estimated to avoid this state.
 
 ## Running it
 

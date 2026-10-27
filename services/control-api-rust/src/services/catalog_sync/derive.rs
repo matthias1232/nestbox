@@ -24,10 +24,10 @@
 //!   of working set, since llama.cpp maps the file rather than copying it. A
 //!   safetensors row has no CPU path, so it states no RAM figure.
 //!
-//! With no size there is no gate. A row without a gate would be classified as
-//! "needs zero bytes" and read as installable on every machine, which is the
-//! failure the catalogue exists to prevent; `gate_for` returns `None` and the
-//! sync refuses to write the row.
+//! With no size there is no gate. `gate_for` returns `None`, the sync writes the
+//! row with null gates, and `classify` reports `unknown` rather than reading the
+//! missing requirement as zero (ADR 0019). A row is never refused for being
+//! honest about what the repository did not publish.
 
 use crate::domain::model::ModelRuntime;
 
