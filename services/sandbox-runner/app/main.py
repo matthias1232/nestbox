@@ -683,6 +683,14 @@ def exec_in_sandbox(name: str, body: ExecRequest) -> dict[str, Any]:
 def lifecycle(name: str, action: str) -> dict[str, Any]:
     if action not in {"start", "stop", "restart", "remove"}:
         raise HTTPException(422, "unsupported lifecycle action")
+    if action in {"start", "restart"}:
+        # A deploy that recreates the proxy container drops its endpoint on the
+        # sandbox network, and a sandbox that was working before the deploy would
+        # come back with an unreachable proxy. A start is the natural moment to
+        # repair the wiring, and the call is idempotent. Before the container
+        # runs, so it never has a moment without a proxy.
+        egress_state = prepare_egress(ensure_network())
+        logger.info("egress for %s before %s: %s", name, action, egress_state)
     try:
         container = client.containers.get(container_name(name))
         if action == "remove":

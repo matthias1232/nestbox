@@ -65,9 +65,12 @@ The proxy is on that network because this adapter puts it there
 `network connect` gives a container only its container name, so without the
 alias the sandbox environment would name a host that does not resolve. It is the
 only container besides this adapter that belongs on the network; the control API
-stays on `control`. When the integrator gives the compose network the name this
-adapter uses (`name: nestbox-runtime`), compose does the wiring declaratively and
-the runtime connect becomes a no-op.
+stays on `control`. The join happens on `create` and again on `start`/`restart`,
+because a `docker compose up` that recreates the proxy container drops its
+endpoint and an existing sandbox would otherwise come back with a proxy it cannot
+reach. When the integrator gives the compose network the name this adapter uses
+(`name: nestbox-runtime`), compose does the wiring declaratively and the runtime
+connect becomes a no-op.
 
 ## Redirect rules, and what they are not
 
