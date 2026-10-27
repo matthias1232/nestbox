@@ -48,6 +48,7 @@ reading both.
 | `model_service.rs` | Hardware probing through a node's runner (CPU, RAM, GPU, unified pool), fit against a node's free budget, facets, catalog filters, installs and their reservations |
 | `node_service.rs` | The nodes list, one node with its budget, a node's sandboxes, name-or-id resolution, display rename |
 | `pack_service.rs` | Baselines, agent packs, and tool catalog as data; pack defaults by row, baseline compatibility, package-name resolution |
+| `builder_service.rs` | Recipes: validation against the catalogs, the Dockerfile generator, content hash, build job, instantiate |
 | `gateway_service.rs` | Registry, settings, drift, sync |
 | `job_service.rs` | Job creation and progress |
 | `schedule_service.rs` | Schedule evaluation and runs |
@@ -94,6 +95,31 @@ never a guess about a machine the control plane cannot see.
    receives; it does not rewire a running container.
 4. Archive, never delete, by default. Purging removes the record only: the
    directory lives on the node, which the control plane cannot reach.
+
+## The builder
+
+`builder_service.rs` deserves a note because its decisions are not obvious from
+the signatures.
+
+- **The Dockerfile is generated, never stored.** The recipe holds the choices;
+  the catalogs hold what those choices mean; the generator is the only place the
+  two meet. A corrected pack row changes the next build with no migration.
+- **A build is a job that runs detached.** The endpoint records a `recipe_build`
+  job, marks the recipe `building`, and returns. The task is spawned in process
+  because there is no queue worker yet; a restart during a build leaves the row
+  `building`, and a PATCH recovers it. The job body is `builder_service::run_build`,
+  public so a test can run it without a detached task.
+- **`instantiate` writes the sandbox row itself** rather than calling
+  `sandbox_service::create`, because a recipe carries an agent set and a
+  content-addressed image tag that `CreateSandbox` cannot express, and its
+  mounts have to be in the spec the container is created with. It reuses the
+  same pieces (`SandboxName`, the placement rules, `pack_needs_inference`, the
+  status settlement), so the two paths send the same shape to the runtime. Once
+  `CreateSandbox` can carry agents and a recipe image, this should collapse into
+  a call to it.
+- **The catalogs are read through the store, not `pack_service`.** Both read the
+  same rows; going through `pack_service` is the cleaner layering and changes
+  nothing about the recipes.
 
 ## Extending this module
 

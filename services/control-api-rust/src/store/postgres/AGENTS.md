@@ -35,6 +35,7 @@ the codebase where SQL appears.
 | `providers.rs` | Provider profiles, secret references |
 | `agent_packs.rs` | Baselines, agent packs, and the tool catalog (global data, no tenant filter) |
 | `persistent_roots.rs` | Persistent roots, mounts, and the agents inside a sandbox |
+| `recipes.rs` | Recipes, the build outcome, and the link from a sandbox to its recipe |
 | `audit.rs` | Append-only audit writes |
 
 ## Extending this folder
