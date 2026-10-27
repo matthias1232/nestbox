@@ -31,6 +31,7 @@ the codebase where SQL appears.
 | `jobs.rs` | Jobs, targets, schedules |
 | `environments.rs` | Environments, clusters, nodes, overview counts |
 | `providers.rs` | Provider profiles, secret references |
+| `persistent_roots.rs` | Persistent roots, mounts, and the agents inside a sandbox |
 | `audit.rs` | Append-only audit writes |
 
 ## Extending this folder
