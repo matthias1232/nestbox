@@ -42,6 +42,7 @@ reading both.
 | `access_control.rs` | Permission evaluation and the refusal message |
 | `sandbox_service.rs` | Lifecycle, placement, bulk actions |
 | `provider_service.rs` | Provider profiles, probe, and the inference environment a sandbox receives |
+| `agent_service.rs` | Agents inside a sandbox: which packs may join, homes and their persistence, the supervisor command |
 | `policy_service.rs` | Validation, diff, scope rules, global override |
 | `telemetry_service.rs` | Ingest, live publish, history queries |
 | `model_service.rs` | Hardware detection (CPU, RAM, GPU, unified pool), fit, facets, catalog filters, install jobs |
