@@ -8,6 +8,7 @@ pub mod gateway_service;
 pub mod job_service;
 pub mod model_service;
 pub mod policy_service;
+pub mod provider_service;
 pub mod sandbox_service;
 pub mod telemetry_service;
 
@@ -27,6 +28,10 @@ pub struct ServiceContext {
     pub pool: sqlx::PgPool,
     pub runtime: Arc<dyn RuntimeAdapter>,
     pub bus: Arc<dyn EventBus>,
+    /// Where `file://` secret locators resolve. Passed explicitly so a service
+    /// never reads a global configuration and a test can point it at a temp
+    /// directory.
+    pub secret_dir: std::path::PathBuf,
 }
 
 impl ServiceContext {
@@ -35,7 +40,13 @@ impl ServiceContext {
         pool: sqlx::PgPool,
         runtime: Arc<dyn RuntimeAdapter>,
         bus: Arc<dyn EventBus>,
+        secret_dir: std::path::PathBuf,
     ) -> Self {
-        Self { pool, runtime, bus }
+        Self {
+            pool,
+            runtime,
+            bus,
+            secret_dir,
+        }
     }
 }

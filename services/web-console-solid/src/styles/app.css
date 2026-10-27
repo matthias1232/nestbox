@@ -191,6 +191,13 @@ ul.plain { list-style: none; padding: 0; margin: 0; display: flex; flex-directio
 .draft-card pre { background: var(--bg-inset); padding: var(--space-3); border-radius: var(--radius-sm);
                   font-size: 12px; overflow: auto; max-height: 260px; }
 
+.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: var(--space-3); }
+.field span { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--fg-faint); }
+.field input, .field select { width: 100%; }
+
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+             gap: var(--space-3); }
+
 /* Topology ----------------------------------------------------------- */
 
 .topology { border: 1px solid var(--border); border-radius: var(--radius);

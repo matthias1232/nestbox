@@ -39,6 +39,28 @@ cross-tenant maintenance jobs.
 Provider credentials are **not** placed in the compose file. They live in
 `secrets/` and the database holds only a `locator` pointing at them (ADR 0005).
 
+### The inference credential
+
+Migration `0011` seeds one provider profile (`omniroute`) and one locator
+(`file:///secrets/omniroute_api_key`). The file itself is the operator's to
+place, because a key in a migration would be a key in the repository:
+
+```bash
+deploy/scripts/set-inference-key.sh          # prompts, writes 0600, never echoes
+# or non-interactively:
+OMNIROUTE_API_KEY=... deploy/scripts/set-inference-key.sh
+```
+
+The API resolves the locator when it creates an agent sandbox and passes the
+value to the container as `OPENAI_API_KEY` together with the profile's endpoint
+and model. It is never written to the database, never returned by an endpoint,
+and never logged — `security::secrets` refuses a locator outside `secrets/` and
+refuses a file that group or world can read.
+
+Rotating the key is: write the new value to the same file, recreate the sandbox.
+Nothing else changes, and no rebuild is needed.
+
+
 ## Start
 
 ```bash

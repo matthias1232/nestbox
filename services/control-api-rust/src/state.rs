@@ -22,8 +22,9 @@ impl AppState {
     /// Build the state from its parts.
     pub fn new(config: Config, runtime: Arc<dyn RuntimeAdapter>, pool: sqlx::PgPool) -> Self {
         let bus: Arc<dyn EventBus> = Arc::new(LocalBus::new());
+        let secret_dir = config.secret_dir.clone();
         Self {
-            services: ServiceContext::new(pool, runtime, bus),
+            services: ServiceContext::new(pool, runtime, bus, secret_dir),
             config: Arc::new(config),
         }
     }

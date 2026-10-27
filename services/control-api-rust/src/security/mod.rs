@@ -6,6 +6,7 @@
 pub mod headers;
 pub mod password;
 pub mod redaction;
+pub mod secrets;
 pub mod session;
 
 pub use redaction::{redact, redact_json};

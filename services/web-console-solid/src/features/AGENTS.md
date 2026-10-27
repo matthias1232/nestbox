@@ -37,6 +37,7 @@ features/sandboxes/
 | `traffic/` | Live traffic console |
 | `policies/` | Policies, rules, drafts |
 | `cluster/` | Gateways, supervisors, topology |
+| `providers/` | Model endpoints and their credential locators |
 | `models/` | Model catalog with hardware fit |
 | `jobs/` | Jobs and schedules |
 

@@ -74,6 +74,12 @@ pub const OPERATIONS: &[Operation] = &[
     op("POST", "/api/v1/gateways/{id}/sync", "Push configuration and clear drift", "cluster", "admin", true, false),
     op("GET", "/api/v1/supervisors", "List supervisors and their config dirtiness", "cluster", "viewer", false, false),
     op("GET", "/api/v1/topology", "The cluster graph", "cluster", "viewer", false, false),
+    op("GET", "/api/v1/providers", "List provider endpoint profiles", "providers", "viewer", false, false),
+    op("POST", "/api/v1/providers", "Register a provider profile", "providers", "operator", true, false),
+    op("GET", "/api/v1/providers/{id}", "Read a provider profile", "providers", "viewer", false, false),
+    op("PUT", "/api/v1/providers/{id}", "Change a provider profile", "providers", "operator", true, false),
+    op("DELETE", "/api/v1/providers/{id}", "Remove a provider profile", "providers", "operator", true, false),
+    op("POST", "/api/v1/providers/{id}/probe", "Probe a provider and its credential", "providers", "operator", true, false),
     op("GET", "/api/v1/models", "Model catalog with per-machine fit", "models", "viewer", false, false),
     op("GET", "/api/v1/models/installed", "Installed models", "models", "viewer", false, false),
     op("GET", "/api/v1/models/hardware", "Detected hardware", "models", "viewer", false, false),
@@ -180,7 +186,7 @@ pub fn document() -> serde_json::Value {
         "tags": [
             { "name": "system" }, { "name": "auth" }, { "name": "environments" },
             { "name": "sandboxes" }, { "name": "policies" }, { "name": "telemetry" },
-            { "name": "cluster" }, { "name": "models" }, { "name": "jobs" },
+            { "name": "cluster" }, { "name": "providers" }, { "name": "models" }, { "name": "jobs" },
             { "name": "audit" }
         ],
         "paths": paths,

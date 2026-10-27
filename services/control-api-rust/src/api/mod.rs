@@ -11,6 +11,7 @@ pub mod jobs;
 pub mod models;
 pub mod policies;
 pub mod principal;
+pub mod providers;
 pub mod sandboxes;
 pub mod system;
 pub mod telemetry;
@@ -99,6 +100,18 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/gateways/{id}/sync", post(cluster::sync))
         .route("/api/v1/supervisors", get(cluster::supervisors))
         .route("/api/v1/topology", get(cluster::topology))
+        // Providers
+        .route(
+            "/api/v1/providers",
+            get(providers::list).post(providers::create),
+        )
+        .route(
+            "/api/v1/providers/{id}",
+            get(providers::get)
+                .put(providers::update)
+                .delete(providers::delete),
+        )
+        .route("/api/v1/providers/{id}/probe", post(providers::probe))
         // Models
         .route("/api/v1/models", get(models::catalog))
         .route("/api/v1/models/installed", get(models::installed))

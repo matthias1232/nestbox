@@ -158,6 +158,15 @@ pub struct CreateSandbox {
     pub pids_limit: i64,
 }
 
+/// Whether a pack needs an inference endpoint to do its job.
+///
+/// Kept as a named rule rather than an inline `== "hermes"` so it is one place
+/// to change when a second agent pack arrives, and so the test suite can assert
+/// the list deliberately.
+pub fn pack_needs_inference(pack_key: &str) -> bool {
+    matches!(pack_key, "hermes")
+}
+
 /// The image and command a pack runs by default.
 ///
 /// Kept as one function so a new pack is one match arm, and so the API and the
@@ -256,11 +265,35 @@ pub async fn create(
 
     // Now ask the runtime. A failure here is recorded on the row, so the console
     // shows a failed sandbox instead of nothing at all.
+    // A pack that talks to a model needs the endpoint and the credential in its
+    // environment. The credential is resolved from the provider profile's
+    // locator at this moment and never stored (ADR 0005), so recreating the
+    // sandbox picks up a rotated key without an edit here.
+    let environment = if pack_needs_inference(&sandbox.pack_key) {
+        match crate::services::provider_service::inference_environment(
+            ctx,
+            principal.environment_id,
+        )
+        .await
+        {
+            Ok(values) => values.into_iter().collect(),
+            Err(error) => {
+                tracing::warn!(
+                    code = error.code.0,
+                    "provider environment unavailable; creating without it"
+                );
+                Vec::new()
+            }
+        }
+    } else {
+        Vec::new()
+    };
+
     let runtime_spec = SandboxSpec {
         name: sandbox.name.clone(),
         image: sandbox.image.clone(),
         command,
-        environment: vec![],
+        environment,
         pack_key: sandbox.pack_key.clone(),
         tool_profile: String::new(),
         memory_limit: request.memory_limit.clone(),
@@ -518,6 +551,13 @@ mod tests {
     fn a_locally_built_image_is_allowed() {
         // It has no registry digest by construction; the tag is the marker.
         assert!(reject_unpinned_image("nestbox-hermes:local", None).is_ok());
+    }
+
+    #[test]
+    fn only_agent_packs_receive_an_inference_environment() {
+        assert!(pack_needs_inference("hermes"));
+        assert!(!pack_needs_inference("ubuntu-dev"));
+        assert!(!pack_needs_inference("openclaw"));
     }
 
     #[test]

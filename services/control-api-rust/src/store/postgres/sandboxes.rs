@@ -428,3 +428,33 @@ pub async fn names(scope: &mut TenantScope<'_>) -> Result<Vec<(Uuid, String)>, S
 /// Timestamp helper kept next to the queries that use it, so the cursor and the
 /// column agree on the type.
 pub type Timestamp = DateTime<Utc>;
+
+/// Sandbox identity plus the gateway it is placed on, for the cluster graph.
+///
+/// The graph needs the placement link to draw an edge; without it every sandbox
+/// would float unconnected and the view would say nothing about the flow.
+pub async fn topology_rows(
+    scope: &mut TenantScope<'_>,
+) -> Result<Vec<(Uuid, String, Option<Uuid>, String)>, StoreError> {
+    let rows = sqlx::query(
+        "SELECT id, name, gateway_id, status
+           FROM sandboxes
+          WHERE environment_id = $1
+          ORDER BY name
+          LIMIT 2000",
+    )
+    .bind(scope.environment_id())
+    .fetch_all(scope.connection())
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push((
+            row.try_get("id")?,
+            row.try_get("name")?,
+            row.try_get("gateway_id")?,
+            row.try_get("status")?,
+        ));
+    }
+    Ok(out)
+}

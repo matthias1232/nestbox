@@ -205,6 +205,11 @@ pub async fn supervisors(
 }
 
 /// The cluster graph.
+///
+/// Nodes are gateways and sandboxes, and an edge means "this gateway carries
+/// this sandbox". A sandbox with no gateway is shown unconnected rather than
+/// given a fake edge, because "not placed" is a real state an operator needs to
+/// see.
 pub async fn topology(
     ctx: &ServiceContext,
     principal: &Principal,
@@ -214,38 +219,62 @@ pub async fn topology(
         .await
         .map_err(ApiError::from)?;
 
-    let mut topology = store::topology(&mut scope).await.map_err(ApiError::from)?;
-
-    // Attach the sandboxes so the graph shows what runs where, which is the
-    // whole point of a topology view.
-    let sandboxes = crate::store::postgres::sandboxes::names(&mut scope)
+    let gateways = store::list(&mut scope).await.map_err(ApiError::from)?;
+    let sandboxes = crate::store::postgres::sandboxes::topology_rows(&mut scope)
         .await
         .map_err(ApiError::from)?;
-    let gateways = store::list(&mut scope).await.map_err(ApiError::from)?;
+    let clustered = crate::store::postgres::environments::list_clusters(&mut scope)
+        .await
+        .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
 
+    let mut nodes = Vec::new();
     let mut edges = Vec::new();
-    if let Some(nodes) = topology.get_mut("nodes").and_then(|n| n.as_array_mut()) {
-        for (sandbox_id, name) in sandboxes {
-            nodes.push(serde_json::json!({
-                "id": sandbox_id,
-                "kind": "sandbox",
-                "name": name,
-            }));
-        }
-        for gateway in &gateways {
+
+    for cluster in &clustered {
+        nodes.push(serde_json::json!({
+            "id": cluster.id,
+            "kind": "supervisor",
+            "name": cluster.name,
+            "status": "running",
+        }));
+    }
+
+    for gateway in &gateways {
+        nodes.push(serde_json::json!({
+            "id": gateway.id,
+            "kind": "gateway",
+            "name": gateway.name,
+            "status": gateway.status.as_str(),
+            "drifted": gateway.is_drifted(),
+            "capacity": gateway.capacity,
+            "used": gateway.used,
+        }));
+        edges.push(serde_json::json!({
+            "from": gateway.cluster_id,
+            "to": gateway.id,
+            "kind": "hosts",
+        }));
+    }
+
+    for (id, name, gateway_id, status) in sandboxes {
+        nodes.push(serde_json::json!({
+            "id": id,
+            "kind": "sandbox",
+            "name": name,
+            "status": status,
+            "placed": gateway_id.is_some(),
+        }));
+        if let Some(gateway) = gateway_id {
             edges.push(serde_json::json!({
-                "from": gateway.id,
-                "to": "cluster",
+                "from": gateway,
+                "to": id,
                 "kind": "hosts",
             }));
         }
     }
-    if let Some(object) = topology.as_object_mut() {
-        object.insert("edges".into(), serde_json::Value::Array(edges));
-    }
 
-    Ok(topology)
+    Ok(serde_json::json!({ "nodes": nodes, "edges": edges }))
 }
 
 /// Refuse an action when no gateway is healthy, with an explanation.

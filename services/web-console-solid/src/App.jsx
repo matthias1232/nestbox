@@ -12,6 +12,7 @@ import SandboxListPage from './features/sandboxes/SandboxListPage.jsx';
 import TrafficPage from './features/traffic/TrafficPage.jsx';
 import PoliciesPage from './features/policies/PoliciesPage.jsx';
 import ClusterPage from './features/cluster/ClusterPage.jsx';
+import ProvidersPage from './features/providers/ProvidersPage.jsx';
 import ModelsPage from './features/models/ModelsPage.jsx';
 import JobsPage from './features/jobs/JobsPage.jsx';
 
@@ -20,6 +21,7 @@ const ROUTES = [
   { id: 'traffic', label: 'Live traffic' },
   { id: 'policies', label: 'Policies' },
   { id: 'cluster', label: 'Cluster' },
+  { id: 'providers', label: 'Providers' },
   { id: 'models', label: 'Models' },
   { id: 'operations', label: 'Operations' },
 ];
@@ -99,6 +101,7 @@ export default function App() {
             <Show when={route() === 'traffic'}><TrafficPage /></Show>
             <Show when={route() === 'policies'}><PoliciesPage /></Show>
             <Show when={route() === 'cluster'}><ClusterPage /></Show>
+            <Show when={route() === 'providers'}><ProvidersPage /></Show>
             <Show when={route() === 'models'}><ModelsPage /></Show>
             <Show when={route() === 'operations'}><JobsPage /></Show>
           </main>

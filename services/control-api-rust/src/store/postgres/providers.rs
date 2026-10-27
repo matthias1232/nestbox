@@ -117,6 +117,49 @@ pub async fn delete(scope: &mut TenantScope<'_>, id: Uuid) -> Result<(), StoreEr
     }
 }
 
+/// Replace a provider profile's mutable fields.
+///
+/// Name and kind are not mutable: a name is how other rows refer to the profile
+/// in audit output, and changing the kind would silently reinterpret an existing
+/// endpoint. A correction of either is a delete and a create, which is visible
+/// in the audit trail.
+pub async fn update(
+    scope: &mut TenantScope<'_>,
+    id: Uuid,
+    expected_version: i64,
+    endpoint: &str,
+    model: Option<&str>,
+    secret_ref: Option<&str>,
+    labels: &serde_json::Value,
+) -> Result<ProviderProfile, StoreError> {
+    let sql = format!(
+        "WITH updated AS (
+            UPDATE provider_profiles
+               SET endpoint = $3,
+                   model = $4,
+                   secret_ref = $5,
+                   labels = $6,
+                   version = version + 1,
+                   updated_at = now()
+             WHERE environment_id = $1 AND id = $2 AND version = $7
+         RETURNING {PROFILE_COLUMNS}
+         )
+         SELECT {PROFILE_COLUMNS} FROM updated"
+    );
+    let row = sqlx::query(&sql)
+        .bind(scope.environment_id())
+        .bind(id)
+        .bind(endpoint)
+        .bind(model)
+        .bind(secret_ref)
+        .bind(labels)
+        .bind(expected_version)
+        .fetch_optional(scope.connection())
+        .await?
+        .ok_or(StoreError::VersionConflict)?;
+    row_to_profile(&row)
+}
+
 /// Record that a credential was rotated now.
 pub async fn mark_rotated(
     scope: &mut TenantScope<'_>,

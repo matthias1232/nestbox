@@ -57,6 +57,10 @@ impl ErrorCode {
     pub const DRAFT_NOT_FOUND: Self = Self("draft.not_found");
     pub const DRAFT_NOT_PENDING: Self = Self("draft.not_pending");
 
+    pub const SECRET_UNRESOLVABLE: Self = Self("secret.unresolvable");
+    pub const PROVIDER_NOT_FOUND: Self = Self("provider.not_found");
+    pub const PROVIDER_CREDENTIAL_MISSING: Self = Self("provider.credential_missing");
+
     pub const VALIDATION_FAILED: Self = Self("request.validation_failed");
     pub const PAYLOAD_TOO_LARGE: Self = Self("request.payload_too_large");
     pub const RATE_LIMITED: Self = Self("request.rate_limited");
