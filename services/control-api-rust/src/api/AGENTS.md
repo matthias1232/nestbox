@@ -42,7 +42,7 @@ The architecture test enforces the last two.
 | `providers.rs` | Provider profiles, probe |
 | `models.rs` | Catalog with filters, hardware, facets, requirements, installs, sync |
 | `nodes.rs` | Nodes, budget, probe (handlers: `feat/nodes-api`) |
-| `packs.rs` | Baselines, agent packs, tool catalog (`feat/packs-as-data`) |
+| `packs.rs` | Baselines, agent packs, tool catalog (with `?baseline=`) |
 | `recipes.rs` | Recipe CRUD, build, instantiate (`feat/recipes-build`) |
 | `persistent_roots.rs` | Roots, mount, dismount, usage (`feat/persistent-roots`) |
 | `sandbox_agents.rs` | Agents inside a sandbox (`feat/sandbox-agents`) |
