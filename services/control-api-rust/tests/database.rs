@@ -50,6 +50,79 @@ async fn migrations_seed_the_default_environment() {
     assert!(schedules >= 8, "the operational schedules should be seeded");
 }
 
+/// The catalogue describes the gate it actually uses.
+///
+/// A CPU model without a RAM figure has no gate at all and would look
+/// installable everywhere; a GPU model without a VRAM figure likewise. This is
+/// checked as data rather than left to convention, because the catalog is
+/// written by hand and a missing column is invisible in JSON (`null` reads as
+/// "no requirement", not "unknown").
+#[tokio::test]
+async fn the_model_catalog_states_the_gate_it_uses() {
+    let Some(pool) = connect().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+
+    let cpu_without_ram: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM models
+          WHERE is_cpu_only AND (min_ram_bytes IS NULL OR min_vram_bytes IS NOT NULL)",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("query");
+    assert_eq!(
+        cpu_without_ram, 0,
+        "a CPU-only model needs a RAM gate and must not claim a VRAM gate"
+    );
+
+    let cuda_without_vram: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM models
+          WHERE runtime = 'cuda' AND NOT is_remote AND min_vram_bytes IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("query");
+    assert_eq!(
+        cuda_without_vram, 0,
+        "a GPU-only model needs a VRAM gate"
+    );
+
+    let hybrid_without_either: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM models
+          WHERE runtime = 'hybrid'
+            AND (min_vram_bytes IS NULL OR min_ram_bytes IS NULL)",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("query");
+    assert_eq!(
+        hybrid_without_either, 0,
+        "a hybrid model needs both the GPU gate and the CPU fallback gate"
+    );
+
+    let catalog_size: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM models")
+        .fetch_one(&pool)
+        .await
+        .expect("count");
+    assert!(
+        catalog_size >= 40,
+        "the catalog should be broad (NVIDIA, DeepSeek, Qwen, Llama, Gemma, Phi, CPU-only), got {catalog_size}"
+    );
+
+    // Recommended never lies below minimum, and the two units are distinct on
+    // purpose: a row that copies VRAM into RAM would hide the CPU path.
+    let copied_gate: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM models
+          WHERE recommended_ram_bytes IS NOT NULL AND min_ram_bytes IS NOT NULL
+            AND recommended_ram_bytes < min_ram_bytes",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("query");
+    assert_eq!(copied_gate, 0, "recommended RAM must be at least the minimum");
+}
+
 /// Row-level security refuses a row from another environment.
 ///
 /// This is the second line of defence (ADR 0004): even a query that forgot its

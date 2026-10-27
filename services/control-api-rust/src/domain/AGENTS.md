@@ -47,7 +47,7 @@ microseconds is that it has none.
 | `network_rule.rs` | A network rule and its enforcement mode |
 | `telemetry.rs` | Network, DNS, and inference events |
 | `job.rs` | Job, status, progress |
-| `model_catalog.rs` | Model, hardware profile, fit classification |
+| `model.rs` | Model, hardware profile, fit classification, resource bars |
 | `pagination.rs` | Cursor, filter, sort, facet types |
 | `auth.rs` | User, role, permission |
 

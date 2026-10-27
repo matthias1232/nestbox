@@ -147,6 +147,74 @@ tr.row-deny { background: #1e1114; }
 .cards b { display: block; font-size: 20px; margin: 2px 0; }
 .cards small { color: var(--fg-muted); font-size: 12px; }
 
+/* Capacity and fit bars ---------------------------------------------- */
+
+.capacity { background: var(--bg-raised); border: 1px solid var(--border);
+            border-radius: var(--radius); padding: var(--space-4);
+            margin-bottom: var(--space-4); }
+.capacity-head { display: flex; justify-content: space-between; align-items: flex-start;
+                 gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-3); }
+.capacity-head h2 { margin: 0; font-size: 15px; }
+.capacity-head p { margin: 2px 0 0; }
+.capacity-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.capacity-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+                 gap: var(--space-3); }
+.capacity-grid article { background: var(--bg-inset); border: 1px solid var(--border);
+                         border-radius: var(--radius-sm); padding: var(--space-3); }
+.capacity-grid span { display: block; font-size: 11px; text-transform: uppercase;
+                      letter-spacing: 0.07em; color: var(--fg-faint); }
+.capacity-grid b { display: block; font-size: 17px; margin: 2px 0; font-weight: 600; }
+.capacity-grid small { display: block; color: var(--fg-muted); font-size: 11px; }
+.capacity-bar { height: 6px; background: #070a0e; border: 1px solid var(--border);
+                border-radius: 999px; overflow: hidden; margin: 6px 0 4px; }
+.capacity-bar > div { height: 100%; background: var(--accent); border-radius: 999px; }
+.capacity-gpus { display: flex; gap: 6px; flex-wrap: wrap; margin-top: var(--space-3); }
+.gpu-chip { border: 1px solid var(--border); border-radius: var(--radius-sm);
+            padding: 2px 8px; color: var(--fg-muted); }
+.capacity > p { margin: var(--space-3) 0 0; }
+
+/* The have-versus-need bars: two tracks, one for what the machine has, one for
+   what the model needs. The need track shows the minimum solid and the
+   recommendation lighter, so "starts" and "comfortable" are distinguishable. */
+.resbars { display: grid; gap: 4px; margin-top: 6px; }
+.resbar { display: grid; grid-template-columns: 92px 1fr 104px; gap: 8px;
+          align-items: center; color: var(--fg-faint); }
+.resbars.compact .resbar { grid-template-columns: 66px 1fr 92px; }
+.resbar-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.resbar-tracks { display: grid; gap: 2px; }
+.resbar .track { height: 5px; background: #070a0e; border: 1px solid var(--border);
+                 border-radius: 999px; overflow: hidden; position: relative; }
+.resbar .track .fill { position: absolute; left: 0; top: 0; bottom: 0;
+                       background: currentColor; border-radius: 999px; }
+.resbar .track.need .fill { opacity: 0.45; }
+.resbar .track.need .fill.rec { opacity: 0.18; }
+.resbar-values { text-align: right; font-size: 11px; color: var(--fg-faint); }
+.resbar-values b { color: var(--fg); font-weight: 600; }
+.resbar.ok { color: var(--ok); }
+.resbar.warn { color: var(--warn); }
+.resbar.bad { color: var(--bad); }
+.resbar.muted { color: var(--fg-faint); }
+
+.fitcell { display: flex; flex-direction: column; gap: 2px; min-width: 230px; }
+.fit-column { min-width: 340px; vertical-align: top; padding-top: 8px; padding-bottom: 8px; }
+.bad-text { color: var(--bad); }
+td.fit-column .muted { margin-top: 4px; }
+
+/* Model filters ------------------------------------------------------- */
+
+.filters { display: flex; flex-direction: column; gap: var(--space-2);
+           margin-bottom: var(--space-3); }
+.filters > input { max-width: 420px; }
+.facet-row { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+.facet-row select { padding: 3px 8px; font-size: 12px; }
+.tag { display: inline-block; border: 1px solid var(--border); border-radius: 4px;
+       padding: 0 5px; margin: 0 4px 0 0; font-size: 10px; text-transform: uppercase;
+       letter-spacing: 0.05em; color: var(--fg-muted); }
+.tiny-badge { margin-left: 6px; font-size: 10px; padding: 1px 6px; }
+.phase-note { margin-top: var(--space-3); }
+tr.fit-yes td:first-child { box-shadow: inset 2px 0 0 var(--ok); }
+
 /* Drawer ------------------------------------------------------------- */
 
 .drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 10; }

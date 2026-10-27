@@ -31,7 +31,7 @@ component never contains a URL.
 | `telemetry.js` | history, facets, the SSE stream |
 | `cluster.js` | gateways, settings, sync, supervisors, topology |
 | `providers.js` | profiles, probe; locators only, never a value |
-| `models.js` | catalog, hardware, install, uninstall |
+| `models.js` | catalog with filters, hardware, facets, requirements, install, uninstall |
 | `jobs.js` | jobs, logs, schedules |
 
 ## Extending

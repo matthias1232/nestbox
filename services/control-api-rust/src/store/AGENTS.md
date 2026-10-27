@@ -45,7 +45,7 @@ than by the compiler.
 | `postgres/policies.rs` | Policy documents, versions, rules |
 | `postgres/telemetry.rs` | Event insert and query |
 | `postgres/gateways.rs` | Gateways and supervisors |
-| `postgres/models.rs` | Catalog and hardware profiles |
+| `postgres/models.rs` | Catalog (with SQL filters and facets) and hardware profiles |
 | `postgres/jobs.rs` | Jobs, targets, schedules |
 | `postgres/auth.rs` | Users, sessions, scopes |
 | `postgres/environments.rs` | Environments and clusters |

@@ -4,9 +4,15 @@
 //! clicking install, which models this machine can run and why not when it
 //! cannot (ADR 0013).
 //!
-//! The classification and the shortfall both come from here, so the badge in the
-//! console and the gate in the API cannot disagree. The client renders the
-//! verdict; it does not compute it.
+//! The classification, the shortfall, and the resource bars all come from here,
+//! so the badge in the console and the gate in the API cannot disagree. The
+//! client renders the verdict; it does not compute it.
+//!
+//! Three kinds of machine are modelled, because they gate differently:
+//!
+//! * discrete GPU(s): a model must fit one card (or `min_gpu_count` cards);
+//! * unified memory (DGX Spark / GB10): one pool that is both RAM and VRAM;
+//! * no GPU: only a `cpu` or `hybrid` model fits, gated by RAM and cores.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -37,14 +43,26 @@ pub struct HardwareProfile {
     /// Storing it separately is what lets the classifier treat it correctly
     /// instead of adding it to VRAM and double-counting.
     pub unified_memory_bytes: Option<i64>,
+    /// Where the unified figure came from, so an inferred number is never
+    /// mistaken for a measured one.
+    #[serde(default)]
+    pub unified_memory_source: Option<String>,
     pub cuda_version: Option<String>,
     pub driver_version: Option<String>,
     /// Why detection produced what it did: no driver, no devices, permission.
     pub detection_note: Option<String>,
+    #[serde(default)]
+    pub cpu_model: Option<String>,
+    #[serde(default)]
+    pub cpu_cores: Option<i32>,
+    #[serde(default)]
+    pub cpu_threads: Option<i32>,
+    #[serde(default)]
+    pub system_ram_bytes: Option<i64>,
 }
 
 impl HardwareProfile {
-    /// The memory a single model can address.
+    /// The memory a single model can address on the GPU side.
     ///
     /// On a discrete-GPU machine this is the largest single card, because a
     /// model that does not fit one card needs tensor parallelism, which the
@@ -55,6 +73,15 @@ impl HardwareProfile {
             return unified;
         }
         self.gpus.iter().map(|g| g.memory_bytes).max().unwrap_or(0)
+    }
+
+    /// The memory a CPU-side model can address.
+    ///
+    /// On a unified machine the pool is the RAM; otherwise it is system RAM.
+    pub fn addressable_ram_bytes(&self) -> i64 {
+        self.unified_memory_bytes
+            .or(self.system_ram_bytes)
+            .unwrap_or(0)
     }
 
     /// The number of addressable GPU devices.
@@ -72,9 +99,50 @@ impl HardwareProfile {
         }
     }
 
-    /// Whether the machine can host models at all.
+    /// Whether the machine can host GPU models at all.
     pub fn has_gpu(&self) -> bool {
         !self.gpus.is_empty() || self.unified_memory_bytes.unwrap_or(0) > 0
+    }
+
+    /// Whether this is a unified-memory machine.
+    pub fn is_unified(&self) -> bool {
+        self.unified_memory_bytes.unwrap_or(0) > 0
+    }
+
+    /// Cores available for a CPU-side model; zero when unknown.
+    pub fn cores(&self) -> i32 {
+        self.cpu_cores.unwrap_or(0)
+    }
+}
+
+/// Where a model runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelRuntime {
+    /// Needs a GPU.
+    Cuda,
+    /// Runs on the CPU alone.
+    Cpu,
+    /// Prefers a GPU, falls back to the CPU with the RAM gate applied.
+    Hybrid,
+}
+
+impl ModelRuntime {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cuda => "cuda",
+            Self::Cpu => "cpu",
+            Self::Hybrid => "hybrid",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "cuda" => Self::Cuda,
+            "cpu" => Self::Cpu,
+            "hybrid" => Self::Hybrid,
+            _ => return None,
+        })
     }
 }
 
@@ -89,9 +157,24 @@ pub struct Model {
     pub context_length: Option<i64>,
     pub quantization: Option<String>,
     pub weights_bytes: Option<i64>,
-    /// The gate: what the machine must have.
+    /// The GPU gate: what one card (or the unified pool) must have.
     pub min_vram_bytes: Option<i64>,
+    pub recommended_vram_bytes: Option<i64>,
     pub min_gpu_count: i32,
+    /// The CPU-side gate.
+    pub min_ram_bytes: Option<i64>,
+    pub recommended_ram_bytes: Option<i64>,
+    pub min_cpu_cores: Option<i32>,
+    pub recommended_cpu_cores: Option<i32>,
+    pub runtime: ModelRuntime,
+    pub arch: Option<String>,
+    pub artifact_format: Option<String>,
+    pub publisher: Option<String>,
+    pub license: Option<String>,
+    pub description: Option<String>,
+    /// Weights exceed any discrete card but fit a unified pool.
+    pub unified_memory_only: bool,
+    pub is_cpu_only: bool,
     pub source_uri: Option<String>,
     pub version: String,
     pub installed_version: Option<String>,
@@ -149,14 +232,23 @@ impl ModelState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Fit {
+    /// Fits on the GPU side.
     Installable,
+    /// Fits on the CPU side (RAM and cores), with no GPU involved.
+    CpuInstallable,
     AlreadyInstalled,
     UpdateAvailable,
     /// Enough GPUs but not enough memory on one.
     InsufficientVram,
     /// Enough memory per card but too few cards.
     InsufficientGpus,
-    /// No GPU at all.
+    /// Not enough system RAM for the CPU path.
+    InsufficientRam,
+    /// Not enough cores for the CPU path.
+    InsufficientCpu,
+    /// Only fits a unified-memory pool, and this machine has none.
+    NeedsUnifiedMemory,
+    /// No GPU at all, and the model needs one.
     NoGpu,
     /// Served by a provider; nothing to install.
     Remote,
@@ -165,8 +257,74 @@ pub enum Fit {
 impl Fit {
     /// Whether the install button should be enabled.
     pub fn allows_install(self) -> bool {
-        matches!(self, Self::Installable | Self::UpdateAvailable)
+        matches!(
+            self,
+            Self::Installable | Self::CpuInstallable | Self::UpdateAvailable
+        )
     }
+
+    /// Whether this verdict belongs in the console's "fits this machine" filter.
+    pub fn fits(self) -> bool {
+        matches!(
+            self,
+            Self::Installable | Self::CpuInstallable | Self::AlreadyInstalled | Self::UpdateAvailable
+        )
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Installable => "installable",
+            Self::CpuInstallable => "cpu_installable",
+            Self::AlreadyInstalled => "already_installed",
+            Self::UpdateAvailable => "update_available",
+            Self::InsufficientVram => "insufficient_vram",
+            Self::InsufficientGpus => "insufficient_gpus",
+            Self::InsufficientRam => "insufficient_ram",
+            Self::InsufficientCpu => "insufficient_cpu",
+            Self::NeedsUnifiedMemory => "needs_unified_memory",
+            Self::NoGpu => "no_gpu",
+            Self::Remote => "remote",
+        }
+    }
+}
+
+/// Which resource a bar describes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Resource {
+    Vram,
+    UnifiedMemory,
+    Ram,
+    CpuCores,
+    Gpus,
+}
+
+/// One "have versus need" comparison, computed here so the console draws what
+/// the gate decided.
+///
+/// `recommended` may be absent; `minimum` is the gate. `available` is what the
+/// machine has. All in the resource's natural unit (bytes or a count).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ResourceBar {
+    pub resource: Resource,
+    pub available: i64,
+    pub minimum: Option<i64>,
+    pub recommended: Option<i64>,
+    /// `ok` when available >= recommended (or >= minimum with no
+    /// recommendation), `tight` when between minimum and recommended, `short`
+    /// when below minimum, `unknown` when the machine's figure is missing.
+    pub status: BarStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BarStatus {
+    Ok,
+    Tight,
+    Short,
+    Unknown,
+    /// This resource does not gate this model.
+    NotRequired,
 }
 
 /// The classification plus the numbers that produced it.
@@ -183,26 +341,54 @@ pub struct FitReport {
     pub available_gpus: i32,
     /// Bytes short, when memory is the blocker.
     pub vram_shortfall_bytes: Option<i64>,
+    pub required_ram_bytes: Option<i64>,
+    pub available_ram_bytes: i64,
+    pub ram_shortfall_bytes: Option<i64>,
+    pub required_cpu_cores: Option<i32>,
+    pub available_cpu_cores: i32,
+    /// Whether the verdict was reached on the CPU path.
+    pub cpu_path: bool,
+    /// The bars the console draws.
+    pub bars: Vec<ResourceBar>,
     /// A sentence the console can show verbatim.
     pub reason: String,
 }
 
 /// Classify a model against a machine.
 ///
-/// Order matters: remote first (nothing to check), then already installed, then
-/// the hardware gates. Checking hardware before "already installed" would show a
-/// model as uninstallable on a machine where it is running.
+/// Order matters, and the order is the rule:
+///
+/// 1. remote → nothing to check;
+/// 2. installed → never "uninstallable" on the machine where it runs;
+/// 3. unified-only without a unified pool → cannot be rescued by RAM or VRAM;
+/// 4. `cpu` → RAM and cores only;
+/// 5. `hybrid` → the GPU gate if there is a GPU, else the CPU gate;
+/// 6. `cuda` → the GPU gate.
 pub fn classify(model: &Model, hardware: &HardwareProfile) -> FitReport {
+    let bars = resource_bars(model, hardware);
+    let base = |fit: Fit, reason: String, cpu_path: bool| FitReport {
+        fit,
+        required_vram_bytes: model.min_vram_bytes,
+        required_gpus: model.min_gpu_count,
+        available_vram_bytes: hardware.addressable_memory_bytes(),
+        available_gpus: hardware.gpu_count(),
+        vram_shortfall_bytes: None,
+        required_ram_bytes: model.min_ram_bytes,
+        available_ram_bytes: hardware.addressable_ram_bytes(),
+        ram_shortfall_bytes: None,
+        required_cpu_cores: model.min_cpu_cores,
+        available_cpu_cores: hardware.cores(),
+        cpu_path,
+        bars: bars.clone(),
+        reason,
+    };
+
     if model.is_remote || model.state == ModelState::Remote {
-        return FitReport {
-            fit: Fit::Remote,
-            required_vram_bytes: None,
-            required_gpus: 0,
-            available_vram_bytes: hardware.addressable_memory_bytes(),
-            available_gpus: hardware.gpu_count(),
-            vram_shortfall_bytes: None,
-            reason: "Served by a cloud provider; nothing to install on this machine.".into(),
-        };
+        return base(
+            Fit::Remote,
+            "Served by a cloud provider; nothing to install on this machine.".into(),
+            false,
+        );
     }
 
     if model.state == ModelState::Installed {
@@ -210,18 +396,9 @@ pub fn classify(model: &Model, hardware: &HardwareProfile) -> FitReport {
             .installed_version
             .as_deref()
             .is_some_and(|installed| installed != model.version);
-        return FitReport {
-            fit: if update {
-                Fit::UpdateAvailable
-            } else {
-                Fit::AlreadyInstalled
-            },
-            required_vram_bytes: model.min_vram_bytes,
-            required_gpus: model.min_gpu_count,
-            available_vram_bytes: hardware.addressable_memory_bytes(),
-            available_gpus: hardware.gpu_count(),
-            vram_shortfall_bytes: None,
-            reason: if update {
+        return base(
+            if update { Fit::UpdateAvailable } else { Fit::AlreadyInstalled },
+            if update {
                 format!(
                     "Installed version {} can be updated to {}.",
                     model.installed_version.as_deref().unwrap_or("unknown"),
@@ -230,76 +407,265 @@ pub fn classify(model: &Model, hardware: &HardwareProfile) -> FitReport {
             } else {
                 format!("Installed and up to date ({}).", model.version)
             },
-        };
+            false,
+        );
     }
 
+    if model.unified_memory_only && !hardware.is_unified() {
+        return base(
+            Fit::NeedsUnifiedMemory,
+            format!(
+                "{} needs a unified-memory machine (DGX Spark / GB10) with about {}; \
+                 its weights exceed any single discrete card.",
+                model.name,
+                human_gib(model.min_vram_bytes.unwrap_or(0))
+            ),
+            false,
+        );
+    }
+
+    let use_cpu_path = match model.runtime {
+        ModelRuntime::Cpu => true,
+        ModelRuntime::Hybrid => !hardware.has_gpu(),
+        ModelRuntime::Cuda => false,
+    };
+
+    if use_cpu_path {
+        return classify_cpu(model, hardware, base);
+    }
+
+    classify_gpu(model, hardware, base)
+}
+
+fn classify_cpu(
+    model: &Model,
+    hardware: &HardwareProfile,
+    base: impl Fn(Fit, String, bool) -> FitReport,
+) -> FitReport {
+    let available_ram = hardware.addressable_ram_bytes();
+    let required_ram = model.min_ram_bytes.unwrap_or(0);
+
+    if available_ram == 0 {
+        return base(
+            Fit::InsufficientRam,
+            format!(
+                "{} runs on the CPU and needs about {} of RAM, but this machine's RAM \
+                 was not detected. Probe the hardware again.",
+                model.name,
+                human_gib(required_ram)
+            ),
+            true,
+        );
+    }
+
+    if available_ram < required_ram {
+        let shortfall = required_ram - available_ram;
+        let mut report = base(
+            Fit::InsufficientRam,
+            format!(
+                "{} needs about {} of RAM on the CPU; this machine has {}. Short by {}.",
+                model.name,
+                human_gib(required_ram),
+                human_gib(available_ram),
+                human_gib(shortfall)
+            ),
+            true,
+        );
+        report.ram_shortfall_bytes = Some(shortfall);
+        return report;
+    }
+
+    if let Some(required_cores) = model.min_cpu_cores {
+        let cores = hardware.cores();
+        if cores > 0 && cores < required_cores {
+            return base(
+                Fit::InsufficientCpu,
+                format!(
+                    "{} wants at least {} CPU cores; this machine has {}.",
+                    model.name, required_cores, cores
+                ),
+                true,
+            );
+        }
+    }
+
+    let recommended = model.recommended_ram_bytes.unwrap_or(required_ram);
+    let tight = available_ram < recommended;
+    base(
+        Fit::CpuInstallable,
+        if tight {
+            format!(
+                "Runs on the CPU: needs {} of RAM, {} recommended, this machine has {}. \
+                 Expect it to be slow.",
+                human_gib(required_ram),
+                human_gib(recommended),
+                human_gib(available_ram)
+            )
+        } else {
+            format!(
+                "Runs on the CPU without a GPU: needs {} of RAM, this machine has {}.",
+                human_gib(required_ram),
+                human_gib(available_ram)
+            )
+        },
+        true,
+    )
+}
+
+fn classify_gpu(
+    model: &Model,
+    hardware: &HardwareProfile,
+    base: impl Fn(Fit, String, bool) -> FitReport,
+) -> FitReport {
     let available_vram = hardware.addressable_memory_bytes();
     let available_gpus = hardware.gpu_count();
     let required_vram = model.min_vram_bytes.unwrap_or(0);
 
     if !hardware.has_gpu() {
-        return FitReport {
-            fit: Fit::NoGpu,
-            required_vram_bytes: model.min_vram_bytes,
-            required_gpus: model.min_gpu_count,
-            available_vram_bytes: 0,
-            available_gpus: 0,
-            vram_shortfall_bytes: None,
-            reason: format!(
-                "No GPU detected. {} needs about {}.",
+        let mut report = base(
+            Fit::NoGpu,
+            format!(
+                "No GPU detected. {} needs about {} of GPU memory.",
                 model.name,
                 human_gib(required_vram)
             ),
-        };
+            false,
+        );
+        report.available_vram_bytes = 0;
+        report.available_gpus = 0;
+        return report;
     }
 
     if available_gpus < model.min_gpu_count {
-        return FitReport {
-            fit: Fit::InsufficientGpus,
-            required_vram_bytes: model.min_vram_bytes,
-            required_gpus: model.min_gpu_count,
-            available_vram_bytes: available_vram,
-            available_gpus,
-            vram_shortfall_bytes: None,
-            reason: format!(
+        return base(
+            Fit::InsufficientGpus,
+            format!(
                 "{} needs {} GPUs; this machine has {}.",
                 model.name, model.min_gpu_count, available_gpus
             ),
-        };
+            false,
+        );
     }
 
     if available_vram < required_vram {
         let shortfall = required_vram - available_vram;
-        return FitReport {
-            fit: Fit::InsufficientVram,
-            required_vram_bytes: model.min_vram_bytes,
-            required_gpus: model.min_gpu_count,
-            available_vram_bytes: available_vram,
-            available_gpus,
-            vram_shortfall_bytes: Some(shortfall),
-            reason: format!(
+        let mut report = base(
+            Fit::InsufficientVram,
+            format!(
                 "{} needs about {}; this machine has {}. Short by {}.",
                 model.name,
                 human_gib(required_vram),
                 human_gib(available_vram),
                 human_gib(shortfall)
             ),
-        };
+            false,
+        );
+        report.vram_shortfall_bytes = Some(shortfall);
+        return report;
     }
 
-    FitReport {
-        fit: Fit::Installable,
-        required_vram_bytes: model.min_vram_bytes,
-        required_gpus: model.min_gpu_count,
-        available_vram_bytes: available_vram,
-        available_gpus,
-        vram_shortfall_bytes: None,
-        reason: format!(
-            "Fits: needs about {} of {}, this machine has {}.",
-            human_gib(required_vram),
-            human_gib(available_vram),
-            human_gib(available_vram)
-        ),
+    let recommended = model.recommended_vram_bytes.unwrap_or(required_vram);
+    let pool = if hardware.is_unified() { "unified memory" } else { "GPU memory" };
+    base(
+        Fit::Installable,
+        if available_vram < recommended {
+            format!(
+                "Fits: needs {} of {}, {} recommended, this machine has {}.",
+                human_gib(required_vram),
+                pool,
+                human_gib(recommended),
+                human_gib(available_vram)
+            )
+        } else {
+            format!(
+                "Fits: needs about {} of {}, this machine has {}.",
+                human_gib(required_vram),
+                pool,
+                human_gib(available_vram)
+            )
+        },
+        false,
+    )
+}
+
+/// The "have versus need" bars for a model on a machine.
+///
+/// Every model gets the same set of bars so the table is scannable: a bar that
+/// does not apply is marked `NotRequired` rather than omitted. The unified bar
+/// replaces the VRAM bar on a unified machine, because showing both would
+/// double-count the same pool.
+pub fn resource_bars(model: &Model, hardware: &HardwareProfile) -> Vec<ResourceBar> {
+    let gpu_bar = if hardware.is_unified() {
+        bar(
+            Resource::UnifiedMemory,
+            Some(hardware.addressable_memory_bytes()),
+            model.min_vram_bytes,
+            model.recommended_vram_bytes,
+            model.runtime != ModelRuntime::Cpu,
+        )
+    } else {
+        bar(
+            Resource::Vram,
+            Some(hardware.addressable_memory_bytes()).filter(|v| *v > 0),
+            model.min_vram_bytes,
+            model.recommended_vram_bytes,
+            model.runtime != ModelRuntime::Cpu,
+        )
+    };
+
+    let ram_bar = bar(
+        Resource::Ram,
+        Some(hardware.addressable_ram_bytes()).filter(|v| *v > 0),
+        model.min_ram_bytes,
+        model.recommended_ram_bytes,
+        model.runtime != ModelRuntime::Cuda,
+    );
+
+    let cpu_bar = bar(
+        Resource::CpuCores,
+        Some(i64::from(hardware.cores())).filter(|v| *v > 0),
+        model.min_cpu_cores.map(i64::from),
+        model.recommended_cpu_cores.map(i64::from),
+        model.runtime != ModelRuntime::Cuda,
+    );
+
+    let gpu_count_bar = bar(
+        Resource::Gpus,
+        Some(i64::from(hardware.gpu_count())),
+        Some(i64::from(model.min_gpu_count)),
+        None,
+        model.runtime != ModelRuntime::Cpu,
+    );
+
+    vec![gpu_bar, ram_bar, cpu_bar, gpu_count_bar]
+}
+
+fn bar(
+    resource: Resource,
+    available: Option<i64>,
+    minimum: Option<i64>,
+    recommended: Option<i64>,
+    applies: bool,
+) -> ResourceBar {
+    let status = if !applies || minimum.is_none() {
+        BarStatus::NotRequired
+    } else {
+        match (available, minimum) {
+            (None, _) => BarStatus::Unknown,
+            (Some(have), Some(min)) if have < min => BarStatus::Short,
+            (Some(have), Some(_)) => match recommended {
+                Some(rec) if have < rec => BarStatus::Tight,
+                _ => BarStatus::Ok,
+            },
+            _ => BarStatus::NotRequired,
+        }
+    };
+    ResourceBar {
+        resource,
+        available: available.unwrap_or(0),
+        minimum,
+        recommended,
+        status,
     }
 }
 
@@ -309,7 +675,12 @@ fn human_gib(bytes: i64) -> String {
     if bytes <= 0 {
         return "0 GiB".into();
     }
-    format!("{:.0} GiB", bytes as f64 / GIB)
+    let gib = bytes as f64 / GIB;
+    if gib < 10.0 {
+        format!("{gib:.1} GiB")
+    } else {
+        format!("{gib:.0} GiB")
+    }
 }
 
 #[cfg(test)]
@@ -337,9 +708,14 @@ mod tests {
                 .collect(),
             total_vram_bytes: gpus.iter().sum(),
             unified_memory_bytes: unified,
+            unified_memory_source: None,
             cuda_version: None,
             driver_version: None,
             detection_note: None,
+            cpu_model: Some("Test CPU".into()),
+            cpu_cores: Some(8),
+            cpu_threads: Some(16),
+            system_ram_bytes: Some(32 * GIB),
         }
     }
 
@@ -354,7 +730,20 @@ mod tests {
             quantization: Some("NVFP4".into()),
             weights_bytes: None,
             min_vram_bytes: Some(min_vram_gib * GIB),
+            recommended_vram_bytes: None,
             min_gpu_count: min_gpus,
+            min_ram_bytes: None,
+            recommended_ram_bytes: None,
+            min_cpu_cores: None,
+            recommended_cpu_cores: None,
+            runtime: ModelRuntime::Cuda,
+            arch: Some("tensorrt".into()),
+            artifact_format: None,
+            publisher: Some("NVIDIA".into()),
+            license: None,
+            description: None,
+            unified_memory_only: false,
+            is_cpu_only: false,
             source_uri: None,
             version: "1.0.0".into(),
             installed_version: None,
@@ -363,6 +752,17 @@ mod tests {
             is_remote: false,
             provider_key: None,
         }
+    }
+
+    fn cpu_model(min_ram_gib: i64, cores: Option<i32>) -> Model {
+        let mut m = model(0, 1);
+        m.min_vram_bytes = None;
+        m.runtime = ModelRuntime::Cpu;
+        m.is_cpu_only = true;
+        m.min_ram_bytes = Some(min_ram_gib * GIB);
+        m.recommended_ram_bytes = Some(min_ram_gib * 2 * GIB);
+        m.min_cpu_cores = cores;
+        m
     }
 
     #[test]
@@ -390,7 +790,6 @@ mod tests {
 
     #[test]
     fn insufficient_gpus_is_distinct_from_insufficient_memory() {
-        // Enough per card, too few cards: a different problem for the operator.
         let report = classify(&model(280, 4), &hardware(&[96 * GIB], None));
         assert_eq!(report.fit, Fit::InsufficientGpus);
         assert!(report.reason.contains("needs 4 GPUs"));
@@ -398,10 +797,85 @@ mod tests {
 
     #[test]
     fn unified_memory_is_used_instead_of_per_card_vram() {
-        // A GB10-class machine: one unified pool, no discrete cards.
         let report = classify(&model(24, 1), &hardware(&[], Some(128 * GIB)));
         assert_eq!(report.fit, Fit::Installable);
         assert_eq!(report.available_vram_bytes, 128 * GIB);
+        assert!(report.reason.contains("unified memory"));
+    }
+
+    #[test]
+    fn a_cpu_model_fits_a_machine_with_no_gpu() {
+        // The whole point of the CPU catalogue: the appliance VM has no GPU.
+        let report = classify(&cpu_model(4, Some(2)), &hardware(&[], None));
+        assert_eq!(report.fit, Fit::CpuInstallable);
+        assert!(report.cpu_path);
+        assert!(report.fit.allows_install());
+        assert!(report.fit.fits());
+    }
+
+    #[test]
+    fn a_cpu_model_is_gated_by_ram_not_vram() {
+        let report = classify(&cpu_model(64, None), &hardware(&[], None));
+        assert_eq!(report.fit, Fit::InsufficientRam);
+        assert_eq!(report.ram_shortfall_bytes, Some(32 * GIB));
+    }
+
+    #[test]
+    fn a_cpu_model_is_gated_by_cores_when_stated() {
+        let report = classify(&cpu_model(4, Some(32)), &hardware(&[], None));
+        assert_eq!(report.fit, Fit::InsufficientCpu);
+    }
+
+    #[test]
+    fn a_hybrid_model_uses_the_gpu_when_there_is_one_and_the_cpu_otherwise() {
+        let mut m = model(8, 1);
+        m.runtime = ModelRuntime::Hybrid;
+        m.min_ram_bytes = Some(8 * GIB);
+
+        let on_gpu = classify(&m, &hardware(&[24 * GIB], None));
+        assert_eq!(on_gpu.fit, Fit::Installable);
+        assert!(!on_gpu.cpu_path);
+
+        let on_cpu = classify(&m, &hardware(&[], None));
+        assert_eq!(on_cpu.fit, Fit::CpuInstallable);
+        assert!(on_cpu.cpu_path);
+    }
+
+    #[test]
+    fn a_unified_only_model_cannot_be_rescued_by_a_big_discrete_card() {
+        let mut m = model(100, 1);
+        m.unified_memory_only = true;
+        let report = classify(&m, &hardware(&[96 * GIB], None));
+        assert_eq!(report.fit, Fit::NeedsUnifiedMemory);
+
+        let on_spark = classify(&m, &hardware(&[], Some(128 * GIB)));
+        assert_eq!(on_spark.fit, Fit::Installable);
+    }
+
+    #[test]
+    fn bars_mark_what_does_not_apply_rather_than_omitting_it() {
+        let bars = resource_bars(&cpu_model(4, Some(2)), &hardware(&[], None));
+        assert_eq!(bars.len(), 4);
+        let vram = bars.iter().find(|b| b.resource == Resource::Vram).expect("vram bar");
+        assert_eq!(vram.status, BarStatus::NotRequired);
+        let ram = bars.iter().find(|b| b.resource == Resource::Ram).expect("ram bar");
+        assert_eq!(ram.status, BarStatus::Ok);
+    }
+
+    #[test]
+    fn a_bar_is_tight_between_minimum_and_recommended() {
+        let mut m = model(16, 1);
+        m.recommended_vram_bytes = Some(32 * GIB);
+        let bars = resource_bars(&m, &hardware(&[24 * GIB], None));
+        let vram = bars.iter().find(|b| b.resource == Resource::Vram).expect("vram bar");
+        assert_eq!(vram.status, BarStatus::Tight);
+    }
+
+    #[test]
+    fn a_unified_machine_shows_the_pool_bar_instead_of_vram() {
+        let bars = resource_bars(&model(24, 1), &hardware(&[], Some(128 * GIB)));
+        assert!(bars.iter().any(|b| b.resource == Resource::UnifiedMemory));
+        assert!(!bars.iter().any(|b| b.resource == Resource::Vram));
     }
 
     #[test]
@@ -409,7 +883,6 @@ mod tests {
         let mut m = model(80, 1);
         m.state = ModelState::Installed;
         m.installed_version = Some("1.0.0".into());
-        // Even on hardware that would not fit it now.
         let report = classify(&m, &hardware(&[8 * GIB], None));
         assert_eq!(report.fit, Fit::AlreadyInstalled);
     }
@@ -432,14 +905,19 @@ mod tests {
         let report = classify(&m, &hardware(&[], None));
         assert_eq!(report.fit, Fit::Remote);
         assert!(!report.fit.allows_install());
+        assert!(!report.fit.fits());
     }
 
     #[test]
     fn the_largest_single_card_is_the_addressable_memory() {
-        // Two 24 GiB cards do not make a 48 GiB model fit without tensor
-        // parallelism, which is expressed by min_gpu_count instead.
         let hw = hardware(&[24 * GIB, 24 * GIB], None);
         assert_eq!(hw.addressable_memory_bytes(), 24 * GIB);
         assert_eq!(hw.gpu_count(), 2);
+    }
+
+    #[test]
+    fn small_figures_keep_a_decimal() {
+        assert_eq!(human_gib(GIB / 2), "0.5 GiB");
+        assert_eq!(human_gib(24 * GIB), "24 GiB");
     }
 }

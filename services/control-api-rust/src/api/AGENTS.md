@@ -40,7 +40,7 @@ The architecture test enforces the last two.
 | `events.rs` | SSE streams |
 | `cluster.rs` | Gateways, supervisors, topology |
 | `providers.rs` | Provider profiles, probe |
-| `models.rs` | Catalog, hardware, install |
+| `models.rs` | Catalog with filters, hardware, facets, requirements, install |
 | `jobs.rs` | Jobs, schedules |
 
 ## Extending

@@ -24,6 +24,7 @@ supersedes the old one and note the supersession in both files.
 | [0014](0014-openshell-cli-feature-parity.md) | OpenShell CLI feature parity | Accepted |
 | [0015](0015-published-api-contract-is-binding.md) | The published API contract is binding | Accepted |
 | [0016](0016-provider-credentials-resolved-at-use.md) | Provider credentials are resolved at use, never stored or returned | Accepted |
+| [0017](0017-server-computed-bars-and-honest-unified-memory.md) | Resource bars are server-computed, and unified memory is recognised, never inferred | Accepted |
 
 ## Writing a new ADR
 

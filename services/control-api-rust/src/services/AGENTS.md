@@ -44,7 +44,7 @@ reading both.
 | `provider_service.rs` | Provider profiles, probe, and the inference environment a sandbox receives |
 | `policy_service.rs` | Validation, diff, scope rules, global override |
 | `telemetry_service.rs` | Ingest, live publish, history queries |
-| `model_service.rs` | Hardware detection, fit, install jobs |
+| `model_service.rs` | Hardware detection (CPU, RAM, GPU, unified pool), fit, facets, catalog filters, install jobs |
 | `gateway_service.rs` | Registry, settings, drift, sync |
 | `job_service.rs` | Job creation and progress |
 | `schedule_service.rs` | Schedule evaluation and runs |

@@ -4,15 +4,18 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use super::super::TenantScope;
-use crate::domain::model::{GpuDevice, HardwareProfile, Model, ModelState};
+use crate::domain::model::{GpuDevice, HardwareProfile, Model, ModelRuntime, ModelState};
 use crate::error::StoreError;
 
 const MODEL_COLUMNS: &str = "id, key, name, family, parameters, context_length, quantization, \
-     weights_bytes, min_vram_bytes, min_gpu_count, source_uri, version, \
-     installed_version, state, installed_at, is_remote, provider_key";
+     weights_bytes, min_vram_bytes, recommended_vram_bytes, min_gpu_count, min_ram_bytes, \
+     recommended_ram_bytes, min_cpu_cores, recommended_cpu_cores, runtime, arch, \
+     artifact_format, publisher, license, description, unified_memory_only, is_cpu_only, \
+     source_uri, version, installed_version, state, installed_at, is_remote, provider_key";
 
 fn row_to_model(row: &sqlx::postgres::PgRow) -> Result<Model, StoreError> {
     let state_raw: String = row.try_get("state")?;
+    let runtime_raw: String = row.try_get("runtime")?;
     Ok(Model {
         id: row.try_get("id")?,
         key: row.try_get("key")?,
@@ -23,7 +26,23 @@ fn row_to_model(row: &sqlx::postgres::PgRow) -> Result<Model, StoreError> {
         quantization: row.try_get("quantization")?,
         weights_bytes: row.try_get("weights_bytes")?,
         min_vram_bytes: row.try_get("min_vram_bytes")?,
+        recommended_vram_bytes: row.try_get("recommended_vram_bytes")?,
         min_gpu_count: row.try_get("min_gpu_count")?,
+        min_ram_bytes: row.try_get("min_ram_bytes")?,
+        recommended_ram_bytes: row.try_get("recommended_ram_bytes")?,
+        min_cpu_cores: row.try_get("min_cpu_cores")?,
+        recommended_cpu_cores: row.try_get("recommended_cpu_cores")?,
+        // An unreadable runtime means a row written by an older schema version;
+        // treating it as `cuda` keeps the old GPU gate instead of silently
+        // widening what the machine may install.
+        runtime: ModelRuntime::parse(&runtime_raw).unwrap_or(ModelRuntime::Cuda),
+        arch: row.try_get("arch")?,
+        artifact_format: row.try_get("artifact_format")?,
+        publisher: row.try_get("publisher")?,
+        license: row.try_get("license")?,
+        description: row.try_get("description")?,
+        unified_memory_only: row.try_get("unified_memory_only")?,
+        is_cpu_only: row.try_get("is_cpu_only")?,
         source_uri: row.try_get("source_uri")?,
         version: row.try_get("version")?,
         installed_version: row.try_get("installed_version")?,
@@ -34,20 +53,48 @@ fn row_to_model(row: &sqlx::postgres::PgRow) -> Result<Model, StoreError> {
     })
 }
 
+/// Which catalog rows to load.
+///
+/// Filtering here, in SQL, keeps the parameter list small and the rows returned
+/// to what a caller asked for. The fit filter is *not* here: the verdict is a
+/// classification, so it is applied after classification in the service layer,
+/// where the one rule lives.
+#[derive(Debug, Clone, Default)]
+pub struct CatalogFilter {
+    pub family: Option<String>,
+    pub publisher: Option<String>,
+    pub runtime: Option<String>,
+    /// Only models that run without a GPU.
+    pub cpu_only: bool,
+    /// Only models that can never run on a discrete card.
+    pub unified_only: bool,
+}
+
 /// The catalog: entries visible to this environment plus global ones.
 ///
 /// `environment_id IS NULL` marks a catalog entry shared by every environment,
-/// which is the normal case for the seeded Nemotron list.
+/// which is the normal case for the seeded list.
 pub async fn list_catalog(
     scope: &mut TenantScope<'_>,
+    filter: &CatalogFilter,
 ) -> Result<Vec<Model>, StoreError> {
     let sql = format!(
         "SELECT {MODEL_COLUMNS} FROM models
-          WHERE environment_id IS NULL OR environment_id = $1
+          WHERE (environment_id IS NULL OR environment_id = $1)
+            AND ($2::text IS NULL OR family = $2)
+            AND ($3::text IS NULL OR publisher = $3)
+            AND ($4::text IS NULL OR runtime = $4)
+            AND (NOT $5::boolean OR is_cpu_only)
+            AND (NOT $6::boolean OR unified_memory_only)
           ORDER BY min_vram_bytes NULLS LAST, name"
     );
     let rows = sqlx::query(&sql)
         .bind(scope.environment_id())
+        .bind(filter.family.as_deref())
+        .bind(filter.publisher.as_deref())
+        .bind(filter.runtime.as_deref())
+        .bind(filter.cpu_only)
+        .bind(filter.unified_only)
         .fetch_all(scope.connection())
         .await?;
     let mut out = Vec::with_capacity(rows.len());
@@ -55,6 +102,55 @@ pub async fn list_catalog(
         out.push(row_to_model(&row)?);
     }
     Ok(out)
+}
+
+/// How many catalog entries exist per family, publisher, runtime, and in total.
+///
+/// The console shows these numbers on the filter chips, so a chip never offers a
+/// choice that matches nothing.
+pub async fn catalog_facets(
+    scope: &mut TenantScope<'_>,
+) -> Result<ModelFacets, StoreError> {
+    let rows = sqlx::query(
+        "SELECT family, publisher, runtime, is_cpu_only, unified_memory_only
+           FROM models
+          WHERE environment_id IS NULL OR environment_id = $1",
+    )
+    .bind(scope.environment_id())
+    .fetch_all(scope.connection())
+    .await?;
+
+    let mut facets = ModelFacets::default();
+    for row in rows {
+        facets.total += 1;
+        if let Some(family) = row.try_get::<Option<String>, _>("family")? {
+            *facets.families.entry(family).or_insert(0) += 1;
+        }
+        if let Some(publisher) = row.try_get::<Option<String>, _>("publisher")? {
+            *facets.publishers.entry(publisher).or_insert(0) += 1;
+        }
+        if let Some(runtime) = row.try_get::<Option<String>, _>("runtime")? {
+            *facets.runtimes.entry(runtime).or_insert(0) += 1;
+        }
+        if row.try_get::<bool, _>("is_cpu_only")? {
+            facets.cpu_only += 1;
+        }
+        if row.try_get::<bool, _>("unified_memory_only")? {
+            facets.unified_only += 1;
+        }
+    }
+    Ok(facets)
+}
+
+/// Counts per catalog dimension.
+#[derive(Debug, Clone, Default)]
+pub struct ModelFacets {
+    pub total: i64,
+    pub families: std::collections::BTreeMap<String, i64>,
+    pub publishers: std::collections::BTreeMap<String, i64>,
+    pub runtimes: std::collections::BTreeMap<String, i64>,
+    pub cpu_only: i64,
+    pub unified_only: i64,
 }
 
 /// One catalog entry by key.
@@ -133,8 +229,9 @@ pub async fn insert_hardware(
     let id: Uuid = sqlx::query_scalar(
         "INSERT INTO hardware_profiles
             (environment_id, hostname, gpus, total_vram_bytes, unified_memory_bytes,
-             cuda_version, driver_version, detection_note)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             unified_memory_source, cuda_version, driver_version, detection_note,
+             cpu_model, cpu_cores, cpu_threads, system_ram_bytes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          RETURNING id",
     )
     .bind(scope.environment_id())
@@ -142,9 +239,14 @@ pub async fn insert_hardware(
     .bind(gpus)
     .bind(profile.total_vram_bytes)
     .bind(profile.unified_memory_bytes)
+    .bind(profile.unified_memory_source.as_deref())
     .bind(profile.cuda_version.as_deref())
     .bind(profile.driver_version.as_deref())
     .bind(profile.detection_note.as_deref())
+    .bind(profile.cpu_model.as_deref())
+    .bind(profile.cpu_cores)
+    .bind(profile.cpu_threads)
+    .bind(profile.system_ram_bytes)
     .fetch_one(scope.connection())
     .await?;
     Ok(id)
@@ -156,7 +258,9 @@ pub async fn latest_hardware(
 ) -> Result<Option<HardwareProfile>, StoreError> {
     let row = sqlx::query(
         "SELECT id, environment_id, detected_at, hostname, gpus, total_vram_bytes,
-                unified_memory_bytes, cuda_version, driver_version, detection_note
+                unified_memory_bytes, unified_memory_source, cuda_version,
+                driver_version, detection_note, cpu_model, cpu_cores, cpu_threads,
+                system_ram_bytes
            FROM hardware_profiles
           WHERE environment_id = $1
           ORDER BY detected_at DESC
@@ -179,8 +283,13 @@ pub async fn latest_hardware(
         gpus,
         total_vram_bytes: row.try_get("total_vram_bytes")?,
         unified_memory_bytes: row.try_get("unified_memory_bytes")?,
+        unified_memory_source: row.try_get("unified_memory_source")?,
         cuda_version: row.try_get("cuda_version")?,
         driver_version: row.try_get("driver_version")?,
         detection_note: row.try_get("detection_note")?,
+        cpu_model: row.try_get("cpu_model")?,
+        cpu_cores: row.try_get("cpu_cores")?,
+        cpu_threads: row.try_get("cpu_threads")?,
+        system_ram_bytes: row.try_get("system_ram_bytes")?,
     }))
 }

@@ -32,6 +32,18 @@ Verified on the appliance VM200 (`192.168.55.50`), branch `feat/m1-rebuild`,
 | Hermes runs and answers | Done | Plain `hermes -z` inside the sandbox answers; the model/provider default is baked into the image, endpoint and key arrive from the provider profile. |
 | Visible at http://192.168.55.50:8080/ | Done | Every commit is deployed there; `feat/m1-rebuild` is pushed. |
 
+## The model catalog and hardware fit
+
+| Goal | State | Evidence |
+|---|---|---|
+| Broad catalog (NVIDIA, DeepSeek, Qwen, Llama, Gemma, Phi, CPU-only) | Done | 53 rows in `0013_model_catalog.sql`, each with publisher, licence, runtime, format, and min/recommended figures. |
+| See own CPU, RAM, VRAM, unified/Dynamic RAM | Done | Probe reads `/proc/cpuinfo`, `/proc/meminfo`, `nvidia-smi`; the page shows CPU model and cores, system RAM, GPU memory or the unified pool, per-card list, and the source of the unified figure. |
+| Two bars per resource: have versus need | Done | `fit.bars` is server-computed (`domain::model::resource_bars`); the page renders "have" and "need" tracks with minimum and recommended. |
+| Live filter "can install / cannot" after Probe | Done | Probe switches the filter to "fits this machine" and shows the count; chips show live counts, and family/publisher/runtime/CPU-only filters narrow further. |
+| Models that run without a GPU are installable on the appliance | Done | VM200 has no GPU; CPU and hybrid models classify as `cpu_installable` by RAM and cores instead of `no_gpu`. |
+| Unified memory (DGX Spark / GB10) shown explicitly | Partial | Modelled and displayed, with the source note; no GB10 machine has been probed, so the path is unit-tested, not field-tested. |
+| Install the weights | **Not done** | The button creates a job and records intent. No artefact is downloaded; the page says so. Phase 2. |
+
 ## Bugs found by testing on the appliance, and fixed
 
 Each of these would have shipped if the code had only been compiled:
@@ -74,6 +86,9 @@ Each of these would have shipped if the code had only been compiled:
    workflow work with generated samples; no gateway publishes real events yet.
 8. **Interactive policy enforcement.** Policies, rules, drafts, and windows
    are stored and versioned; nothing applies them to a container.
+9. **Model artefact download.** The catalog, the requirements, and the fit are
+   real; an install job does not fetch weights yet, so no model becomes usable
+   from the Models page. This is the largest honest gap in the model feature.
 
 ## Suggested order for phase 2
 

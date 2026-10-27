@@ -117,6 +117,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/models", get(models::catalog))
         .route("/api/v1/models/installed", get(models::installed))
         .route("/api/v1/models/hardware", get(models::hardware))
+        .route("/api/v1/models/facets", get(models::facets))
+        .route("/api/v1/models/requirements", get(models::requirements))
         .route("/api/v1/models/{key}/install", post(models::install))
         .route("/api/v1/models/{key}/uninstall", post(models::uninstall))
         // Jobs and schedules

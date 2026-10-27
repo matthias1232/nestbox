@@ -84,6 +84,8 @@ pub const OPERATIONS: &[Operation] = &[
     op("GET", "/api/v1/models", "Model catalog with per-machine fit", "models", "viewer", false, false),
     op("GET", "/api/v1/models/installed", "Installed models", "models", "viewer", false, false),
     op("GET", "/api/v1/models/hardware", "Detected hardware", "models", "viewer", false, false),
+    op("GET", "/api/v1/models/facets", "Catalog counts per family, publisher, runtime, and verdict", "models", "viewer", false, false),
+    op("GET", "/api/v1/models/requirements", "One model's requirements and verdict", "models", "viewer", false, false),
     op("POST", "/api/v1/models/{key}/install", "Install or update a model", "models", "operator", true, false),
     op("POST", "/api/v1/models/{key}/uninstall", "Remove a model", "models", "operator", true, false),
     op("GET", "/api/v1/jobs", "List jobs", "jobs", "viewer", false, false),
