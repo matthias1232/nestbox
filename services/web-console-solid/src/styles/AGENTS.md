@@ -11,6 +11,7 @@ a new colour asks for a token; it does not invent a hex value.
 |---|---|
 | `tokens.css` | Colour, spacing, radius, and type scale |
 | `app.css` | Reset, shell layout, tables, forms, drawer, graph |
+| `sandbox-resources.css` | The create form's node budget and the Agents tab (`feat/ui-sandbox-resources`) |
 
 ## Rules
 

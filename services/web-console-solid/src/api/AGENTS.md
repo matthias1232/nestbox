@@ -26,7 +26,9 @@ component never contains a URL.
 |---|---|
 | `client.js` | fetch wrapper, CSRF, environment header, error mapping |
 | `auth.js` | login, logout, identity, environments |
-| `sandboxes.js` | list, detail, create, actions, logs, exec, inference, rules |
+| `sandboxes.js` | list, detail, create, actions, logs, exec, inference, rules, agents |
+| `nodes.js` | nodes with their computed budget: free memory, cores, sandbox count |
+| `packs.js` | the agent-pack catalog, optionally narrowed to a baseline |
 | `policies.js` | policies, rules, drafts, traffic windows |
 | `telemetry.js` | history, facets, the SSE stream |
 | `cluster.js` | gateways, settings, sync, supervisors, topology |
