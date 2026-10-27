@@ -758,7 +758,7 @@ pub async fn instantiate(
 
     // A pack that talks to a model needs the endpoint and the credential in its
     // environment; the credential is resolved at use and never stored.
-    let environment = if crate::services::sandbox_service::pack_needs_inference(&sandbox.pack_key)
+    let mut environment = if crate::services::sandbox_service::pack_needs_inference(&sandbox.pack_key)
     {
         match crate::services::provider_service::inference_environment(
             ctx,
@@ -778,6 +778,12 @@ pub async fn instantiate(
     } else {
         Vec::new()
     };
+    // Same rule as `sandbox_service::create`: a recipe sandbox also has no route
+    // out, so the proxy is the only address it can use. The two paths must send
+    // the same shape to the runtime or a recipe sandbox is a silent special case.
+    environment.extend(crate::services::sandbox_service::egress_environment(
+        &crate::services::sandbox_service::egress_proxy_url(),
+    ));
 
     let runtime_spec = SandboxSpec {
         name: sandbox.name.clone(),

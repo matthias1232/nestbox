@@ -40,7 +40,7 @@ reading both.
 |---|---|
 | `auth_service.rs` | Login, logout, session validation, principal building |
 | `access_control.rs` | Permission evaluation and the refusal message |
-| `sandbox_service.rs` | Lifecycle, placement, bulk actions |
+| `sandbox_service.rs` | Lifecycle, placement, bulk actions, and the proxy environment every sandbox receives |
 | `provider_service.rs` | Provider profiles with their probe status, the pending profile an install creates, the in-use check on delete, and the reachable-only inference environment a sandbox receives |
 | `agent_service.rs` | Agents inside a sandbox: which packs may join, homes and their persistence, the supervisor command |
 | `policy_service.rs` | Validation, diff, scope rules, global override |
@@ -82,6 +82,39 @@ Three rules follow from that, and all are in `model_service.rs`:
 Phase 1 has one runtime adapter, so only the local node is measured this way. A
 remote node without an adapter gets `unmeasured_hardware` — zeroes and a note,
 never a guess about a machine the control plane cannot see.
+
+## The proxy environment
+
+A sandbox has no route out: the runtime network is `internal`, so it has a route
+to its own subnet and nothing else, not even a DNS answer for a public name. The
+one address it can use is the node's egress proxy, so `create` writes that
+address into the sandbox environment (`egress_environment`) and records it in the
+sandbox spec, which is what makes "what was this sandbox told" answerable later.
+
+Four decisions worth keeping:
+
+1. **`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` are set in both spellings.** curl
+   and wget read the lowercase ones, Go, Rust and npm read the uppercase ones.
+   One spelling is the classic "works in the terminal, not in the agent" bug,
+   and the failure looks like a network fault rather than a missing variable.
+2. **`NO_PROXY` names the proxy itself**, otherwise a proxy-aware tool sends the
+   request for the proxy to the proxy.
+3. **The environment is a convenience, not a permission.** A request still needs
+   a `network_rules` match; the control API decides per request (ADR 0013). A
+   sandbox that ignores the variables is not less governed, it is simply unable
+   to reach anything.
+4. **The URL comes from `NESTBOX_EGRESS_PROXY_URL`, defaulting to
+   `http://egress-proxy:3128`.** `nodes.egress_proxy_url` exists in the schema
+   (migration 0022) but not yet on the `Node` domain type; one value a deploy can
+   set beats a second source of truth, and when the field reaches the domain type
+   only `egress_proxy_url()` changes. The default has to match the runner's
+   `NESTBOX_EGRESS_PROXY_HOST`, because the runner is what attaches the proxy to
+   the sandbox network under that alias.
+
+`builder_service::instantiate` calls the same two functions. A recipe sandbox is
+created through a different path, and a path that forgot the proxy would be a
+sandbox that is isolated and therefore useless, with nothing in the UI saying
+why.
 
 ## Persistence rules
 
