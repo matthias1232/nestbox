@@ -38,6 +38,13 @@ impl ErrorCode {
     pub const SANDBOX_NAME_TAKEN: Self = Self("sandbox.name_taken");
     pub const SANDBOX_INVALID_STATE: Self = Self("sandbox.invalid_state");
     pub const SANDBOX_VERSION_CONFLICT: Self = Self("sandbox.version_conflict");
+    /// A terminal was refused because the sandbox or the user already holds the
+    /// maximum. The console branches on it to say which limit was hit.
+    pub const SANDBOX_TERMINAL_LIMIT: Self = Self("sandbox.terminal_limit");
+    /// A WebSocket handshake arrived from an origin that is not allowed. A
+    /// WebSocket is not covered by the same-origin policy, so this check is the
+    /// only thing standing between a logged-in operator and a page they visit.
+    pub const SANDBOX_TERMINAL_ORIGIN: Self = Self("sandbox.terminal_origin_refused");
 
     pub const POLICY_NOT_FOUND: Self = Self("policy.not_found");
     pub const POLICY_INVALID: Self = Self("policy.invalid");
@@ -161,6 +168,14 @@ impl ApiError {
 
     pub fn conflict(code: ErrorCode, message: impl Into<String>) -> Self {
         Self::new(StatusCode::CONFLICT, code, message)
+    }
+
+    /// A request that is well-formed but exceeds a documented limit.
+    ///
+    /// Separate from `conflict` because the client's next step differs: a 429
+    /// says "close something and retry", a 409 says "the state is wrong".
+    pub fn too_many(code: ErrorCode, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::TOO_MANY_REQUESTS, code, message)
     }
 
     /// A request that is well-formed but cannot be satisfied with the given

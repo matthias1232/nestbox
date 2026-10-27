@@ -5,9 +5,14 @@
 //! die Implementierung. Ein Wechsel betrifft genau eine Datei.
 
 use async_trait::async_trait;
+use futures::{SinkExt, StreamExt};
 use thiserror::Error;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
-use crate::domain::runtime::{BuildRequest, BuildResult, ExecResult, HardwareReport, RuntimeFacts, SandboxSpec};
+use crate::domain::runtime::{
+    BuildRequest, BuildResult, ExecResult, HardwareReport, RuntimeFacts, SandboxSpec,
+};
 
 /// Fehler aus der Ausführungsschicht.
 #[derive(Debug, Error)]
@@ -70,7 +75,193 @@ pub trait RuntimeAdapter: Send + Sync {
 
     /// Build an image from a generated Dockerfile.
     async fn build(&self, request: BuildRequest) -> Result<BuildResult, RuntimeError>;
+
+    /// Open an interactive terminal in a sandbox.
+    ///
+    /// Returns a live channel instead of a request/response pair, because a
+    /// shell is a conversation. No request field reaches a command line: the
+    /// runner starts a fixed shell with a PTY, and this side only moves bytes.
+    async fn open_terminal(&self, name: &str) -> Result<BoxTerminal, RuntimeError>;
+}
+
+/// One frame in the direction runner → control API.
+///
+/// Text rather than bytes because both ends of this hop speak WebSocket, whose
+/// text frames are UTF-8 by definition. The PTY's stream is decoded with
+/// replacement at the runner, so an invalid sequence degrades to a glyph
+/// instead of ending the session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalMessage {
+    /// What the shell printed.
+    Output(String),
+    /// The session ended, with the reason the runner named.
+    Closed(String),
+}
+
+/// One end of a live terminal, owned by whoever opened it.
+///
+/// A trait rather than a concrete type so the session rules — the limits, the
+/// idle clock, the audit row — can be tested without a container, and so the
+/// day the runner is an OpenShell gateway only one adapter changes.
+#[async_trait]
+pub trait TerminalSocket: Send {
+    /// The next frame, or `None` when the stream ended without a reason.
+    async fn recv(&mut self) -> Result<Option<TerminalMessage>, RuntimeError>;
+
+    /// Send keyboard input to the PTY.
+    async fn send_input(&mut self, text: &str) -> Result<(), RuntimeError>;
+
+    /// Tell the PTY how wide and how tall the browser's window is.
+    async fn resize(&mut self, cols: u16, rows: u16) -> Result<(), RuntimeError>;
+
+    /// End the session, saying why. Failure is ignored: the caller is closing.
+    async fn close(&mut self, reason: &str);
+}
+
+/// A terminal channel, whatever holds the other end.
+pub type BoxTerminal = Box<dyn TerminalSocket>;
+
+/// The close reason in a text frame, if that frame is a control frame.
+///
+/// The runner sends one control frame before it closes — `{"type":"close",
+/// "reason":"idle"}` — and everything else it sends is output. The rule is
+/// therefore narrow on purpose: a frame must be a JSON *object* whose `type` is
+/// `close`. A shell that prints `{"type":"close"}` verbatim would be
+/// misread, which is a documented and accepted edge: the alternative is an
+/// escape sequence the terminal cannot carry without corrupting binary output.
+pub fn close_control_frame(text: &str) -> Option<String> {
+    if !text.starts_with('{') {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    if value.get("type")?.as_str()? != "close" {
+        return None;
+    }
+    Some(
+        value
+            .get("reason")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("error")
+            .to_string(),
+    )
+}
+
+/// A terminal attached to a sandbox through the runner's WebSocket.
+pub struct RunnerTerminal {
+    socket: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
+}
+
+impl RunnerTerminal {
+    /// Wrap an upgraded WebSocket.
+    pub fn new(socket: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>) -> Self {
+        Self { socket }
+    }
+}
+
+#[async_trait]
+impl TerminalSocket for RunnerTerminal {
+    async fn recv(&mut self) -> Result<Option<TerminalMessage>, RuntimeError> {
+        loop {
+            let message = match self.socket.next().await {
+                Some(Ok(message)) => message,
+                Some(Err(error)) => return Err(RuntimeError::Unavailable(error.to_string())),
+                None => return Ok(None),
+            };
+            match message {
+                Message::Text(text) => {
+                    let raw = text.as_str();
+                    return Ok(Some(match close_control_frame(raw) {
+                        Some(reason) => TerminalMessage::Closed(reason),
+                        None => TerminalMessage::Output(raw.to_string()),
+                    }));
+                }
+                Message::Binary(bytes) => {
+                    return Ok(Some(TerminalMessage::Output(
+                        String::from_utf8_lossy(&bytes).to_string(),
+                    )));
+                }
+                Message::Close(frame) => {
+                    let reason = frame
+                        .map(|frame| frame.reason.to_string())
+                        .filter(|reason| !reason.is_empty())
+                        .unwrap_or_else(|| "error".to_string());
+                    return Ok(Some(TerminalMessage::Closed(reason)));
+                }
+                // Protocol bookkeeping, not a frame the session sees.
+                Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => continue,
+            }
+        }
+    }
+
+    async fn send_input(&mut self, text: &str) -> Result<(), RuntimeError> {
+        self.socket
+            .send(Message::Text(text.to_string().into()))
+            .await
+            .map_err(|error| RuntimeError::Unavailable(error.to_string()))
+    }
+
+    async fn resize(&mut self, cols: u16, rows: u16) -> Result<(), RuntimeError> {
+        let frame = serde_json::json!({ "type": "resize", "cols": cols, "rows": rows });
+        self.socket
+            .send(Message::Text(frame.to_string().into()))
+            .await
+            .map_err(|error| RuntimeError::Unavailable(error.to_string()))
+    }
+
+    async fn close(&mut self, reason: &str) {
+        // A close frame is the polite form; dropping the socket is the form that
+        // works. Both are attempted, and neither is allowed to fail the session
+        // that is already over.
+        let frame = tokio_tungstenite::tungstenite::protocol::CloseFrame {
+            code: tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Normal,
+            reason: reason.to_string().into(),
+        };
+        let _ = self.socket.send(Message::Close(Some(frame))).await;
+        let _ = self.socket.close(None).await;
+    }
 }
 
 pub mod fake;
 pub mod http_runner;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_close_frame_names_its_reason() {
+        assert_eq!(
+            close_control_frame(r#"{"type":"close","reason":"idle"}"#),
+            Some("idle".to_string())
+        );
+        assert_eq!(
+            close_control_frame(r#"{"type":"close","reason":"sandbox_stopped"}"#),
+            Some("sandbox_stopped".to_string())
+        );
+    }
+
+    #[test]
+    fn a_close_frame_without_a_reason_is_an_error() {
+        assert_eq!(
+            close_control_frame(r#"{"type":"close"}"#),
+            Some("error".to_string())
+        );
+    }
+
+    #[test]
+    fn terminal_output_is_not_mistaken_for_a_control_frame() {
+        // A shell prints all of this, and none of it may end the session.
+        for text in [
+            "ls -la\r\n",
+            "{",
+            "{}",
+            "{not json",
+            r#"{"cols":80,"rows":24}"#,
+            r#"{"type":"output"}"#,
+            r#"["close"]"#,
+            r#"{"type":1,"reason":"idle"}"#,
+        ] {
+            assert_eq!(close_control_frame(text), None, "{text}");
+        }
+    }
+}

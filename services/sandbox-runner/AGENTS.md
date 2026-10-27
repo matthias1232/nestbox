@@ -22,6 +22,7 @@ control plane.
 | `POST` | `/v1/sandboxes/{name}/{start,stop,restart,remove}` | Lifecycle |
 | `GET` | `/v1/sandboxes/{name}/logs?tail=` | Last lines of stdout/stderr |
 | `POST` | `/v1/sandboxes/{name}/exec` | Run one argument vector, return output |
+| `GET` | `/v1/sandboxes/{name}/terminal` | WebSocket: a PTY (`bash`) in the container, resized by a control frame |
 
 ## Security rules
 
@@ -37,16 +38,38 @@ control plane.
 5. The runner listens only on the internal `control` network and is not
    published on the host.
 
-## Why not a PTY
+## The PTY
 
-Phase 1 exec is request/response: the command runs, the output returns. A
-streaming terminal needs a WebSocket, a resize protocol, and a session that
-survives a proxy — a separate transport worth doing properly later, not a
-corner cut here.
+`terminal.py` is the second transport: `exec_create(tty=True, stdin=True)` plus
+`exec_start(socket=True)`, and the socket is pumped in both directions. Exec
+stays request/response because that is what a probe and the console's "run" box
+need; a shell needs a terminal, and `vim` and `htop` need a window size, which is
+what `{"type":"resize","cols":80,"rows":24}` is for.
+
+Three rules hold it together:
+
+1. **Exactly one reader for the PTY, for the life of the session.** A reader per
+   loop iteration looks simpler and silently drops bytes: cancelling an
+   `asyncio.to_thread` does not stop the thread, so the abandoned reader steals
+   the next chunk.
+2. **The PTY is closed on every path**, including the idle timeout and a browser
+   that vanishes. Closing it is also what releases the blocked read.
+3. **Nothing is logged or recorded.** The control API keeps who/when/how long
+   (ADR 0023); a keystroke in a log line here would undo that.
+
+The endpoint requires the node token in the handshake (`Sec-WebSocket-Protocol`
+or the `token` query parameter), read from `NESTBOX_NODE_TOKEN_FILE` when one is
+configured and from `NESTBOX_NODE_TOKEN` otherwise, and refuses every connection
+when neither is set: the runner is also on the sandbox network, so an
+open terminal endpoint there would be a shell into every neighbour.
+`NESTBOX_TERMINAL_IDLE_SECONDS` exists so a test can watch the idle close in
+seconds instead of half an hour.
 
 ## Files
 
 | File | Responsibility |
 |---|---|
 | `app/main.py` | The FastAPI adapter |
+| `app/terminal.py` | The browser terminal: node token, PTY pump, resize, idle close |
+| `tests/test_terminal.py` | The pump and the frame rules, without FastAPI and without Docker (`python3 -m unittest discover -s tests -t .`) |
 | `Dockerfile` | Image build |

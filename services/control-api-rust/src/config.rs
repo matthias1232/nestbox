@@ -40,6 +40,11 @@ pub struct Config {
     pub body_limit_bytes: usize,
     /// Requests per minute, per principal. A coarse guard, not a precise quota.
     pub rate_limit_per_minute: u32,
+    /// How long a browser terminal may go without input before the control API
+    /// closes it. Thirty minutes is the documented default (ADR 0023); the value
+    /// is configurable so an idle-close can be watched in a test instead of
+    /// waiting half an hour.
+    pub terminal_idle_seconds: i64,
 }
 
 impl Config {
@@ -78,6 +83,7 @@ impl Config {
             bootstrap_admin: env_bool("NESTBOX_BOOTSTRAP_ADMIN", false),
             body_limit_bytes: env_i64("NESTBOX_BODY_LIMIT_BYTES", 1_048_576) as usize,
             rate_limit_per_minute: env_i64("NESTBOX_RATE_LIMIT_PER_MINUTE", 600) as u32,
+            terminal_idle_seconds: env_i64("NESTBOX_TERMINAL_IDLE_SECONDS", 30 * 60),
         })
     }
 

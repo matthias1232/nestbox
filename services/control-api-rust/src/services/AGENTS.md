@@ -57,6 +57,7 @@ reading both.
 | `access_service.rs` | SSH key pair as a file with a locator, port pool, sessions (`feat/sandbox-access`) |
 | `mcp_service.rs` | Registry, attachments, discovery through the policy check (`feat/mcp-registry`) |
 | `persist_service.rs` | Persistent roots: derived host paths, mounts, the one-read-write rule, honest usage |
+| `terminal_service.rs` | The browser terminal: permission, the four-per-sandbox and twenty-per-user limits, the idle clock, the session row and its two audit events (`feat/terminal`) |
 
 ## Probing a node
 
@@ -127,3 +128,16 @@ Add the rule here first, as a pure function in `domain` if possible, and only
 then wire it to the store. If the rule needs a permission, add the permission to
 `domain::auth` before writing the check, so the check cannot reference a
 permission that does not exist.
+
+## The terminal
+
+`terminal_service.rs` splits a session in two on purpose: `open` authorises and
+reserves a row, `attach` runs the PTY. The split is what lets a refusal be an
+HTTP status code — a WebSocket that upgrades and then closes explains nothing —
+and it is why the transport is two small ports (`ClientSocket` for the browser,
+`runtime::TerminalSocket` for the PTY) instead of an axum type in this layer.
+
+The idle clock measures input, not output (ADR 0023). The limits are counted
+from the open rows, so they survive a restart; the advisory lock in
+`terminal_sessions::lock_user` makes the count and the insert one decision.
+Nothing in this file may write a keystroke or a line of output anywhere.

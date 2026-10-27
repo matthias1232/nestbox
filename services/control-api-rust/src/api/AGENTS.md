@@ -72,3 +72,20 @@ in `mod.rs` or `openapi.rs`.
 Add the handler to the file of its resource, then add the route in `mod.rs`
 **and** the operation in `openapi.rs`. The OpenAPI test fails if a route is
 documented without existing, or the reverse.
+
+## The terminal route
+
+`GET /sandboxes/{id}/terminal` is the only WebSocket in this layer, and it is
+still a handler and not a rule:
+
+1. the `Origin` header is checked against `config.origins` and against the
+   request's own host, because a WebSocket is not covered by the same-origin
+   policy and a session cookie is. A request without an `Origin` is accepted only
+   for a bearer token;
+2. `terminal_service::open` runs **before** the upgrade, so a missing permission,
+   a stopped sandbox, or a full quota is a 403, a 409, or a 429 with a message;
+3. after `on_upgrade`, `BrowserSocket` adapts axum's messages to the service's
+   `ClientFrame`/`ServerFrame` port, and `attach` runs the session.
+
+The close frame the console shows comes from the service; the handler only adds
+the WebSocket close.

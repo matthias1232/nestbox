@@ -7,12 +7,14 @@
 //! would expose.
 
 use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use crate::domain::runtime::{BuildRequest, BuildResult, ExecResult, HardwareReport, RuntimeFacts, SandboxSpec};
-use crate::runtime::{RuntimeAdapter, RuntimeError};
+use crate::domain::runtime::{
+    BuildRequest, BuildResult, ExecResult, HardwareReport, RuntimeFacts, SandboxSpec,
+};
+use crate::runtime::{BoxTerminal, RuntimeAdapter, RuntimeError, TerminalMessage, TerminalSocket};
 
 /// Take a lock, recovering from poisoning.
 ///
@@ -23,12 +25,26 @@ fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// What a fake terminal received and what its other end reported.
+///
+/// Shared with the adapter by `Arc`, because `open_terminal` takes `&self` and
+/// the returned channel outlives the borrow. A test reads the recording to
+/// assert that input arrived verbatim, that a resize was applied, and why the
+/// session ended.
+#[derive(Default)]
+pub struct FakeTerminalState {
+    feed: Mutex<Option<tokio::sync::mpsc::UnboundedSender<TerminalMessage>>>,
+    input: Mutex<Vec<String>>,
+    resizes: Mutex<Vec<(u16, u16)>>,
+    close: Mutex<Option<String>>,
+}
 
 /// In-Memory-Runtime für Unit- und Integrationstests.
 #[derive(Default)]
 pub struct FakeRuntime {
     sandboxes: Mutex<BTreeMap<String, RuntimeFacts>>,
     specs: Mutex<Vec<SandboxSpec>>,
+    terminal: Arc<FakeTerminalState>,
 }
 
 impl FakeRuntime {
@@ -39,6 +55,37 @@ impl FakeRuntime {
     /// Die Specs aller erzeugten Sandboxes – für Tests der Umgebungsvariablen.
     pub fn created_specs(&self) -> Vec<SandboxSpec> {
         lock(&self.specs).clone()
+    }
+
+    /// Push a frame to the terminal that is open, as the shell would.
+    pub fn terminal_say(&self, text: &str) {
+        let feed = lock(&self.terminal.feed);
+        if let Some(sender) = feed.as_ref() {
+            let _ = sender.send(TerminalMessage::Output(text.to_string()));
+        }
+    }
+
+    /// End the open terminal the way the runner does, with a named reason.
+    pub fn terminal_end(&self, reason: &str) {
+        let feed = lock(&self.terminal.feed);
+        if let Some(sender) = feed.as_ref() {
+            let _ = sender.send(TerminalMessage::Closed(reason.to_string()));
+        }
+    }
+
+    /// The input the terminal received, in order.
+    pub fn terminal_input(&self) -> Vec<String> {
+        lock(&self.terminal.input).clone()
+    }
+
+    /// The resizes the terminal was asked to apply.
+    pub fn terminal_resizes(&self) -> Vec<(u16, u16)> {
+        lock(&self.terminal.resizes).clone()
+    }
+
+    /// Why this end closed the terminal, when it did.
+    pub fn terminal_close(&self) -> Option<String> {
+        lock(&self.terminal.close).clone()
     }
 
     fn with_entry<T>(
@@ -184,5 +231,53 @@ impl RuntimeAdapter for FakeRuntime {
             log: "fake build".into(),
             success: true,
         })
+    }
+
+    async fn open_terminal(&self, name: &str) -> Result<BoxTerminal, RuntimeError> {
+        let guard = lock(&self.sandboxes);
+        if !guard.contains_key(name) {
+            return Err(RuntimeError::NotFound(name.to_string()));
+        }
+        drop(guard);
+
+        // One session at a time is enough to test the rules: a second open would
+        // simply replace the feed, which is what a real runner would not do but
+        // a test never needs.
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        *lock(&self.terminal.feed) = Some(sender);
+        *lock(&self.terminal.close) = None;
+        lock(&self.terminal.input).clear();
+        lock(&self.terminal.resizes).clear();
+        Ok(Box::new(FakeTerminal {
+            receiver,
+            state: Arc::clone(&self.terminal),
+        }))
+    }
+}
+
+/// The adapter side of a fake terminal: the test holds the other end.
+struct FakeTerminal {
+    receiver: tokio::sync::mpsc::UnboundedReceiver<TerminalMessage>,
+    state: Arc<FakeTerminalState>,
+}
+
+#[async_trait]
+impl TerminalSocket for FakeTerminal {
+    async fn recv(&mut self) -> Result<Option<TerminalMessage>, RuntimeError> {
+        Ok(self.receiver.recv().await)
+    }
+
+    async fn send_input(&mut self, text: &str) -> Result<(), RuntimeError> {
+        lock(&self.state.input).push(text.to_string());
+        Ok(())
+    }
+
+    async fn resize(&mut self, cols: u16, rows: u16) -> Result<(), RuntimeError> {
+        lock(&self.state.resizes).push((cols, rows));
+        Ok(())
+    }
+
+    async fn close(&mut self, reason: &str) {
+        *lock(&self.state.close) = Some(reason.to_string());
     }
 }

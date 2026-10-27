@@ -37,6 +37,7 @@ the codebase where SQL appears.
 | `persistent_roots.rs` | Persistent roots, mounts, and the agents inside a sandbox |
 | `recipes.rs` | Recipes, the build outcome, and the link from a sandbox to its recipe |
 | `audit.rs` | Append-only audit writes |
+| `terminal_sessions.rs` | Terminal sessions in `sandbox_sessions`: open, count for the limits, close. Never content (ADR 0023) |
 
 ## Extending this folder
 
@@ -44,3 +45,15 @@ Add the statement to the file of its aggregate. Take `&mut TenantScope`. Name
 the columns. Map to a domain type. If the query needs a new index, add it in a
 migration in the same change, and say in the migration comment which query it
 serves.
+
+## Counting a limit from rows
+
+The terminal limits are counted from `sandbox_sessions`, not from a counter in
+memory, so they hold across a restart and across API replicas. Two consequences
+are deliberate:
+
+* `lock_user` takes a transaction-scoped advisory lock before the count, because
+  "count, then insert" is only one decision if nothing else can insert for that
+  user in between;
+* an unclosed row is ignored once it is older than a session can live, so a
+  process that died mid-session cannot consume the quota forever.

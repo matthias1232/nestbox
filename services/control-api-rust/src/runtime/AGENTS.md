@@ -27,9 +27,9 @@ services can be tested against `FakeAdapter` without a container runtime.
 
 | File | Responsibility |
 |---|---|
-| `mod.rs` | The `RuntimeAdapter` trait (create, inspect, list, lifecycle, logs, exec) and its errors |
+| `mod.rs` | The `RuntimeAdapter` trait (create, inspect, list, lifecycle, logs, exec, terminal), the `TerminalSocket` port, and its errors |
 | `http_runner.rs` | Adapter that speaks to the sandbox runner's internal API |
-| `fake.rs` | In-memory adapter for tests |
+| `fake.rs` | In-memory adapter for tests, including a terminal whose other end the test drives |
 
 ## Extending
 
@@ -44,3 +44,27 @@ and `nvidia-smi` text plus whether the Docker daemon has an NVIDIA runtime.
 Raw rather than parsed, because the parsers are tested Rust in
 `services/model_service.rs`. `build()` sends a generated Dockerfile and gets an
 image tag back; the runner only accepts tags under `nestbox-recipe/`.
+
+## The terminal
+
+`open_terminal` is the one method that returns a live channel instead of a
+finished answer, because a shell is a conversation. Two things follow:
+
+1. **It is a port, not a socket.** `TerminalSocket` is a trait, so the session
+   rules in `services/terminal_service.rs` are tested against a fake, and the day
+   the runtime is an OpenShell gateway exactly one adapter changes.
+2. **The command is fixed.** The runner starts `bash` with a PTY; nothing from a
+   request reaches the command line. This layer moves bytes and a resize frame,
+   and nothing else.
+
+The runner demands a node token on the upgrade. `HttpRunner` reads it from
+`NESTBOX_NODE_TOKEN_FILE` (preferred, ADR 0005) or `NESTBOX_NODE_TOKEN`, and
+sends it as the second entry of `Sec-WebSocket-Protocol` — a header, not a query
+string, because a URL ends up in access logs and in error messages. With no token
+configured the runner refuses every terminal, which is the honest failure: the
+runner also sits on the sandbox network, so an unauthenticated endpoint there
+would let one container open a shell in another.
+
+A text frame from the runner is output, except a JSON object with
+`"type":"close"`, which is the reason the session ended. `close_control_frame`
+is that rule, and it is unit-tested here rather than trusted.

@@ -7,12 +7,13 @@
 use async_trait::async_trait;
 use reqwest::StatusCode;
 use serde::Deserialize;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use crate::domain::runtime::{
     BuildRequest, BuildResult, ExecResult, HardwareReport, NetworkInterface, RuntimeFacts,
     RuntimeResources, SandboxSpec,
 };
-use crate::runtime::{RuntimeAdapter, RuntimeError};
+use crate::runtime::{BoxTerminal, RunnerTerminal, RuntimeAdapter, RuntimeError};
 
 /// Antwort des Runners für eine Sandbox.
 #[derive(Debug, Deserialize)]
@@ -70,13 +71,33 @@ pub struct HttpRunner {
     base_url: String,
     network: String,
     client: reqwest::Client,
+    /// The node token the runner's terminal endpoint demands, when the node has
+    /// one.
+    ///
+    /// Read here rather than passed in from `Config` because the terminal is the
+    /// only caller: a token that the whole process can see is a token that ends
+    /// up in a log line or a debug dump of the configuration. Unset means the
+    /// runner refuses the upgrade, which is its own refusal and not ours to
+    /// paper over.
+    node_token: Option<String>,
 }
 
 impl HttpRunner {
     pub fn new(base_url: impl Into<String>, network: impl Into<String>) -> Self {
+        Self::with_token(base_url, network, read_node_token())
+    }
+
+    /// Build an adapter with an explicit node token, for tests and for a caller
+    /// that resolves the secret itself.
+    pub fn with_token(
+        base_url: impl Into<String>,
+        network: impl Into<String>,
+        node_token: Option<String>,
+    ) -> Self {
         Self {
             base_url: base_url.into(),
             network: network.into(),
+            node_token,
             // A hung runner must not hold an API worker forever. Docker's own
             // stop grace period is 10 s and an exec may run for minutes, so the
             // bound is generous but finite.
@@ -85,6 +106,17 @@ impl HttpRunner {
                 .connect_timeout(std::time::Duration::from_secs(5))
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
+        }
+    }
+
+    /// The same host and port, with the WebSocket scheme.
+    fn ws_base_url(&self) -> String {
+        if let Some(rest) = self.base_url.strip_prefix("https://") {
+            format!("wss://{rest}")
+        } else if let Some(rest) = self.base_url.strip_prefix("http://") {
+            format!("ws://{rest}")
+        } else {
+            format!("ws://{}", self.base_url)
         }
     }
 
@@ -253,6 +285,81 @@ impl RuntimeAdapter for HttpRunner {
         self.send(reqwest::Method::POST, "/v1/builds", Some(&payload))
             .await
     }
+
+    async fn open_terminal(&self, name: &str) -> Result<BoxTerminal, RuntimeError> {
+        let url = format!("{}/v1/sandboxes/{}/terminal", self.ws_base_url(), name);
+        let mut request = url
+            .as_str()
+            .into_client_request()
+            .map_err(|error| RuntimeError::Rejected(format!("invalid terminal URL: {error}")))?;
+        // The token travels in a header, not in a query string: a URL ends up in
+        // access logs and in every error message that quotes the request. The
+        // subprotocol the runner answers with stays first, so the negotiation
+        // still selects it.
+        let protocol = match &self.node_token {
+            Some(token) => format!("{TERMINAL_SUBPROTOCOL}, {token}"),
+            None => TERMINAL_SUBPROTOCOL.to_string(),
+        };
+        request.headers_mut().insert(
+            "sec-websocket-protocol",
+            reqwest::header::HeaderValue::from_str(&protocol).map_err(|_| {
+                RuntimeError::Rejected("the node token is not a valid header value".to_string())
+            })?,
+        );
+        let upgrade = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            tokio_tungstenite::connect_async(request),
+        )
+        .await
+        .map_err(|_| RuntimeError::Unavailable("the runner did not answer the upgrade".into()))?
+        .map_err(|error| match error {
+            tokio_tungstenite::tungstenite::Error::Http(response) => {
+                let status = response.status().as_u16();
+                match status {
+                    404 => RuntimeError::NotFound(name.to_string()),
+                    // The runner demands the node token, and the message names
+                    // the variable: a terminal that silently refuses to open is
+                    // the kind of failure that costs an afternoon.
+                    401 | 403 => RuntimeError::Rejected(
+                        "the runner refused the node token; NESTBOX_NODE_TOKEN must be the \
+                         same on the control API and on the sandbox runner"
+                            .to_string(),
+                    ),
+                    _ => RuntimeError::Rejected(format!(
+                        "the runner refused the terminal ({status})"
+                    )),
+                }
+            }
+            other => RuntimeError::Unavailable(other.to_string()),
+        })?;
+        Ok(Box::new(RunnerTerminal::new(upgrade.0)))
+    }
+}
+
+/// The subprotocol the terminal speaks. Named so both ends agree, and so a
+/// proxy that inspects the upgrade sees a protocol rather than a bare socket.
+const TERMINAL_SUBPROTOCOL: &str = "nestbox-terminal";
+
+/// The node token, from a file when one is configured and from the environment
+/// otherwise.
+///
+/// The file wins because an environment variable is visible in `docker inspect`
+/// and in a crash dump (ADR 0005), and this token is the only thing between a
+/// compromised sandbox and a shell in its neighbour.
+fn read_node_token() -> Option<String> {
+    if let Ok(path) = std::env::var("NESTBOX_NODE_TOKEN_FILE") {
+        return match std::fs::read_to_string(&path) {
+            Ok(value) => Some(value.trim().to_string()).filter(|token| !token.is_empty()),
+            Err(error) => {
+                tracing::warn!(path = %path, error = %error, "cannot read the node token file");
+                None
+            }
+        };
+    }
+    std::env::var("NESTBOX_NODE_TOKEN")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|token| !token.is_empty())
 }
 
 impl HttpRunner {
@@ -266,5 +373,4 @@ impl HttpRunner {
             .await?;
         Ok(facts.into())
     }
-
 }
