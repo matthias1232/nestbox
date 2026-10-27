@@ -9,9 +9,10 @@ import { request, query } from './client.js';
  * caller can ask for "only what fits" without loading the rest; the console
  * applies its live filters to the verdicts the server returned.
  */
-export function catalog(refresh = false, filters = {}) {
+export function catalog(refresh = false, filters = {}, node) {
   return request(`models${query({
     refresh_hardware: refresh ? 'true' : undefined,
+    node,
     family: filters.family,
     publisher: filters.publisher,
     runtime: filters.runtime,
@@ -46,10 +47,24 @@ export function facets() {
   return request('models/facets');
 }
 
-export function install(key) {
-  return request(`models/${key}/install`, { method: 'POST' });
+/**
+ * Install on a node. The answer is the reservation it made, or
+ * `422 node.insufficient_resources` naming what the node's other installs hold.
+ */
+export function install(key, node) {
+  return request(`models/${key}/install`, { method: 'POST', body: node ? { node } : {} });
 }
 
-export function uninstall(key) {
-  return request(`models/${key}/uninstall`, { method: 'POST' });
+export function uninstall(key, node) {
+  return request(`models/${key}/uninstall`, { method: 'POST', body: node ? { node } : {} });
+}
+
+/**
+ * Refresh the catalogue from Hugging Face, Ollama, and NGC.
+ *
+ * Runs inside the request, so the counts come back with it. A curated row is
+ * never overwritten; the per-source counts say what changed.
+ */
+export function sync() {
+  return request('models/sync', { method: 'POST' });
 }

@@ -8,6 +8,7 @@
 
 import { For, Show, createMemo, createSignal, onMount } from 'solid-js';
 import CapacityOverview from '../../components/CapacityOverview.jsx';
+import * as nodeApi from '../../api/nodes.js';
 import ModelFitCell from '../../components/ModelFitCell.jsx';
 import { gib } from '../../components/ResourceBars.jsx';
 import * as models from '../../api/models.js';
@@ -24,6 +25,14 @@ const FITS = new Set([
 export default function ModelsPage() {
   const [items, setItems] = createSignal([]);
   const [hardware, setHardware] = createSignal(null);
+  // The node the catalogue is classified against. `local` until the list of
+  // nodes says otherwise: a page that opened on "no node" would show nothing
+  // and explain nothing.
+  const [nodes, setNodes] = createSignal([]);
+  const [nodeName, setNodeName] = createSignal('local');
+  const [budget, setBudget] = createSignal(null);
+  const [installs, setInstalls] = createSignal([]);
+  const [syncing, setSyncing] = createSignal(false);
   const [error, setError] = createSignal(null);
   const [notice, setNotice] = createSignal(null);
   const [busy, setBusy] = createSignal(false);
@@ -36,15 +45,34 @@ export default function ModelsPage() {
   const [cpuOnly, setCpuOnly] = createSignal(false);
   const [unifiedOnly, setUnifiedOnly] = createSignal(false);
 
-  onMount(() => load(false));
+  onMount(async () => {
+    try {
+      const answer = await nodeApi.list();
+      const list = answer.items || [];
+      setNodes(list);
+      const local = list.find((node) => node.is_local) || list[0];
+      if (local) setNodeName(local.name);
+    } catch {
+      // A console that cannot list nodes still shows the catalogue, which the
+      // server classifies against the local node when no node is named.
+    }
+    await load(false);
+  });
 
   async function load(refresh) {
     setBusy(true);
     setError(null);
     try {
-      const catalog = await models.catalog(refresh);
+      const catalog = await models.catalog(refresh, {}, nodeName());
       setItems(catalog.items || []);
       setHardware(catalog.hardware || null);
+      setBudget(catalog.budget || null);
+      try {
+        const answer = await models.installs(nodeName());
+        setInstalls(answer.items || []);
+      } catch {
+        setInstalls([]);
+      }
       if (refresh) {
         const fitting = (catalog.items || []).filter((m) => FITS.has(m.fit?.fit)).length;
         setScope('fits');
@@ -60,12 +88,37 @@ export default function ModelsPage() {
     }
   }
 
+  async function syncCatalog() {
+    setSyncing(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await models.sync();
+      const added = (result.sources || []).reduce((sum, source) => sum + source.added, 0);
+      const updated = (result.sources || []).reduce((sum, source) => sum + source.updated, 0);
+      setNotice(
+        `Catalogue synced: ${added} added, ${updated} updated from ` +
+        `${(result.sources || []).map((source) => source.source).join(', ') || 'no source'}. ` +
+        `Job ${result.job_id}.`,
+      );
+      await load(false);
+    } catch (failure) {
+      setError(failure.message);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   async function install(model) {
     setNotice(null);
     setError(null);
     try {
-      const result = await models.install(model.key);
-      setNotice(`Install job ${result.job_id} created for ${model.name}.`);
+      const result = await models.install(model.key, nodeName());
+      setNotice(
+        `${model.name}: ${gib(result.reserved_ram_bytes || 0)} reserved on ${result.node}` +
+        (result.reserved_vram_bytes ? ` and ${gib(result.reserved_vram_bytes)} of VRAM` : '') +
+        `. Job ${result.job_id}.`,
+      );
       await load(false);
     } catch (failure) {
       setError(failure.message);
@@ -76,8 +129,10 @@ export default function ModelsPage() {
     setNotice(null);
     setError(null);
     try {
-      const result = await models.uninstall(model.key);
-      setNotice(`Uninstall job ${result.job_id} created for ${model.name}.`);
+      const result = await models.uninstall(model.key, nodeName());
+      setNotice(
+        `${model.name} removed from ${result.node}; ${gib(result.released_ram_bytes || 0)} of RAM released.`,
+      );
       await load(false);
     } catch (failure) {
       setError(failure.message);
@@ -164,6 +219,21 @@ export default function ModelsPage() {
           </p>
         </div>
         <div class="controls">
+          <select
+            aria-label="Node"
+            value={nodeName()}
+            onChange={(event) => {
+              setNodeName(event.currentTarget.value);
+              queueMicrotask(() => load(false));
+            }}
+          >
+            <For each={nodes()}>
+              {(node) => <option value={node.name}>{node.display_name || node.name}</option>}
+            </For>
+          </select>
+          <button onClick={syncCatalog} disabled={syncing()}>
+            {syncing() ? 'Syncing…' : 'Sync catalog'}
+          </button>
           <button class="primary" onClick={() => load(true)} disabled={busy()}>
             {busy() ? 'Probing…' : 'Probe hardware again'}
           </button>
@@ -180,6 +250,46 @@ export default function ModelsPage() {
           ramReference={ramReference()}
           vramReference={vramReference()}
         />
+      </Show>
+
+      <Show when={budget()}>
+        <p class="muted">
+          On <strong>{nodeName()}</strong>: {gib(budget().ram_total_bytes)} of RAM, of which{' '}
+          <strong>{gib(budget().ram_reserved_bytes)} reserved</strong> by{' '}
+          {budget().installs} {budget().installs === 1 ? 'install' : 'installs'} and{' '}
+          {budget().ram_free_bytes ? gib(budget().ram_free_bytes) : '0 GiB'} free.
+          {budget().vram_total_bytes
+            ? ` VRAM: ${gib(budget().vram_reserved_bytes)} of ${gib(budget().vram_total_bytes)} reserved.`
+            : ''}
+        </p>
+      </Show>
+
+      <Show when={installs().length}>
+        <details class="installs">
+          <summary>{installs().length} installed on {nodeName()}</summary>
+          <table class="model-table">
+            <thead>
+              <tr><th>Model</th><th>State</th><th>Reserved</th><th>Provider</th></tr>
+            </thead>
+            <tbody>
+              <For each={installs()}>
+                {(row) => (
+                  <tr>
+                    <td>{row.model_name || row.model_key}</td>
+                    <td>
+                      {row.state}
+                      <Show when={row.state === 'installing'}>
+                        <span class="muted small"> — memory reserved, server not started (phase 2)</span>
+                      </Show>
+                    </td>
+                    <td>{gib(row.reserved_ram_bytes || 0)} RAM</td>
+                    <td class="muted small">{row.provider_profile_id ? 'pending' : '—'}</td>
+                  </tr>
+                )}
+              </For>
+            </tbody>
+          </table>
+        </details>
       </Show>
 
       <div class="filters">
