@@ -56,6 +56,12 @@ than by the compiler.
 | `postgres/environments.rs` | Environments and clusters |
 | `postgres/providers.rs` | Provider profiles and secret references |
 | `postgres/audit.rs` | Append-only audit writes |
+| `postgres/metrics.rs` | Samples, rollup, partition maintenance |
+| `postgres/access.rs` | SSH keys, port pool, inventory, sessions |
+| `postgres/egress.rs` | Compiled policy hash, decisions, windows |
+| `postgres/mcp.rs` | MCP registry, attachments, tool calls |
+| `postgres/traffic.rs` | Traffic rows, map edges, per-destination counts |
+| `postgres/traffic_bodies.rs` | Redacted bodies, capped and short-lived |
 
 ## Extending this module
 

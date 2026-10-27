@@ -55,6 +55,10 @@ microseconds is that it has none.
 | `persist.rs` | Persistent root, mount, mount spec, path derivation |
 | `pagination.rs` | Cursor, filter, sort, facet types |
 | `auth.rs` | User, role, permission |
+| `metrics.rs` | `docker stats` sample, one-minute bucket, window with its point budget |
+| `access.rs` | SSH key record (locator, never material), published port, inventory, session |
+| `egress.rs` | The pure `decide` function, compiled rule set, traffic event, map edge |
+| `mcp.rs` | MCP server definition, sandbox attachment, tool call, JSON-RPC recognition |
 
 ## Extending this module
 

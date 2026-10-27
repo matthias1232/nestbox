@@ -119,7 +119,11 @@ pub struct Policy {
 /// does not have to parse JSON on every request. `policy::rules_from_document`
 /// and `policy::document_from_rules` keep the two aligned, and a test asserts
 /// the round trip.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+///
+/// `PartialEq` exists so a compiled rule set can be compared in a test without
+/// spelling out fifteen fields; `Eq` is not derivable because nothing here
+/// needs it beyond the `CompiledPolicy` that holds it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct NetworkRule {
     pub id: Uuid,
     pub environment_id: Uuid,

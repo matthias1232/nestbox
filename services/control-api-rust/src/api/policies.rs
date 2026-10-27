@@ -294,3 +294,16 @@ pub async fn close_window(
     policy_service::close_window(&state.services, &auth.principal, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
+
+/// Decide one egress request on behalf of a node's proxy.
+///
+/// The caller is a node, not a browser: it presents the node token, so there is
+/// no session and no CSRF token. Default deny applies here — an unparseable
+/// request is refused, never allowed. The `feat/policy-decider` package fills
+/// the body; until then the proxy has nothing to ask.
+pub async fn internal_check(
+    State(_state): State<AppState>,
+    Json(_request): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Err(ApiError::not_implemented("POST /internal/policy/check"))
+}

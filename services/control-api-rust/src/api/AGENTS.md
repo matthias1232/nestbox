@@ -38,7 +38,7 @@ The architecture test enforces the last two.
 | `policies.rs` | Policies, rules, drafts, traffic windows |
 | `telemetry.rs` | History, facets, ingest |
 | `events.rs` | SSE streams |
-| `cluster.rs` | Gateways, supervisors, topology |
+| `cluster.rs` | Gateways, supervisors |
 | `providers.rs` | Provider profiles, probe |
 | `models.rs` | Catalog with filters, hardware, facets, requirements, installs, sync |
 | `nodes.rs` | Nodes with budget and sandbox count, one node, its sandboxes, display rename (probe: `feat/node-hardware-probe`) |
@@ -47,6 +47,13 @@ The architecture test enforces the last two.
 | `persistent_roots.rs` | Roots, mount, dismount, usage (`feat/persistent-roots`) |
 | `sandbox_agents.rs` | Agents inside a sandbox (`feat/sandbox-agents`) |
 | `jobs.rs` | Jobs, schedules |
+| `metrics.rs` | Resource history, node sample ingest, process table (`feat/sandbox-metrics`) |
+| `inventory.rs` | Snapshot and refresh (`feat/sandbox-metrics`) |
+| `access.rs` | SSH key, one-time download, rotation, ports, sessions (`feat/sandbox-access`) |
+| `traffic.rs` | Traffic rows, one body, map edges, effective policies, MCP calls (`feat/live-traffic`) |
+| `mcp.rs` | MCP registry and sandbox attachments (`feat/mcp-registry`) |
+| `sandboxes_terminal.rs` | The terminal WebSocket (`feat/terminal`) |
+| `topology.rs` | The cluster graph and its live edges (`feat/live-traffic`) |
 
 ## Work packages
 

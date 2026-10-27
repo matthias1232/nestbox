@@ -29,6 +29,12 @@ supersedes the old one and note the supersession in both files.
 | [0019](0019-catalog-sync-derives-by-rule.md) | The catalog is derived from the repositories by rule, and a curated row wins | Accepted |
 | [0020](0020-packs-are-data.md) | Baselines, agent packs, and tools are data | Accepted |
 | [0021](0021-persistence-is-bind-mounts.md) | Persistent data lives in bind mounts, one read-write mount per root | Accepted |
+| [0022](0022-egress-is-one-proxy-default-deny-fail-closed.md) | One egress proxy per node, default deny, fail closed | Accepted |
+| [0023](0023-terminal-sessions-are-audited-without-content.md) | A terminal session is audited by who and when, never by what | Accepted |
+| [0024](0024-ssh-key-is-a-one-time-download.md) | The sandbox SSH key is a one-time download, and the database holds a locator | Accepted |
+| [0025](0025-sandbox-metrics-live-in-postgresql.md) | Sandbox metrics live in PostgreSQL, raw for a day and rolled up for a week | Accepted |
+| [0026](0026-mcp-calls-are-traffic-and-stdio-is-not-egress.md) | An MCP call over HTTP is traffic; a stdio server is not egress | Accepted |
+| [0027](0027-bodies-are-logged-fully-and-the-redactor-is-the-boundary.md) | Bodies are logged fully, and the redactor is the boundary | Accepted |
 
 ## Writing a new ADR
 
