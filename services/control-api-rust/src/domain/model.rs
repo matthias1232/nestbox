@@ -365,8 +365,81 @@ pub struct FitReport {
 /// 5. `hybrid` → the GPU gate if there is a GPU, else the CPU gate;
 /// 6. `cuda` → the GPU gate.
 pub fn classify(model: &Model, hardware: &HardwareProfile) -> FitReport {
-    let bars = resource_bars(model, hardware);
-    let base = |fit: Fit, reason: String, cpu_path: bool| FitReport {
+    if model.is_remote || model.state == ModelState::Remote {
+        // Nothing is installed here, so no resource gates anything. The bars
+        // stay in the response, marked `not_required`, so the table has the
+        // same shape on every row.
+        return report(model, hardware, Fit::Remote,
+            "Served by a cloud provider; nothing to install on this machine.".into(),
+            false, false);
+    }
+
+    if model.state == ModelState::Installed {
+        let update = model
+            .installed_version
+            .as_deref()
+            .is_some_and(|installed| installed != model.version);
+        return report(
+            model,
+            hardware,
+            if update { Fit::UpdateAvailable } else { Fit::AlreadyInstalled },
+            if update {
+                format!(
+                    "Installed version {} can be updated to {}.",
+                    model.installed_version.as_deref().unwrap_or("unknown"),
+                    model.version
+                )
+            } else {
+                format!("Installed and up to date ({}).", model.version)
+            },
+            false,
+            false,
+        );
+    }
+
+    if model.unified_memory_only && !hardware.is_unified() {
+        return report(
+            model,
+            hardware,
+            Fit::NeedsUnifiedMemory,
+            format!(
+                "{} needs a unified-memory machine (DGX Spark / GB10) with about {}; \
+                 its weights exceed any single discrete card.",
+                model.name,
+                human_gib(model.min_vram_bytes.unwrap_or(0))
+            ),
+            false,
+            true,
+        );
+    }
+
+    let use_cpu_path = chosen_cpu_path(model, hardware);
+    if use_cpu_path {
+        return classify_cpu(model, hardware, use_cpu_path);
+    }
+
+    classify_gpu(model, hardware, use_cpu_path)
+}
+
+/// Which path the model takes on this machine: the rule the bars follow too.
+fn chosen_cpu_path(model: &Model, hardware: &HardwareProfile) -> bool {
+    match model.runtime {
+        ModelRuntime::Cpu => true,
+        ModelRuntime::Hybrid => !hardware.has_gpu(),
+        ModelRuntime::Cuda => false,
+    }
+}
+
+/// Assemble a report with the bars for the path that was taken.
+fn report(
+    model: &Model,
+    hardware: &HardwareProfile,
+    fit: Fit,
+    reason: String,
+    cpu_path: bool,
+    gated: bool,
+) -> FitReport {
+    FitReport {
         fit,
         required_vram_bytes: model.min_vram_bytes,
         required_gpus: model.min_gpu_count,
@@ -379,74 +452,19 @@ pub fn classify(model: &Model, hardware: &HardwareProfile) -> FitReport {
         required_cpu_cores: model.min_cpu_cores,
         available_cpu_cores: hardware.cores(),
         cpu_path,
-        bars: bars.clone(),
+        bars: bars_for(model, hardware, cpu_path, gated),
         reason,
-    };
-
-    if model.is_remote || model.state == ModelState::Remote {
-        return base(
-            Fit::Remote,
-            "Served by a cloud provider; nothing to install on this machine.".into(),
-            false,
-        );
     }
-
-    if model.state == ModelState::Installed {
-        let update = model
-            .installed_version
-            .as_deref()
-            .is_some_and(|installed| installed != model.version);
-        return base(
-            if update { Fit::UpdateAvailable } else { Fit::AlreadyInstalled },
-            if update {
-                format!(
-                    "Installed version {} can be updated to {}.",
-                    model.installed_version.as_deref().unwrap_or("unknown"),
-                    model.version
-                )
-            } else {
-                format!("Installed and up to date ({}).", model.version)
-            },
-            false,
-        );
-    }
-
-    if model.unified_memory_only && !hardware.is_unified() {
-        return base(
-            Fit::NeedsUnifiedMemory,
-            format!(
-                "{} needs a unified-memory machine (DGX Spark / GB10) with about {}; \
-                 its weights exceed any single discrete card.",
-                model.name,
-                human_gib(model.min_vram_bytes.unwrap_or(0))
-            ),
-            false,
-        );
-    }
-
-    let use_cpu_path = match model.runtime {
-        ModelRuntime::Cpu => true,
-        ModelRuntime::Hybrid => !hardware.has_gpu(),
-        ModelRuntime::Cuda => false,
-    };
-
-    if use_cpu_path {
-        return classify_cpu(model, hardware, base);
-    }
-
-    classify_gpu(model, hardware, base)
 }
 
-fn classify_cpu(
-    model: &Model,
-    hardware: &HardwareProfile,
-    base: impl Fn(Fit, String, bool) -> FitReport,
-) -> FitReport {
+fn classify_cpu(model: &Model, hardware: &HardwareProfile, cpu_path: bool) -> FitReport {
     let available_ram = hardware.addressable_ram_bytes();
     let required_ram = model.min_ram_bytes.unwrap_or(0);
 
     if available_ram == 0 {
-        return base(
+        return report(
+            model,
+            hardware,
             Fit::InsufficientRam,
             format!(
                 "{} runs on the CPU and needs about {} of RAM, but this machine's RAM \
@@ -454,13 +472,16 @@ fn classify_cpu(
                 model.name,
                 human_gib(required_ram)
             ),
+            cpu_path,
             true,
         );
     }
 
     if available_ram < required_ram {
         let shortfall = required_ram - available_ram;
-        let mut report = base(
+        let mut fit = report(
+            model,
+            hardware,
             Fit::InsufficientRam,
             format!(
                 "{} needs about {} of RAM on the CPU; this machine has {}. Short by {}.",
@@ -469,21 +490,25 @@ fn classify_cpu(
                 human_gib(available_ram),
                 human_gib(shortfall)
             ),
+            cpu_path,
             true,
         );
-        report.ram_shortfall_bytes = Some(shortfall);
-        return report;
+        fit.ram_shortfall_bytes = Some(shortfall);
+        return fit;
     }
 
     if let Some(required_cores) = model.min_cpu_cores {
         let cores = hardware.cores();
         if cores > 0 && cores < required_cores {
-            return base(
+            return report(
+                model,
+                hardware,
                 Fit::InsufficientCpu,
                 format!(
                     "{} wants at least {} CPU cores; this machine has {}.",
                     model.name, required_cores, cores
                 ),
+                cpu_path,
                 true,
             );
         }
@@ -491,7 +516,9 @@ fn classify_cpu(
 
     let recommended = model.recommended_ram_bytes.unwrap_or(required_ram);
     let tight = available_ram < recommended;
-    base(
+    report(
+        model,
+        hardware,
         Fit::CpuInstallable,
         if tight {
             format!(
@@ -508,48 +535,53 @@ fn classify_cpu(
                 human_gib(available_ram)
             )
         },
+        cpu_path,
         true,
     )
 }
 
-fn classify_gpu(
-    model: &Model,
-    hardware: &HardwareProfile,
-    base: impl Fn(Fit, String, bool) -> FitReport,
-) -> FitReport {
+fn classify_gpu(model: &Model, hardware: &HardwareProfile, cpu_path: bool) -> FitReport {
     let available_vram = hardware.addressable_memory_bytes();
     let available_gpus = hardware.gpu_count();
     let required_vram = model.min_vram_bytes.unwrap_or(0);
 
     if !hardware.has_gpu() {
-        let mut report = base(
+        let mut fit = report(
+            model,
+            hardware,
             Fit::NoGpu,
             format!(
                 "No GPU detected. {} needs about {} of GPU memory.",
                 model.name,
                 human_gib(required_vram)
             ),
-            false,
+            cpu_path,
+            true,
         );
-        report.available_vram_bytes = 0;
-        report.available_gpus = 0;
-        return report;
+        fit.available_vram_bytes = 0;
+        fit.available_gpus = 0;
+        return fit;
     }
 
     if available_gpus < model.min_gpu_count {
-        return base(
+        return report(
+            model,
+            hardware,
             Fit::InsufficientGpus,
             format!(
                 "{} needs {} GPUs; this machine has {}.",
                 model.name, model.min_gpu_count, available_gpus
             ),
-            false,
+            cpu_path,
+            true,
         );
     }
 
     if available_vram < required_vram {
         let shortfall = required_vram - available_vram;
-        let mut report = base(
+        let mut fit = report(
+            model,
+            hardware,
             Fit::InsufficientVram,
             format!(
                 "{} needs about {}; this machine has {}. Short by {}.",
@@ -558,15 +590,18 @@ fn classify_gpu(
                 human_gib(available_vram),
                 human_gib(shortfall)
             ),
-            false,
+            cpu_path,
+            true,
         );
-        report.vram_shortfall_bytes = Some(shortfall);
-        return report;
+        fit.vram_shortfall_bytes = Some(shortfall);
+        return fit;
     }
 
     let recommended = model.recommended_vram_bytes.unwrap_or(required_vram);
     let pool = if hardware.is_unified() { "unified memory" } else { "GPU memory" };
-    base(
+    report(
+        model,
+        hardware,
         Fit::Installable,
         if available_vram < recommended {
             format!(
@@ -584,24 +619,41 @@ fn classify_gpu(
                 human_gib(available_vram)
             )
         },
-        false,
+        cpu_path,
+        true,
     )
 }
 
 /// The "have versus need" bars for a model on a machine.
 ///
 /// Every model gets the same set of bars so the table is scannable: a bar that
-/// does not apply is marked `NotRequired` rather than omitted. The unified bar
-/// replaces the VRAM bar on a unified machine, because showing both would
+/// does not apply is marked `NotRequired` rather than omitted. Only the path
+/// that decides the verdict is `required` — a hybrid model running on the CPU
+/// must not show a red GPU bar next to a green "runs on CPU" badge. The unified
+/// bar replaces the VRAM bar on a unified machine, because showing both would
 /// double-count the same pool.
 pub fn resource_bars(model: &Model, hardware: &HardwareProfile) -> Vec<ResourceBar> {
+    bars_for(
+        model,
+        hardware,
+        chosen_cpu_path(model, hardware),
+        true,
+    )
+}
+
+fn bars_for(
+    model: &Model,
+    hardware: &HardwareProfile,
+    cpu_path: bool,
+    gated: bool,
+) -> Vec<ResourceBar> {
     let gpu_bar = if hardware.is_unified() {
         bar(
             Resource::UnifiedMemory,
             Some(hardware.addressable_memory_bytes()),
             model.min_vram_bytes,
             model.recommended_vram_bytes,
-            model.runtime != ModelRuntime::Cpu,
+            gated && !cpu_path,
         )
     } else {
         bar(
@@ -609,7 +661,7 @@ pub fn resource_bars(model: &Model, hardware: &HardwareProfile) -> Vec<ResourceB
             Some(hardware.addressable_memory_bytes()).filter(|v| *v > 0),
             model.min_vram_bytes,
             model.recommended_vram_bytes,
-            model.runtime != ModelRuntime::Cpu,
+            gated && !cpu_path,
         )
     };
 
@@ -618,7 +670,7 @@ pub fn resource_bars(model: &Model, hardware: &HardwareProfile) -> Vec<ResourceB
         Some(hardware.addressable_ram_bytes()).filter(|v| *v > 0),
         model.min_ram_bytes,
         model.recommended_ram_bytes,
-        model.runtime != ModelRuntime::Cuda,
+        gated && cpu_path,
     );
 
     let cpu_bar = bar(
@@ -626,7 +678,7 @@ pub fn resource_bars(model: &Model, hardware: &HardwareProfile) -> Vec<ResourceB
         Some(i64::from(hardware.cores())).filter(|v| *v > 0),
         model.min_cpu_cores.map(i64::from),
         model.recommended_cpu_cores.map(i64::from),
-        model.runtime != ModelRuntime::Cuda,
+        gated && cpu_path,
     );
 
     let gpu_count_bar = bar(
@@ -634,7 +686,7 @@ pub fn resource_bars(model: &Model, hardware: &HardwareProfile) -> Vec<ResourceB
         Some(i64::from(hardware.gpu_count())),
         Some(i64::from(model.min_gpu_count)),
         None,
-        model.runtime != ModelRuntime::Cpu,
+        gated && !cpu_path,
     );
 
     vec![gpu_bar, ram_bar, cpu_bar, gpu_count_bar]
@@ -876,6 +928,39 @@ mod tests {
         let bars = resource_bars(&model(24, 1), &hardware(&[], Some(128 * GIB)));
         assert!(bars.iter().any(|b| b.resource == Resource::UnifiedMemory));
         assert!(!bars.iter().any(|b| b.resource == Resource::Vram));
+    }
+
+    #[test]
+    fn the_bars_follow_the_path_that_decided_the_verdict() {
+        // A hybrid model running on the CPU must not show a red GPU bar next to
+        // a green "runs on CPU" badge: the GPU is not the gate on this machine.
+        let mut m = model(8, 1);
+        m.runtime = ModelRuntime::Hybrid;
+        m.min_ram_bytes = Some(8 * GIB);
+        m.recommended_ram_bytes = Some(64 * GIB);
+
+        let on_cpu = classify(&m, &hardware(&[], None));
+        assert_eq!(on_cpu.fit, Fit::CpuInstallable);
+        let vram = on_cpu.bars.iter().find(|b| b.resource == Resource::Vram).expect("vram bar");
+        assert_eq!(vram.status, BarStatus::NotRequired);
+        let ram = on_cpu.bars.iter().find(|b| b.resource == Resource::Ram).expect("ram bar");
+        assert_eq!(ram.status, BarStatus::Tight);
+
+        let on_gpu = classify(&m, &hardware(&[24 * GIB], None));
+        assert_eq!(on_gpu.fit, Fit::Installable);
+        let vram = on_gpu.bars.iter().find(|b| b.resource == Resource::Vram).expect("vram bar");
+        assert_eq!(vram.status, BarStatus::Ok);
+        let ram = on_gpu.bars.iter().find(|b| b.resource == Resource::Ram).expect("ram bar");
+        assert_eq!(ram.status, BarStatus::NotRequired);
+    }
+
+    #[test]
+    fn a_cloud_model_has_no_gating_bar() {
+        let mut m = model(280, 4);
+        m.is_remote = true;
+        m.state = ModelState::Remote;
+        let report = classify(&m, &hardware(&[], None));
+        assert!(report.bars.iter().all(|b| b.status == BarStatus::NotRequired));
     }
 
     #[test]

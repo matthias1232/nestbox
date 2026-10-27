@@ -96,6 +96,24 @@ export default function ModelsPage() {
     return { total: all.length, fits: fitting.length, notFits: local.length - fitting.length };
   });
 
+  // The capacity bars are scaled against the largest requirement among the
+  // models that fit, taken from the server's own bars so the scale cannot
+  // disagree with a verdict.
+  const reference = (resources) => {
+    let max = 0;
+    for (const model of items()) {
+      if (!FITS.has(model.fit?.fit)) continue;
+      for (const bar of model.fit.bars || []) {
+        if (!resources.includes(bar.resource)) continue;
+        const need = bar.recommended || bar.minimum || 0;
+        if (need > max) max = need;
+      }
+    }
+    return max;
+  };
+  const ramReference = createMemo(() => reference(['ram']));
+  const vramReference = createMemo(() => reference(['vram', 'unified_memory']));
+
   const visible = createMemo(() => {
     const needle = search().trim().toLowerCase();
     return items().filter((m) => {
@@ -150,7 +168,12 @@ export default function ModelsPage() {
       <Show when={notice()}><p class="notice">{notice()}</p></Show>
 
       <Show when={hardware()}>
-        <CapacityOverview hardware={hardware()} items={items()} />
+        <CapacityOverview
+          hardware={hardware()}
+          items={items()}
+          ramReference={ramReference()}
+          vramReference={vramReference()}
+        />
       </Show>
 
       <div class="filters">

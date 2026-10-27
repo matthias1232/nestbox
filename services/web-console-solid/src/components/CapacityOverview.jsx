@@ -1,40 +1,43 @@
 // The machine's own capacity, as an overview.
 //
-// Every figure is measured (or explicitly unknown). The bar compares the
-// machine with the largest requirement in the catalog that is currently loaded,
-// so "16 GiB of RAM" gets a scale instead of being a bare number. A bar that
-// fills completely means "this machine could host the biggest model listed",
-// not "nothing is left over".
+// The per-resource bars are scaled against the largest requirement among the
+// models that fit this machine, and the page passes that reference in. Scaling
+// against the biggest catalog entry instead would draw a 7 GiB appliance as a
+// 1 % sliver and teach nobody anything; scaling against "the largest model you
+// can actually run" shows the headroom that is left, which is the useful number.
 
 import { For, Show } from 'solid-js';
 import { amount, gib } from './ResourceBars.jsx';
 
-function tallest(items, pick) {
-  return items.reduce((max, item) => {
-    const value = pick(item);
-    return value != null && value > max ? value : max;
-  }, 0);
+function share(have, need) {
+  if (!need) return 0;
+  return Math.min(100, (have / need) * 100);
+}
+
+function CapacityBar(props) {
+  const have = () => props.have || 0;
+  const need = () => props.need || 0;
+  return (
+    <Show when={need() > 0} fallback={<small class="muted">nothing fits here yet</small>}>
+      <div class="capacity-bar" title={`have ${gib(have())}, reference ${gib(need())}`}>
+        <div style={{ width: `${share(have(), need())}%` }} />
+      </div>
+      <small class="muted">
+        {Math.round(share(have(), need()))}% of the largest fitting requirement
+        ({gib(need())})
+      </small>
+    </Show>
+  );
 }
 
 export default function CapacityOverview(props) {
   const hardware = () => props.hardware || {};
-  const items = () => props.items || [];
-
-  const maxRamNeed = () =>
-    tallest(items(), (m) => Math.max(m.min_ram_bytes || 0, m.recommended_ram_bytes || 0));
-  const maxVramNeed = () =>
-    tallest(items(), (m) => Math.max(m.min_vram_bytes || 0, m.recommended_vram_bytes || 0));
 
   const ram = () => hardware().system_ram_bytes || hardware().unified_memory_bytes || 0;
   const vram = () =>
     hardware().is_unified_memory
       ? hardware().unified_memory_bytes || 0
       : hardware().addressable_memory_bytes || 0;
-
-  const share = (have, need) => {
-    if (!need) return 0;
-    return Math.min(100, (have / need) * 100);
-  };
 
   return (
     <section class="capacity">
@@ -75,16 +78,7 @@ export default function CapacityOverview(props) {
           <span>System RAM</span>
           <b>{gib(hardware().system_ram_bytes)}</b>
           <small>MemTotal as the kernel reports it</small>
-          <div class="capacity-bar" title={
-            `have ${gib(ram())}, largest catalog requirement ${gib(maxRamNeed())}`
-          }>
-            <div style={{ width: `${share(ram(), maxRamNeed())}%` }} />
-          </div>
-          <small class="muted">
-            {maxRamNeed()
-              ? `${Math.round(share(ram(), maxRamNeed()))}% of the largest requirement (${gib(maxRamNeed())})`
-              : 'no requirement loaded'}
-          </small>
+          <CapacityBar have={ram()} need={props.ramReference} />
         </article>
 
         <article>
@@ -95,16 +89,7 @@ export default function CapacityOverview(props) {
               ? 'shared by CPU and GPU'
               : `${hardware().gpu_count || 0} device(s), largest single card counts`}
           </small>
-          <div class="capacity-bar" title={
-            `have ${gib(vram())}, largest catalog requirement ${gib(maxVramNeed())}`
-          }>
-            <div style={{ width: `${share(vram(), maxVramNeed())}%` }} />
-          </div>
-          <small class="muted">
-            {maxVramNeed()
-              ? `${Math.round(share(vram(), maxVramNeed()))}% of the largest requirement (${gib(maxVramNeed())})`
-              : 'no requirement loaded'}
-          </small>
+          <CapacityBar have={vram()} need={props.vramReference} />
         </article>
       </div>
 
