@@ -1,51 +1,132 @@
-//! HTTP-Schicht: ein Modul pro Ressource, ein Router, eine Komposition.
+//! HTTP: parsing, validation, delegation, and responses.
+//!
+//! Nothing here contains a rule or a query. A handler reads the request, asks a
+//! service, and formats the answer. If a handler grows an `if` that decides
+//! something about the domain, that `if` belongs in `services/`.
 
-use axum::Router;
-use axum::routing::get;
-
-use crate::state::AppState;
-
-pub mod bindings;
-pub mod packs;
-pub mod providers;
-pub mod reference;
+pub mod auth;
+pub mod cluster;
+pub mod events;
+pub mod jobs;
+pub mod models;
+pub mod policies;
+pub mod principal;
 pub mod sandboxes;
 pub mod system;
-pub mod tools;
-pub mod topology;
+pub mod telemetry;
 
-/// Baut den vollständigen API-Router.
+use axum::Router;
+use axum::routing::{delete, get, post, put};
+use tower_http::limit::RequestBodyLimitLayer;
+use tower_http::trace::TraceLayer;
+
+use crate::security::headers;
+use crate::state::AppState;
+
+/// Build the versioned router.
 ///
-/// Alle fachlichen Endpunkte liegen unter `/v1`, passend zum Reverse-Proxy
-/// (`/api/` → `:8000/`), sodass die GUI `/api/v1/...` aufruft.
+/// The `/api/v1/` prefix is frozen (ADR 0015): a breaking change gets a new
+/// prefix rather than silently altering this one.
 pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/healthz", get(system::health))
-        .nest("/v1", v1())
-        .with_state(state)
-}
+    let mut router = Router::new()
+        // System and documentation
+        .route("/api/v1/healthz", get(system::healthz))
+        .route("/api/v1/readyz", get(system::readyz))
+        .route("/api/v1/runtime", get(system::runtime_info))
+        .route("/api/v1/openapi.json", get(system::openapi))
+        .route("/api/v1/docs", get(system::docs))
+        .route("/api/schema/v1", get(system::openapi))
+        // Authentication
+        .route("/api/v1/auth/login", post(auth::login))
+        .route("/api/v1/auth/logout", post(auth::logout))
+        .route("/api/v1/auth/me", get(auth::me))
+        // Environments
+        .route("/api/v1/environments", get(system::environments))
+        .route("/api/v1/environments/current", get(system::current_environment))
+        // Sandboxes
+        .route(
+            "/api/v1/sandboxes",
+            get(sandboxes::list).post(sandboxes::create),
+        )
+        .route(
+            "/api/v1/sandboxes/{id}",
+            get(sandboxes::get).delete(sandboxes::delete),
+        )
+        .route("/api/v1/sandboxes/{id}/actions", post(sandboxes::action))
+        .route("/api/v1/sandboxes/{id}/logs", get(sandboxes::logs))
+        .route("/api/v1/sandboxes/{id}/inference", get(telemetry::sandbox_inference))
+        .route("/api/v1/sandboxes/{id}/rules", get(policies::sandbox_rules))
+        // Policies
+        .route("/api/v1/policies", get(policies::list).post(policies::create))
+        .route("/api/v1/policies/global", get(policies::global))
+        .route(
+            "/api/v1/policies/{id}",
+            get(policies::get).put(policies::update).delete(policies::delete),
+        )
+        .route("/api/v1/policies/{id}/diff", get(policies::diff))
+        // Network rules
+        .route(
+            "/api/v1/network-rules",
+            get(policies::list_rules).post(policies::create_rule),
+        )
+        .route("/api/v1/network-rules/{id}", delete(policies::delete_rule))
+        // Rule drafts and temporary windows
+        .route(
+            "/api/v1/rule-drafts",
+            get(policies::list_drafts).post(policies::draft_from_event),
+        )
+        .route("/api/v1/rule-drafts/{id}/approve", post(policies::approve_draft))
+        .route("/api/v1/rule-drafts/{id}/reject", post(policies::reject_draft))
+        .route("/api/v1/traffic-windows", post(policies::open_window))
+        .route(
+            "/api/v1/traffic-windows/{id}",
+            delete(policies::close_window),
+        )
+        // Telemetry
+        .route("/api/v1/telemetry/events", get(telemetry::history))
+        .route("/api/v1/telemetry/facets", get(telemetry::facets))
+        .route("/api/v1/telemetry/stream", get(events::telemetry_stream))
+        .route("/api/v1/telemetry/ingest", post(telemetry::ingest))
+        .route("/api/v1/telemetry/seed-demo", post(telemetry::seed_demo))
+        .route("/api/v1/events/stream", get(events::state_stream))
+        // Cluster
+        .route("/api/v1/gateways", get(cluster::list_gateways))
+        .route("/api/v1/gateways/{id}", get(cluster::get_gateway))
+        .route(
+            "/api/v1/gateways/{id}/settings",
+            put(cluster::update_settings),
+        )
+        .route("/api/v1/gateways/{id}/sync", post(cluster::sync))
+        .route("/api/v1/supervisors", get(cluster::supervisors))
+        .route("/api/v1/topology", get(cluster::topology))
+        // Models
+        .route("/api/v1/models", get(models::catalog))
+        .route("/api/v1/models/installed", get(models::installed))
+        .route("/api/v1/models/hardware", get(models::hardware))
+        .route("/api/v1/models/{key}/install", post(models::install))
+        .route("/api/v1/models/{key}/uninstall", post(models::uninstall))
+        // Jobs and schedules
+        .route("/api/v1/jobs", get(jobs::list))
+        .route("/api/v1/jobs/{id}", get(jobs::get))
+        .route("/api/v1/jobs/{id}/logs", get(jobs::logs))
+        .route("/api/v1/schedules", get(jobs::schedules))
+        .route("/api/v1/schedules/{id}/run", post(jobs::run_schedule))
+        // Audit
+        .route("/api/v1/audit-events", get(system::audit_events))
+        .with_state(state.clone());
 
-fn v1() -> Router<AppState> {
-    Router::new()
-        .route("/healthz", get(system::health))
-        .route("/runtime", get(system::runtime_status))
-        .route("/schema", get(system::schema))
-        .route("/events", get(system::events))
-        .route("/packs", get(packs::list))
-        .route("/providers", get(providers::list).post(providers::create))
-        .route("/tool-profiles", get(tools::list).post(tools::create))
-        .route("/tool-catalog", get(tools::catalog))
-        .route("/sandboxes", get(sandboxes::list).post(sandboxes::create))
-        .route("/sandboxes/{id}", get(sandboxes::get))
-        .route(
-            "/sandboxes/{id}/lifecycle",
-            axum::routing::post(sandboxes::lifecycle),
-        )
-        .route("/sandboxes/{id}/logs", get(sandboxes::logs))
-        .route("/bindings", get(bindings::list).post(bindings::create))
-        .route("/topology", get(topology::get))
-        .route(
-            "/reference/deploy",
-            axum::routing::post(reference::deploy_reference),
-        )
+    // Security headers on every response, including errors and streams. A CSP
+    // that appears only on success is not a CSP.
+    for layer in headers::security_headers() {
+        router = router.layer(layer);
+    }
+    if state.config.session_cookie_secure {
+        router = router.layer(headers::hsts_header());
+    }
+
+    // A body limit is the cheapest defence against a request that tries to
+    // exhaust memory before any handler sees it.
+    router = router.layer(RequestBodyLimitLayer::new(state.config.body_limit_bytes));
+
+    router.layer(TraceLayer::new_for_http())
 }

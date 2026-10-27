@@ -57,9 +57,19 @@ impl HardwareProfile {
         self.gpus.iter().map(|g| g.memory_bytes).max().unwrap_or(0)
     }
 
-    /// The number of GPUs.
+    /// The number of addressable GPU devices.
+    ///
+    /// A unified-memory machine reports no discrete cards but has one pool, so
+    /// it counts as a single device. Reporting zero would make every model look
+    /// like a multi-GPU request on exactly the hardware the product targets.
     pub fn gpu_count(&self) -> i32 {
-        self.gpus.len() as i32
+        if !self.gpus.is_empty() {
+            self.gpus.len() as i32
+        } else if self.unified_memory_bytes.unwrap_or(0) > 0 {
+            1
+        } else {
+            0
+        }
     }
 
     /// Whether the machine can host models at all.

@@ -277,3 +277,38 @@ mod tests {
         assert!(!sb.can_stop());
     }
 }
+
+/// A sandbox plus what the runtime reports about it.
+///
+/// Kept separate from [`Sandbox`] because the two answer different questions:
+/// the stored row is the *desired* state the control plane maintains, and the
+/// runtime facts are what is actually happening. Merging them into one type
+/// would make it possible to persist a fact as if it were an intention.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SandboxDetail {
+    #[serde(flatten)]
+    pub sandbox: Sandbox,
+    /// Absent when the runtime is unreachable. The console shows the stored
+    /// state and marks the live data as unavailable rather than showing zeros.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<crate::domain::runtime::RuntimeFacts>,
+}
+
+/// A sandbox row plus the few runtime facts the list needs.
+///
+/// The list would otherwise have to either omit the address and uptime or call
+/// the runtime once per row. Both are wrong: the first hides the thing an
+/// operator scans for, the second makes a page of 50 rows 50 round trips. The
+/// service calls the runtime once and fans the result out here.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SandboxSummary {
+    #[serde(flatten)]
+    pub sandbox: Sandbox,
+    /// Present only when the runtime answered.
+    pub address: Option<String>,
+    pub uptime_seconds: Option<u64>,
+    pub container_name: Option<String>,
+    /// False when the runtime could not be reached, so the console can label the
+    /// row as "stored state only" instead of showing blanks as zeros.
+    pub runtime_available: bool,
+}

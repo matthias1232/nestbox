@@ -191,7 +191,7 @@ impl IntoResponse for ApiError {
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     #[error("database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(sqlx::Error),
     #[error("row not found")]
     NotFound,
     /// A write raced another write. Becomes a 409, not a 500: it is a

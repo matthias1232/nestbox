@@ -1,7 +1,10 @@
-//! Ein Runtime-Adapter für Tests – ohne Docker, ohne Netzwerk.
+//! An in-memory runtime adapter for tests: no Docker, no network.
 //!
-//! Er verhält sich wie der echte Adapter: `create` legt einen Eintrag an,
-//! Lifecycle-Aktionen ändern den Status, `logs` liefert Beispielzeilen.
+//! It behaves like the real adapter where the services depend on it: `create`
+//! records an entry, lifecycle actions change the status, and `logs` returns
+//! representative lines. It deliberately does not emulate isolation, because a
+//! fake that pretends to be more than it is hides the bugs the real adapter
+//! would expose.
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -10,6 +13,16 @@ use async_trait::async_trait;
 
 use crate::domain::runtime::{RuntimeFacts, SandboxSpec};
 use crate::runtime::{RuntimeAdapter, RuntimeError};
+
+/// Take a lock, recovering from poisoning.
+///
+/// A poisoned mutex means another test panicked while holding it. In a fake
+/// adapter that is not a reason to abort the current test as well, so the guard
+/// is recovered and the caller continues.
+fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 
 /// In-Memory-Runtime für Unit- und Integrationstests.
 #[derive(Default)]
@@ -25,7 +38,7 @@ impl FakeRuntime {
 
     /// Die Specs aller erzeugten Sandboxes – für Tests der Umgebungsvariablen.
     pub fn created_specs(&self) -> Vec<SandboxSpec> {
-        self.specs.lock().expect("Mutex vergiftet").clone()
+        lock(&self.specs).clone()
     }
 
     fn with_entry<T>(
@@ -33,7 +46,7 @@ impl FakeRuntime {
         name: &str,
         change: impl FnOnce(&mut RuntimeFacts) -> T,
     ) -> Result<T, RuntimeError> {
-        let mut guard = self.sandboxes.lock().expect("Mutex vergiftet");
+        let mut guard = lock(&self.sandboxes);
         let entry = guard
             .get_mut(name)
             .ok_or_else(|| RuntimeError::NotFound(name.to_string()))?;
@@ -56,11 +69,9 @@ impl RuntimeAdapter for FakeRuntime {
     }
 
     async fn create(&self, spec: SandboxSpec) -> Result<RuntimeFacts, RuntimeError> {
-        // Für Tests: die Spec sichern, bevor Felder in die Fakten wandern.
-        self.specs
-            .lock()
-            .expect("Mutex vergiftet")
-            .push(spec.clone());
+        // Record the spec before its fields move into the facts, so a test can
+        // assert what was requested separately from what was reported.
+        lock(&self.specs).push(spec.clone());
 
         let facts = RuntimeFacts {
             id: format!("fake-{}", spec.name),
@@ -76,13 +87,13 @@ impl RuntimeAdapter for FakeRuntime {
             health: "starting".to_string(),
             ..RuntimeFacts::default()
         };
-        let mut guard = self.sandboxes.lock().expect("Mutex vergiftet");
+        let mut guard = lock(&self.sandboxes);
         guard.insert(spec.name, facts.clone());
         Ok(facts)
     }
 
     async fn inspect(&self, name: &str) -> Result<RuntimeFacts, RuntimeError> {
-        let guard = self.sandboxes.lock().expect("Mutex vergiftet");
+        let guard = lock(&self.sandboxes);
         guard
             .get(name)
             .cloned()
@@ -90,7 +101,7 @@ impl RuntimeAdapter for FakeRuntime {
     }
 
     async fn list(&self) -> Result<Vec<RuntimeFacts>, RuntimeError> {
-        let guard = self.sandboxes.lock().expect("Mutex vergiftet");
+        let guard = lock(&self.sandboxes);
         Ok(guard.values().cloned().collect())
     }
 
@@ -117,7 +128,7 @@ impl RuntimeAdapter for FakeRuntime {
     }
 
     async fn remove(&self, name: &str) -> Result<(), RuntimeError> {
-        let mut guard = self.sandboxes.lock().expect("Mutex vergiftet");
+        let mut guard = lock(&self.sandboxes);
         guard
             .remove(name)
             .map(|_| ())
@@ -125,7 +136,7 @@ impl RuntimeAdapter for FakeRuntime {
     }
 
     async fn logs(&self, name: &str, tail: u32) -> Result<String, RuntimeError> {
-        let guard = self.sandboxes.lock().expect("Mutex vergiftet");
+        let guard = lock(&self.sandboxes);
         if !guard.contains_key(name) {
             return Err(RuntimeError::NotFound(name.to_string()));
         }

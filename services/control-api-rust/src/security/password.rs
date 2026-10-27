@@ -15,8 +15,14 @@ use argon2::{Algorithm, Argon2, Params, Version};
 /// offline guessing expensive, fast enough that a login is not visibly slow.
 fn hasher() -> Argon2<'static> {
     // 19 MiB, 2 iterations, 1 lane. The OWASP-recommended baseline.
-    let params = Params::new(19_456, 2, 1, None).expect("static params are valid");
-    Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
+    //
+    // The parameters are constants, so a failure here would be a programming
+    // error rather than runtime input. Falling back to Argon2's own defaults
+    // keeps the process serving instead of panicking on a login.
+    match Params::new(19_456, 2, 1, None) {
+        Ok(params) => Argon2::new(Algorithm::Argon2id, Version::V0x13, params),
+        Err(_) => Argon2::default(),
+    }
 }
 
 /// Hash a password for storage.

@@ -1,41 +1,31 @@
-//! Nestbox Control API – Bibliothek.
+//! Nestbox control API.
 //!
-//! Die Binärdatei (`main.rs`) startet nur. Alles Fachliche liegt hier, damit
-//! Tests die API ohne Netzwerk und ohne Docker bauen können.
+//! The binary starts the process; everything else lives here so tests can build
+//! the router without binding a socket.
+//!
+//! Read `AGENTS.md` in this folder for the layer model, and `docs/adr/` for the
+//! reasoning behind it.
 
 pub mod api;
-pub mod audit;
 pub mod config;
 pub mod domain;
 pub mod error;
+pub mod events;
 pub mod openapi;
 pub mod runtime;
+pub mod security;
 pub mod services;
 pub mod state;
-
-use std::sync::Arc;
+pub mod store;
 
 use axum::Router;
-use tower_http::cors::CorsLayer;
-use tower_http::trace::TraceLayer;
-use utoipa::OpenApi;
-use utoipa_swagger_ui::SwaggerUi;
 
-use crate::config::Config;
-use crate::error::ApiError;
-use crate::openapi::ApiDoc;
-use crate::runtime::RuntimeAdapter;
 use crate::state::AppState;
 
-/// Baut State und Router für den Start (und für Tests).
-pub async fn build(config: Config, runtime: Arc<dyn RuntimeAdapter>) -> Result<AppState, ApiError> {
-    AppState::load(config, runtime).await
-}
-
-/// Baut die vollständige Anwendung inklusive API-Dokumentation.
+/// Build the application router.
+///
+/// Kept as a free function so a test can mount it with `tower::ServiceExt`
+/// without a listener, which is what makes the handler tests fast.
 pub fn app(state: AppState) -> Router {
     api::router(state)
-        .merge(SwaggerUi::new("/docs").url("/v1/openapi.json", ApiDoc::openapi()))
-        .layer(CorsLayer::permissive())
-        .layer(TraceLayer::new_for_http())
 }

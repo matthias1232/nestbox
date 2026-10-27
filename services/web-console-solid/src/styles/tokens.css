@@ -1,0 +1,41 @@
+/* Design tokens.
+ *
+ * One place for colour, spacing, and radius. A component that needs a value
+ * reads a variable; inventing a hex value here and there is how a console stops
+ * looking like one product.
+ */
+
+:root {
+  --bg: #0c0f14;
+  --bg-raised: #141922;
+  --bg-inset: #0a0d12;
+  --border: #232b36;
+  --border-strong: #334052;
+
+  --fg: #e6edf5;
+  --fg-muted: #8b9bb0;
+  --fg-faint: #5d6b7d;
+
+  --accent: #4da3ff;
+  --accent-fg: #04101f;
+
+  --ok: #3ddc84;
+  --warn: #ffb020;
+  --bad: #ff5f6d;
+  --info: #7cc4ff;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --radius: 8px;
+  --radius-sm: 5px;
+
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  --row-height: 34px;
+}

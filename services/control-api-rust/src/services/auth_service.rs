@@ -53,7 +53,7 @@ pub async fn login(
         .await
         .map_err(ApiError::from)?;
 
-    let Some((environment_id, _name, role)) = environments.first().copied() else {
+    let Some((environment_id, _name, role)) = environments.first().cloned() else {
         return Err(ApiError::unauthenticated(
             "This account has no environment membership.",
         ));
@@ -121,7 +121,7 @@ pub async fn principal_from_session(
     let environments = auth_store::environments_for_user(pool, record.user_id)
         .await
         .map_err(ApiError::from)?;
-    let Some((environment_id, _name, role)) = environments.first().copied() else {
+    let Some((environment_id, _name, role)) = environments.first().cloned() else {
         return Err(ApiError::unauthenticated(
             "This account has no environment membership.",
         ));
@@ -160,7 +160,7 @@ pub async fn principal_from_token(
     let environments = auth_store::environments_for_user(pool, user_id)
         .await
         .map_err(ApiError::from)?;
-    let Some((environment_id, _name, role)) = environments.first().copied() else {
+    let Some((environment_id, _name, role)) = environments.first().cloned() else {
         return Err(ApiError::unauthenticated(
             "This token has no environment membership.",
         ));

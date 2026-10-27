@@ -1,84 +1,119 @@
-//! Systemendpunkte: Health, Runtime-Status, Schema, Audit-Events.
+//! System endpoints: health, readiness, runtime facts, and the API document.
+//!
+//! Health and readiness answer different questions on purpose:
+//! `healthz` says the process is alive, `readyz` says it can actually serve —
+//! which means the database answered. A load balancer that only checks liveness
+//! will send traffic to a process that cannot reach its store.
 
 use axum::Json;
 use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use serde::Serialize;
-use utoipa::{OpenApi, ToSchema};
 
-use crate::audit::AuditEvent;
+use crate::api::principal::Auth;
 use crate::error::ApiError;
-use crate::openapi::ApiDoc;
+use crate::openapi;
 use crate::state::AppState;
 
-/// Antwort von `/v1/healthz`.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct HealthInfo {
-    pub status: String,
-    pub implementation: String,
-    pub api_version: String,
-    pub mode: String,
+/// Liveness: the process is running.
+pub async fn healthz() -> &'static str {
+    "ok"
 }
 
-/// Antwort von `/v1/runtime`.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct RuntimeStatus {
-    pub status: String,
-    pub adapter: String,
+/// Readiness: the process can serve, including its database.
+pub async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
+    if crate::store::postgres::is_ready(state.pool()).await {
+        (StatusCode::OK, "ready")
+    } else {
+        tracing::error!("readiness check failed");
+        (StatusCode::SERVICE_UNAVAILABLE, "database unavailable")
+    }
+}
+
+#[derive(Serialize)]
+pub struct RuntimeInfo {
+    pub runtime: String,
     pub network: String,
-    pub implementation: String,
+    pub api_version: &'static str,
 }
 
-#[utoipa::path(
-    get,
-    path = "/v1/healthz",
-    tag = "system",
-    summary = "Liveness und Implementierungskennung",
-    responses((status = 200, body = HealthInfo))
-)]
-pub async fn health() -> Json<HealthInfo> {
-    Json(HealthInfo {
-        status: "ok".to_string(),
-        implementation: "rust-axum".to_string(),
-        api_version: "v1".to_string(),
-        mode: "phase-1-reference".to_string(),
+/// What is actually executing sandboxes, stated honestly.
+pub async fn runtime_info(State(state): State<AppState>) -> Json<RuntimeInfo> {
+    Json(RuntimeInfo {
+        runtime: state.services.runtime.name().to_string(),
+        network: state.services.runtime.network().to_string(),
+        api_version: "v1",
     })
 }
 
-#[utoipa::path(
-    get,
-    path = "/v1/runtime",
-    tag = "system",
-    summary = "Status des Runtime-Adapters",
-    responses((status = 200, body = RuntimeStatus))
-)]
-pub async fn runtime_status(State(state): State<AppState>) -> Json<RuntimeStatus> {
-    let reachable = state.runtime.health().await.is_ok();
-    Json(RuntimeStatus {
-        status: if reachable { "ready" } else { "unavailable" }.to_string(),
-        adapter: state.runtime.name().to_string(),
-        network: state.runtime.network().to_string(),
-        implementation: "rust-axum".to_string(),
-    })
+/// The OpenAPI document.
+pub async fn openapi() -> Json<serde_json::Value> {
+    Json(openapi::document())
 }
 
-#[utoipa::path(
-    get,
-    path = "/v1/events",
-    tag = "system",
-    summary = "Audit-Ereignisse (neueste zuletzt)",
-    responses((status = 200, body = Vec<AuditEvent>))
-)]
-pub async fn events(State(state): State<AppState>) -> Json<Vec<AuditEvent>> {
-    Json(state.data.read().await.events.clone())
+/// A minimal documentation page.
+///
+/// Swagger UI is deliberately not embedded: it is a large third-party bundle
+/// served from the same origin as an authenticated console, and the generated
+/// document plus `curl` is enough for the operator this ships to. The page says
+/// so rather than pretending a full UI exists.
+pub async fn docs() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [("content-type", "text/html; charset=utf-8")],
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>Nestbox API</title>
+<style>body{font:16px/1.6 system-ui,sans-serif;max-width:52rem;margin:3rem auto;padding:0 1rem}
+code{background:#eee;padding:.1rem .3rem;border-radius:3px}</style></head><body>
+<h1>Nestbox API v1</h1>
+<p>The machine-readable contract is at <a href="/api/v1/openapi.json">/api/v1/openapi.json</a>
+and also at <code>/api/schema/v1</code>. The prefix <code>/api/v1/</code> is frozen;
+a breaking change gets a new prefix.</p>
+<p>Authenticate with a session cookie from <code>POST /api/v1/auth/login</code>
+(mutating requests also need the <code>x-csrf-token</code> header), or with
+<code>Authorization: Token &lt;key&gt;</code> for automation.</p>
+</body></html>"#,
+    )
 }
 
-#[utoipa::path(
-    get,
-    path = "/v1/schema",
-    tag = "system",
-    summary = "OpenAPI-Dokument, erzeugt aus den Typen",
-    responses((status = 200, body = Object))
-)]
-pub async fn schema() -> Result<Json<utoipa::openapi::OpenApi>, ApiError> {
-    Ok(Json(ApiDoc::openapi()))
+/// The environments this user may access.
+pub async fn environments(
+    State(state): State<AppState>,
+    auth: Auth,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let environments =
+        crate::services::environment_service::environments_for_user(&state.services, &auth.principal)
+            .await?;
+    Ok(Json(serde_json::json!({ "items": environments })))
+}
+
+/// A summary of the environment the request is scoped to.
+pub async fn current_environment(
+    State(state): State<AppState>,
+    auth: Auth,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let summary =
+        crate::services::environment_service::summary(&state.services, &auth.principal).await?;
+
+    Ok(Json(serde_json::json!({
+        "id": summary.id,
+        "name": summary.name,
+        "slug": summary.slug,
+        "sandboxes": summary.sandbox_count,
+        "gateways": summary.gateway_count,
+        "running": summary.running_count,
+        "role": auth.principal.role.as_str(),
+        "display_name": auth.principal.display_name,
+    })))
+}
+
+/// Recent audit events.
+pub async fn audit_events(
+    State(state): State<AppState>,
+    auth: Auth,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let events =
+        crate::services::audit_service::list(&state.services, &auth.principal, 200).await?;
+    Ok(Json(serde_json::json!({ "items": events })))
 }

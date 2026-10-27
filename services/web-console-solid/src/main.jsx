@@ -1,21 +1,17 @@
-import { createSignal, createResource, For, Show } from 'solid-js';
+// Entry point: mount the app inside the session provider.
+
 import { render } from 'solid-js/web';
-import './style.css';
-const api=async(path,options={})=>{const r=await fetch(`/api/v1/${path}`,{headers:{'Content-Type':'application/json'},...options});const d=await r.json();if(!r.ok)throw Error(d.error?.message||JSON.stringify(d));return d};
-function App(){
- const [error,setError]=createSignal(''),[logs,setLogs]=createSignal('');
- const [sandboxes,{refetch:refetchSandboxes}]=createResource(()=>api('sandboxes')); const [topology,{refetch:refetchTopology}]=createResource(()=>api('topology'));const [runtime,{refetch:refetchRuntime}]=createResource(()=>api('runtime'));const [providers,{refetch:refetchProviders}]=createResource(()=>api('providers'));const [packs]=createResource(()=>api('packs'));const [profiles]=createResource(()=>api('tool-profiles'));
- const refresh=()=>{refetchSandboxes();refetchTopology();refetchRuntime();refetchProviders()};
- const lifecycle=async(id,action)=>{try{await api(`sandboxes/${id}/lifecycle`,{method:'POST',body:JSON.stringify({action})});refresh()}catch(e){setError(e.message)}};
- const showLogs=async id=>{try{setLogs((await api(`sandboxes/${id}/logs`)).logs||'No logs')}catch(e){setError(e.message)}};
- const deploy=async()=>{try{await api('reference/deploy',{method:'POST'});refresh()}catch(e){setError(e.message)}};
- const addProvider=async e=>{e.preventDefault();const f=new FormData(e.currentTarget);try{await api('providers',{method:'POST',body:JSON.stringify({name:f.get('name'),kind:'openai-compatible',base_url:f.get('base_url'),model:f.get('model'),api_key:f.get('api_key')})});e.currentTarget.reset();refetchProviders()}catch(x){setError(x.message)}};
- return <main><header><div><small>NESTBOX · SOLIDJS · API V1</small><h1>Sandbox Operations Center</h1><p>Rust control plane · live Docker runtime · explicit configuration</p></div><div class="buttons"><a class="doclink" href="/docs.html" target="_blank" rel="noopener">Swagger UI</a><a class="doclink" href="/redoc.html" target="_blank" rel="noopener">Redoc</a><button onClick={deploy}>Deploy reference environment</button><button class="secondary" onClick={refresh}>Refresh</button></div></header>
- <Show when={error()}><p class="error">{error()}</p></Show>
- <section class="cards"><article><span>Runtime</span><b>{runtime()?.status||'loading'}</b><small>{runtime()?.adapter}</small></article><article><span>Network</span><b>{runtime()?.network||'—'}</b><small>runtime topology</small></article><article><span>Sandboxes</span><b>{sandboxes()?.length||0}</b><small>live inventory</small></article><article><span>Providers</span><b>{providers()?.length||0}</b><small>secret-safe profiles</small></article></section>
- <section><h2>Topology</h2><div class="topology"><For each={topology()?.nodes||[]}>{n=><div class="node"><b>{n.label}</b><small>{n.kind} · {n.status}</small><code>{n.ip||'runtime'}</code></div>}</For></div><div class="flows"><For each={topology()?.edges||[]}>{e=><span>{e.source} → {e.target} <small>{e.label}</small></span>}</For></div></section>
- <section><h2>Sandboxes</h2><table><thead><tr><th>Name</th><th>Pack</th><th>Status</th><th>IP</th><th>Uptime</th><th>Actions</th></tr></thead><tbody><For each={sandboxes()||[]}>{s=><tr><td>{s.name}</td><td>{s.pack_key}</td><td><i class={s.status==='running'?'ok':'bad'}></i>{s.status}</td><td><code>{s.runtime?.network?.[0]?.ip||'—'}</code></td><td>{s.runtime?.uptime_seconds||0}s</td><td class="actions"><button onClick={()=>lifecycle(s.id,'start')}>Start</button><button onClick={()=>lifecycle(s.id,'stop')}>Stop</button><button onClick={()=>lifecycle(s.id,'restart')}>Restart</button><button class="secondary" onClick={()=>showLogs(s.id)}>Logs</button></td></tr>}</For></tbody></table></section>
- <section class="grid"><div><h2>Model provider</h2><p class="muted">Add your OmniRoute-compatible endpoint here. The key is accepted once and never returned by the API.</p><form onSubmit={addProvider}><input name="name" placeholder="omniroute" required/><input name="base_url" placeholder="https://router.example/v1" required/><input name="model" placeholder="provider/model" required/><input name="api_key" type="password" placeholder="API key" required/><button>Save provider</button></form><ul><For each={providers()||[]}>{p=><li><b>{p.name}</b> · {p.model} · <code>{p.base_url}</code> · key {p.api_key_configured?'configured':'missing'}</li>}</For></ul></div><div><h2>Catalog</h2><h3>Packs</h3><ul><For each={packs()||[]}>{p=><li><b>{p.name}</b> — {p.description}</li>}</For></ul><h3>Tool profiles</h3><ul><For each={profiles()||[]}>{p=><li><b>{p.name}</b> — {p.packages?.join(', ')}</li>}</For></ul></div></section>
- <Show when={logs()}><section><h2>Logs</h2><pre>{logs()}</pre></section></Show></main>
-}
-render(()=> <App/>,document.getElementById('root'));
+import { SessionProvider } from './state/session.jsx';
+import App from './App.jsx';
+import './styles/tokens.css';
+import './styles/app.css';
+
+const root = document.getElementById('root');
+render(
+  () => (
+    <SessionProvider>
+      <App />
+    </SessionProvider>
+  ),
+  root,
+);

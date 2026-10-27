@@ -80,36 +80,82 @@ fn mask_key_value(input: &str, key: &str) -> String {
     while let Some(relative) = lowered[cursor..].find(key) {
         let start = cursor + relative;
         let after_key = start + key.len();
-        // Determine the separator that follows the key.
-        let rest = &input[after_key..];
-        let sep_len = if rest.starts_with("=\"") {
-            2
-        } else if rest.starts_with('=') || rest.starts_with(':') {
-            1
-        } else {
-            // The key appears as a bare word; leave it and continue past it.
+
+        // The match must be a whole word, or `token` would also fire inside
+        // `tokenizer` and mangle an innocent field name.
+        let previous_is_boundary =
+            start == 0 || !input.as_bytes()[start - 1].is_ascii_alphanumeric();
+        if !previous_is_boundary {
             result.push_str(&input[cursor..after_key]);
             cursor = after_key;
             continue;
-        };
+        }
 
-        let value_start = after_key + sep_len;
-        // A quoted value ends at the quote; an unquoted one at whitespace,
-        // comma, semicolon, or ampersand.
-        let quoted = input[after_key..].starts_with("=\"");
-        let value_slice = &input[value_start..];
-        let value_end = if quoted {
-            value_slice.find('"').map(|i| value_start + i).unwrap_or(input.len())
-        } else {
-            value_slice
-                .find(|c: char| c.is_whitespace() || c == ',' || c == ';' || c == '&')
-                .map(|i| value_start + i)
-                .unwrap_or(input.len())
+        // Skip an optional closing quote and spaces: `"token": "x"` is as common
+        // as `token=x`, and both must be caught.
+        let rest = &input[after_key..];
+        let bytes = rest.as_bytes();
+        let mut index = 0usize;
+        if index < bytes.len() && (bytes[index] == b'"' || bytes[index] == b'\'') {
+            index += 1;
+        }
+        while index < bytes.len() && bytes[index] == b' ' {
+            index += 1;
+        }
+
+        if index >= bytes.len() || (bytes[index] != b':' && bytes[index] != b'=') {
+            result.push_str(&input[cursor..after_key]);
+            cursor = after_key;
+            continue;
+        }
+        index += 1;
+        while index < bytes.len() && bytes[index] == b' ' {
+            index += 1;
+        }
+
+        // An Authorization header carries its scheme before the credential.
+        // Keeping the scheme readable and masking only what follows makes the
+        // log line still legible while removing the secret.
+        let mut value_start = after_key + index;
+        let lowered_tail = input[value_start..].to_ascii_lowercase();
+        for scheme in ["bearer ", "basic ", "token "] {
+            if lowered_tail.starts_with(scheme) {
+                value_start += scheme.len();
+                break;
+            }
+        }
+
+        let quoted = value_start < input.len()
+            && (input.as_bytes()[value_start] == b'"' || input.as_bytes()[value_start] == b'\'');
+        let quote = if quoted { Some(input.as_bytes()[value_start]) } else { None };
+        let inner_start = if quoted { value_start + 1 } else { value_start };
+
+        let tail = &input[inner_start..];
+        let value_end = match quote {
+            Some(mark) => tail
+                .find(mark as char)
+                .map(|offset| inner_start + offset)
+                .unwrap_or(input.len()),
+            None => tail
+                .find(|c: char| c.is_whitespace() || c == ',' || c == ';' || c == '&' || c == '}')
+                .map(|offset| inner_start + offset)
+                .unwrap_or(input.len()),
         };
 
         result.push_str(&input[cursor..value_start]);
         result.push_str(MASK);
-        cursor = value_end;
+
+        // Skip past the closing quote when the value was quoted, so the output
+        // does not end up with an unbalanced pair.
+        cursor = if quoted {
+            (value_end + 1).min(input.len())
+        } else {
+            value_end
+        };
+        if cursor <= start {
+            // Guarantee progress; a zero-width match would loop forever.
+            cursor = after_key;
+        }
     }
 
     result.push_str(&input[cursor..]);
@@ -119,33 +165,62 @@ fn mask_key_value(input: &str, key: &str) -> String {
 /// Mask tokens that carry a recognizable prefix.
 fn mask_prefixed_tokens(input: &str) -> String {
     const PREFIXES: &[&str] = &[
-        "sk-",         // OpenAI and compatible
-        "nvapi-",      // NVIDIA
-        "ghp_",        // GitHub personal access token
-        "gho_",        // GitHub OAuth
-        "xoxb-",       // Slack
-        "Bearer ",     // Authorization header value
-        "-----BEGIN",  // PEM private key
+        "sk-",        // OpenAI and compatible
+        "nvapi-",     // NVIDIA
+        "ghp_",       // GitHub personal access token
+        "gho_",       // GitHub OAuth
+        "xoxb-",      // Slack
+        "Bearer ",    // Authorization header value
+        "-----BEGIN", // PEM block: masked to the end, because a key in a log is a breach
     ];
 
-    let mut out = input.to_string();
-    for prefix in PREFIXES {
-        while let Some(index) = out.find(prefix) {
-            let tail = &out[index + prefix.len()..];
-            let len = tail
-                .find(|c: char| {
-                    c.is_whitespace() || c == '"' || c == '\'' || c == ',' || c == '}'
-                })
-                .unwrap_or(tail.len());
-            if len < 8 {
-                // Too short to be a credential; avoid mangling ordinary words.
-                break;
-            }
-            let end = index + prefix.len() + len;
-            out.replace_range(index + prefix.len()..end, MASK);
-        }
+    // A PEM block is masked from its header to the end of the string. Partial
+    // masking of a key would leave usable material behind.
+    if let Some(index) = input.find("-----BEGIN") {
+        let mut out = String::with_capacity(index + MASK.len());
+        out.push_str(&input[..index]);
+        out.push_str(MASK);
+        return out;
     }
-    out
+
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+
+    loop {
+        // The earliest prefix wins, so masking is stable regardless of the order
+        // of the list above.
+        let mut best: Option<(usize, &str)> = None;
+        for prefix in PREFIXES {
+            if let Some(index) = rest.find(prefix) {
+                if best.is_none_or(|(current, _)| index < current) {
+                    best = Some((index, prefix));
+                }
+            }
+        }
+
+        let Some((index, prefix)) = best else {
+            out.push_str(rest);
+            return out;
+        };
+
+        out.push_str(&rest[..index + prefix.len()]);
+        let after = &rest[index + prefix.len()..];
+
+        let length = after
+            .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ',' || c == '}')
+            .unwrap_or(after.len());
+
+        if length < 8 {
+            // Too short to be a credential. Emit it literally and continue past
+            // the prefix, so the same position cannot match a second time.
+            out.push_str(&after[..length]);
+            rest = &after[length..];
+            continue;
+        }
+
+        out.push_str(MASK);
+        rest = &after[length..];
+    }
 }
 
 /// Mask sensitive values in a JSON document, recursively.
