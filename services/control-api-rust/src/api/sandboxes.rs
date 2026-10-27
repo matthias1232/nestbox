@@ -74,8 +74,13 @@ pub async fn get(
 pub struct CreateRequest {
     pub name: String,
     pub pack_key: String,
+    /// Optional: empty means the pack's default image.
+    #[serde(default)]
     pub image: String,
     pub image_digest: Option<String>,
+    /// Optional: empty means the pack's default command.
+    #[serde(default)]
+    pub command: Vec<String>,
     #[serde(default = "default_memory")]
     pub memory_limit: String,
     #[serde(default = "default_cpu")]
@@ -108,6 +113,7 @@ pub async fn create(
             pack_key: body.pack_key,
             image: body.image,
             image_digest: body.image_digest,
+            command: body.command,
             memory_limit: body.memory_limit,
             cpu_limit: body.cpu_limit,
             pids_limit: body.pids_limit,

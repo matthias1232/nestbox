@@ -67,7 +67,9 @@ pub async fn list(
 
     // Only enum-derived identifiers reach the SQL text. A user-supplied sort is
     // parsed into this enum before it gets here.
-    let order_column = params.sort.column();
+    // Qualified with the table alias: the join brings a second `updated_at`
+    // into scope, and an unqualified column there is ambiguous.
+    let order_column = format!("s.{}", params.sort.column());
     let direction = params.direction.sql();
     let comparison = match params.direction {
         SortDirection::Desc => "<",
@@ -108,7 +110,7 @@ pub async fn list(
             AND ($5::text IS NULL OR s.name ILIKE '%' || $5 || '%')
             AND ($6::timestamptz IS NULL OR ({order_column}, s.id) {comparison} ($6, $7))
             AND ($8::text IS NULL OR ({order_column}, s.id) {comparison} ($8::text, $7))
-          ORDER BY s.{order_column} {direction}, s.id {direction}
+          ORDER BY {order_column} {direction}, s.id {direction}
           LIMIT $9"
     );
 

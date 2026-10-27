@@ -148,11 +148,29 @@ pub async fn get(
 pub struct CreateSandbox {
     pub name: String,
     pub pack_key: String,
+    /// Empty means "use the pack's default image".
     pub image: String,
     pub image_digest: Option<String>,
+    /// Empty means "use the pack's default command".
+    pub command: Vec<String>,
     pub memory_limit: String,
     pub cpu_limit: f64,
     pub pids_limit: i64,
+}
+
+/// The image and command a pack runs by default.
+///
+/// Kept as one function so a new pack is one match arm, and so the API and the
+/// console cannot disagree about what a pack name means. A pack that needs no
+/// explicit command returns an empty vector, which lets the image's own
+/// entrypoint decide.
+pub fn pack_defaults(pack_key: &str) -> (&'static str, Vec<&'static str>) {
+    match pack_key {
+        "hermes" => ("nestbox-hermes:local", vec!["sleep", "infinity"]),
+        "openclaw" => ("nestbox-openclaw:local", vec![]),
+        "git" => ("nestbox-tool-git:local", vec!["sleep", "infinity"]),
+        _ => ("nestbox-ubuntu-dev:local", vec!["sleep", "infinity"]),
+    }
 }
 
 /// Create a sandbox: validate, place, persist, then ask the runtime.
@@ -167,7 +185,20 @@ pub async fn create(
     require(principal, Permission::SandboxWrite)?;
 
     let name = SandboxName::new(&request.name).map_err(ApiError::validation)?;
-    reject_unpinned_image(&request.image, request.image_digest.as_deref())?;
+
+    let (default_image, default_command) = pack_defaults(&request.pack_key);
+    let image = if request.image.trim().is_empty() {
+        default_image.to_string()
+    } else {
+        request.image.clone()
+    };
+    let command: Vec<String> = if request.command.is_empty() {
+        default_command.iter().map(|part| part.to_string()).collect()
+    } else {
+        request.command.clone()
+    };
+
+    reject_unpinned_image(&image, request.image_digest.as_deref())?;
 
     let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
         .await
@@ -198,7 +229,7 @@ pub async fn create(
             gateway_id,
             name: name.as_str(),
             pack_key: &request.pack_key,
-            image: &request.image,
+            image: &image,
             image_digest: request.image_digest.as_deref(),
             spec: &spec,
         },
@@ -228,7 +259,7 @@ pub async fn create(
     let runtime_spec = SandboxSpec {
         name: sandbox.name.clone(),
         image: sandbox.image.clone(),
-        command: vec![],
+        command,
         environment: vec![],
         pack_key: sandbox.pack_key.clone(),
         tool_profile: String::new(),
@@ -442,9 +473,18 @@ fn reject_unpinned_image(image: &str, digest: Option<&str>) -> Result<(), ApiErr
             "Image tag 'latest' is not allowed; pin a digest instead.",
         ));
     }
+
+    // A locally built image has no registry digest to pin by reference. The
+    // `:local` tag is the explicit, greppable marker that this is a
+    // development image built on this host; it is allowed and recorded, while
+    // every other floating tag is refused.
+    if image.ends_with(":local") {
+        return Ok(());
+    }
+
     if digest.is_none() && !image.contains("@sha256:") {
         return Err(ApiError::validation(
-            "Image must be pinned by digest (name@sha256:...).",
+            "Image must be pinned by digest (name@sha256:...) or tagged :local.",
         ));
     }
     Ok(())
@@ -472,6 +512,21 @@ mod tests {
     #[test]
     fn a_floating_tag_without_digest_is_refused() {
         assert!(reject_unpinned_image("nginx:1.27", None).is_err());
+    }
+
+    #[test]
+    fn a_locally_built_image_is_allowed() {
+        // It has no registry digest by construction; the tag is the marker.
+        assert!(reject_unpinned_image("nestbox-hermes:local", None).is_ok());
+    }
+
+    #[test]
+    fn every_pack_has_a_default_image_and_command() {
+        for pack in ["ubuntu-dev", "hermes", "openclaw", "git", "unknown"] {
+            let (image, command) = pack_defaults(pack);
+            assert!(!image.is_empty());
+            let _ = command;
+        }
     }
 
     #[test]
