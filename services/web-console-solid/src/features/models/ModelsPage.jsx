@@ -116,7 +116,7 @@ export default function ModelsPage() {
 
   const visible = createMemo(() => {
     const needle = search().trim().toLowerCase();
-    return items().filter((m) => {
+    const matched = items().filter((m) => {
       if (scope() === 'fits' && !FITS.has(m.fit?.fit)) return false;
       if (scope() === 'not' && (m.is_remote || FITS.has(m.fit?.fit))) return false;
       if (family() !== 'all' && m.family !== family()) return false;
@@ -128,6 +128,12 @@ export default function ModelsPage() {
       return `${m.name} ${m.key} ${m.publisher || ''} ${m.parameters || ''}`
         .toLowerCase()
         .includes(needle);
+    });
+    // What this machine can run comes first: the point of the screen is to make
+    // the installable rows stand out, not to bury them under 400B models.
+    return matched.sort((a, b) => {
+      const rank = (m) => (FITS.has(m.fit?.fit) ? 0 : 1);
+      return rank(a) - rank(b) || a.name.localeCompare(b.name);
     });
   });
 
