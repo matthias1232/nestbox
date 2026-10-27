@@ -401,3 +401,120 @@ async fn a_telemetry_partition_exists_for_this_month() {
 
     assert!(partitions >= 3, "the next months should be pre-created");
 }
+
+/// A root takes one read-write mount at a time; read-only sharing is unlimited.
+///
+/// The rule is a partial unique index rather than a service check, because two
+/// requests can pass the check in the same instant and only the database can
+/// order them. A read-only mount is what makes a project usable by two sandboxes
+/// at once without letting them overwrite each other.
+#[tokio::test]
+async fn a_root_takes_one_read_write_mount_and_many_read_only_ones() {
+    let Some(pool) = connect().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+
+    let environment: Uuid = sqlx::query_scalar("SELECT id FROM environments LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .expect("environment");
+    let cluster: Uuid = sqlx::query_scalar("SELECT id FROM clusters LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .expect("cluster");
+    let node: Uuid = sqlx::query_scalar("SELECT id FROM nodes WHERE is_local")
+        .fetch_one(&pool)
+        .await
+        .expect("local node");
+
+    let root: Uuid = sqlx::query_scalar(
+        "INSERT INTO persistent_roots (environment_id, node_id, kind, slug, host_path)
+         VALUES ($1, $2, 'project', 'rw-rule', '/var/lib/nestbox/persistent/t/project--rw-rule')
+         RETURNING id",
+    )
+    .bind(environment)
+    .bind(node)
+    .fetch_one(&pool)
+    .await
+    .expect("root");
+
+    let mut sandboxes = Vec::new();
+    for name in ["rw-holder", "rw-reader", "rw-next"] {
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO sandboxes (environment_id, cluster_id, node_id, name, image, image_digest)
+             VALUES ($1, $2, $3, $4, 'img@sha256:abc', 'sha256:abc')
+             RETURNING id",
+        )
+        .bind(environment)
+        .bind(cluster)
+        .bind(node)
+        .bind(name)
+        .fetch_one(&pool)
+        .await
+        .expect("sandbox");
+        sandboxes.push(id);
+    }
+    let (holder, reader, next) = (sandboxes[0], sandboxes[1], sandboxes[2]);
+
+    sqlx::query(
+        "INSERT INTO mounts (root_id, sandbox_id, mount_path, read_only, status)
+         VALUES ($1, $2, '/workspace', false, 'mounted')",
+    )
+    .bind(root)
+    .bind(holder)
+    .execute(&pool)
+    .await
+    .expect("the first read-write mount");
+
+    let conflicting = sqlx::query(
+        "INSERT INTO mounts (root_id, sandbox_id, mount_path, read_only, status)
+         VALUES ($1, $2, '/workspace', false, 'mounted')",
+    )
+    .bind(root)
+    .bind(reader)
+    .execute(&pool)
+    .await;
+    assert!(
+        conflicting.is_err(),
+        "a second read-write mount of one root must be refused"
+    );
+
+    sqlx::query(
+        "INSERT INTO mounts (root_id, sandbox_id, mount_path, read_only, status)
+         VALUES ($1, $2, '/workspace', true, 'mounted')",
+    )
+    .bind(root)
+    .bind(reader)
+    .execute(&pool)
+    .await
+    .expect("a read-only mount next to a read-write one");
+
+    // Dismounting the holder frees the root for another writer, which is what
+    // keeps the rule usable after a container is retired.
+    sqlx::query("UPDATE mounts SET status = 'dismounted' WHERE root_id = $1 AND NOT read_only")
+        .bind(root)
+        .execute(&pool)
+        .await
+        .expect("dismount");
+    sqlx::query(
+        "INSERT INTO mounts (root_id, sandbox_id, mount_path, read_only, status)
+         VALUES ($1, $2, '/workspace', false, 'mounted')",
+    )
+    .bind(root)
+    .bind(next)
+    .execute(&pool)
+    .await
+    .expect("the freed root takes a new writer");
+
+    // The rule is only as good as the index; assert the index is the partial one.
+    let definition: String =
+        sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE indexname = 'mounts_one_rw_per_root'")
+            .fetch_one(&pool)
+            .await
+            .expect("index");
+    assert!(definition.contains("UNIQUE"));
+    assert!(definition.contains("WHERE"));
+    assert!(definition.contains("NOT read_only"));
+}
+
