@@ -47,6 +47,7 @@ to cloud models rather than refusing to start.
 | [policies.md](policies.md) | How policy is modelled, resolved, and enforced |
 | [telemetry.md](telemetry.md) | How the live console gets data |
 | [models.md](models.md) | How models are installed and served |
+| [nodes.md](nodes.md) | What a node is, and the one budget number the platform trusts |
 | [gateways.md](gateways.md) | Gateways, supervisors, and sync |
 | [security.md](security.md) | The threat model and the controls |
 

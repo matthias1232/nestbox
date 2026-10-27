@@ -44,6 +44,23 @@ Verified on the appliance VM200 (`192.168.55.50`), branch `feat/m1-rebuild`,
 | Unified memory (DGX Spark / GB10) shown explicitly | Partial | Modelled and displayed, with the source note; no GB10 machine has been probed, so the path is unit-tested, not field-tested. |
 | Install the weights | **Not done** | The button creates a job and records intent. No artefact is downloaded; the page says so. Phase 2. |
 
+## Nodes, installs, and the builder
+
+| Goal | State | Evidence on VM200 (2026-10-27) |
+|---|---|---|
+| A node is the unit a sandbox and a model live on | Done | `GET /nodes` answers one `local` node, online, 7.8 GiB, 4 cores, no GPU, 3 sandboxes; `sandboxes.node_id` is NOT NULL. |
+| The budget is measurement minus reservations | Done | Installing `qwen3-1.7b` reserved 5.00 GiB: free fell 7.76 → 2.76 GiB. A second model needing 12 GiB answered `422 node.insufficient_resources`: "5.0 GiB of this node's 7.8 GiB are reserved by qwen3-1.7b. 2.8 GiB are free, short by 9.2 GiB." |
+| Uninstall releases the reservation | Done | `released_ram_bytes: 5368709120`; free returned to 7.76 GiB. |
+| A sandbox is refused when it cannot fit | Done | `32Gi` on the 7.8 GiB node → `422 node.insufficient_resources`, "The node has 7.8 GiB of RAM free; the request needs 32.0 GiB." `512Mi` → `201`, `node_name: local`. |
+| An install creates a provider profile | Done | `local/qwen3-1.7b@local`, status `pending`, endpoint `http://model-qwen3-1-7b:8000/v1`. The inference environment filters on `reachable`. |
+| The catalog is built from the repositories | Done | `POST /models/sync` and the daily `catalog-sync` schedule both run it: Hugging Face +27, Ollama +16, NGC +24 → 152 rows. A second run reports 0 added, 67 updated; the 85 curated rows are untouched (all `pinned`). |
+| Baselines, packs, and tools are data | Done | 3 baselines (Ubuntu recommended), 9 packs, 23 tools with apt/rpm names; `pack_defaults` reads the table. |
+| Agents inside a sandbox | Done (API) | Adding `hermes` answered the agent row and the generated supervisor; removing with `keep_persistent=false` answered `204`. The console tab exists. |
+| Recipes and builds | Partial | Recipe CRUD, revision, Dockerfile generation, and `409 recipe.not_built` are proven. A real image build through the runner was queued (`202`) but not completed and observed on VM200. |
+| Persistent roots and mounts | Done (API) | CRUD, one read-write mount per root enforced by index, mounts passed to the runtime from the database. The "rebuild the sandbox, the file is still there" proof needs a rebuilt container and was not run. |
+| Builder UI, recipes screen, persistent-data screen | **Not done** | Three console packages (builder wizard, per-node models view beyond the budget line, recipes/persistence) did not land. The models page does show the node selector, the budget with reservations, the installs list, and the sync button. |
+| Download weights, start a model server | **Not done** | Phase 2. The install reserves memory, creates the pending profile, and says so in its own response. |
+
 ## Bugs found by testing on the appliance, and fixed
 
 Each of these would have shipped if the code had only been compiled:
