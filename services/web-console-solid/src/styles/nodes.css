@@ -1,0 +1,135 @@
+/* Nodes: the budget bars and the node drawer.
+ *
+ * The bars follow the "have versus need" convention of `.resbars`: one dark
+ * track, a muted segment for what is already taken, and an accent segment for
+ * what is left. The colours are tokens, so a node bar and a model-fit bar in the
+ * same table cannot drift apart.
+ *
+ * Loaded by `features/nodes/NodesPage.jsx`, not by `main.jsx`: the styles travel
+ * with the screen that uses them.
+ */
+
+.node-table .node-desc {
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A budget cell is two bars and a line of counts; it needs room to stay legible
+ * without squeezing the name column. */
+.node-table .node-budget {
+  min-width: 340px;
+  vertical-align: top;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.budgetbars {
+  display: grid;
+  gap: 6px;
+  max-width: 460px;
+}
+
+.budgetbars.compact {
+  gap: 4px;
+}
+
+.budgetbar {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    "label values"
+    "track track";
+  gap: 2px 8px;
+  align-items: baseline;
+}
+
+.budgetbar-label {
+  grid-area: label;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fg-faint);
+  white-space: nowrap;
+}
+
+.budgetbar-values {
+  grid-area: values;
+  text-align: right;
+  font-size: 11px;
+  color: var(--fg-faint);
+}
+
+.budgetbar-values b {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.budgetbar-note {
+  grid-area: values;
+  text-align: right;
+}
+
+/* One track, two segments: reserved from the left, free after it. Total is
+ * therefore the whole track, and nothing has to be subtracted by eye. */
+.budgetbar-track {
+  grid-area: track;
+  display: flex;
+  height: 6px;
+  background: #070a0e;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.budgetbar-fill {
+  height: 100%;
+}
+
+.budgetbar-fill.reserved {
+  background: var(--fg-faint);
+  opacity: 0.5;
+}
+
+.budgetbar-fill.free {
+  background: var(--accent);
+}
+
+.budgetmeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px var(--space-3);
+  font-size: 11px;
+  color: var(--fg-faint);
+}
+
+.budgetmeta span:not(.muted) {
+  color: var(--fg-muted);
+}
+
+.node-unmeasured {
+  margin: 0;
+  max-width: 380px;
+}
+
+.budget-when {
+  margin: 0;
+}
+
+/* Probe: the button and the sentence that says why it exists. */
+.node-probe {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+  margin: var(--space-3) 0 var(--space-2);
+}
+
+.node-form {
+  max-width: 520px;
+}
+
+.node-form .field input {
+  font-family: var(--font);
+}

@@ -26,9 +26,11 @@ use crate::state::AppState;
 pub async fn list(
     State(state): State<AppState>,
     auth: Auth,
-) -> Result<Json<Vec<NodeView>>, ApiError> {
+) -> Result<Json<serde_json::Value>, ApiError> {
     let nodes = node_service::list(&state.services, &auth.principal).await?;
-    Ok(Json(nodes))
+    // The envelope every other collection uses. A bare array here would be the
+    // one endpoint a client has to special-case.
+    Ok(Json(serde_json::json!({ "items": nodes })))
 }
 
 /// One node.

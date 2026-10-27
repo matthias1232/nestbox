@@ -115,22 +115,31 @@ pub async fn delete_for_install(
     scope: &mut TenantScope<'_>,
     profile_id: Uuid,
 ) -> Result<(), ApiError> {
-    // A profile a sandbox still selects is not removed quietly: the sandbox
-    // would start with an environment naming an endpoint nobody maintains.
+    ensure_not_in_use(scope, profile_id).await?;
+    store::delete(scope, profile_id).await.map_err(ApiError::from)
+}
+
+/// Refuse to remove a profile a sandbox still selects.
+///
+/// A sandbox that points at a deleted profile starts with an environment naming
+/// an endpoint nobody maintains, so the refusal names the sandboxes instead of
+/// leaving them to fail later. Both delete paths call this: an operator deleting
+/// a profile and an uninstall removing what it created face the same rule.
+async fn ensure_not_in_use(
+    scope: &mut TenantScope<'_>,
+    profile_id: Uuid,
+) -> Result<(), ApiError> {
     let names = store::sandboxes_using(scope, profile_id)
         .await
         .map_err(ApiError::from)?;
-    if !names.is_empty() {
-        return Err(ApiError::conflict(
-            ErrorCode::PROVIDER_IN_USE,
-            format!(
-                "The provider profile is used by {}.",
-                names.join(", ")
-            ),
-        )
-        .with_details(serde_json::json!({ "sandboxes": names })));
+    if names.is_empty() {
+        return Ok(());
     }
-    store::delete(scope, profile_id).await.map_err(ApiError::from)
+    Err(ApiError::conflict(
+        ErrorCode::PROVIDER_IN_USE,
+        format!("The provider profile is used by {}.", names.join(", ")),
+    )
+    .with_details(serde_json::json!({ "sandboxes": names })))
 }
 
 /// Register a provider profile.
@@ -275,6 +284,7 @@ pub async fn delete(
         .await
         .map_err(ApiError::from)?;
     let profile = store::get(&mut scope, id).await.map_err(ApiError::from)?;
+    ensure_not_in_use(&mut scope, id).await?;
     store::delete(&mut scope, id).await.map_err(ApiError::from)?;
     crate::store::postgres::audit::record(
         &mut scope,

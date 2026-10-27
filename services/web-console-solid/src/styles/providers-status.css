@@ -1,0 +1,70 @@
+/* Providers: the status a probe left behind, the install a profile came from,
+ * and the refusal to remove one that a sandbox still selects.
+ *
+ * Kept out of app.css because none of this is a general component: it is what
+ * this screen says about a row, and the tokens in tokens.css carry the colours.
+ */
+
+/* Rows hold two or three lines now, so the fixed row height becomes a minimum
+ * and the top alignment keeps the name and the badge level. */
+.prov-table td {
+  vertical-align: top;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.prov-filters {
+  margin-bottom: var(--space-3);
+}
+
+/* The install a profile was created for. It sits under the name because the
+ * name is what an operator scans for; the origin explains the row. */
+.prov-origin {
+  margin-top: 2px;
+  color: var(--fg-muted);
+}
+
+/* A cross-reference, not a control: the console has no route for a model or a
+ * node yet, so this must not look like an anchor that would go somewhere. The
+ * ids are in the tooltip. */
+.prov-ref {
+  color: var(--fg);
+  border-bottom: 1px dotted var(--border-strong);
+  cursor: help;
+}
+
+/* Status is a badge with the meaning in words underneath, because a colour
+ * alone cannot say "the server is not started yet" (ADR 0018). */
+.prov-status {
+  min-width: 260px;
+  max-width: 360px;
+}
+
+.prov-line {
+  margin-top: 4px;
+}
+
+.prov-detail {
+  margin-top: 6px;
+  border-left: 2px solid var(--border);
+  padding-left: var(--space-2);
+}
+
+/* A 409 provider.in_use is an answer: it names the sandboxes, one per line, so
+ * the operator can act on it. */
+.prov-blocked p {
+  margin: 0 0 var(--space-2);
+}
+
+.prov-blocked-names {
+  margin: 0 0 var(--space-2);
+  padding-left: var(--space-5);
+}
+
+.prov-blocked-names li {
+  list-style: disc;
+}
+
+.prov-blocked button {
+  margin-top: var(--space-1);
+}

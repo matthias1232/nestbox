@@ -12,8 +12,9 @@ on it.
   interesting information.
 - Address, uptime, and resource limits, because "is it running" is not the same
   as "is it reachable".
-- Which node it is on, and — at create time — what that machine has left to
-  give.
+- The node each sandbox runs on. The list already carries `node_name` and
+  `node_id`; the column is the only place the console says which machine holds
+  the container — and, at create time, what that machine has left to give.
 - The log tail without leaving the page, because a failure is diagnosed from the
   log.
 
@@ -23,6 +24,9 @@ on it.
 - A lifecycle action is disabled when the current status does not permit it, and
   the reason is the domain rule, not a guess in the component.
 - A destructive action asks once, and says what will be destroyed.
+- The node name links to the nodes screen only when `onOpenNode` is passed by the
+  integrator; this feature does not own that route, and a dead link is worse than
+  plain text.
 - A resource pre-check compares the request against the budget `GET /nodes`
   returned. It never adds up capacity itself: a request above
   `budget.ram_free_bytes` or above `budget.cpu_cores` disables submit and names
@@ -33,6 +37,7 @@ on it.
 - Removing an agent decides what happens to its persistent home. The "keep its
   data" checkbox is that decision, it defaults to true, and `keep_persistent`
   carries it on the same DELETE.
+>>>>>>> origin/feat/m1-rebuild
 
 ## Files
 

@@ -40,6 +40,7 @@ features/sandboxes/
 | `providers/` | Model endpoints and their credential locators |
 | `models/` | Model catalog with hardware fit |
 | `jobs/` | Jobs and schedules |
+| `nodes/` | The machines sandboxes and models run on, their budget, and the probe |
 
 ## Extending
 

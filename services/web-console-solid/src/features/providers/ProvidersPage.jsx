@@ -1,13 +1,24 @@
-// Model endpoints: the local router, a cloud API, a vLLM on the overlay.
+// Model endpoints: the local router, a cloud API, a vLLM on the overlay, and the
+// server an installed model will run as.
 //
-// The screen never displays or accepts a credential value, only the locator that
-// points at one. A probe is the only way to learn whether the credential works,
-// and it reports the answer rather than a generic failure.
+// Three things this screen refuses to fake:
+//   1. a credential value — only the locator is ever shown (ADR 0005);
+//   2. a status — it is the server's answer from the last probe, and a profile
+//      an install created is `pending`, meaning its model server is not started
+//      yet, which is not the same as an endpoint that failed (ADR 0018);
+//   3. a removal — a profile a sandbox still selects is refused with
+//      409 `provider.in_use`, and the screen names those sandboxes instead of
+//      reporting a generic failure.
 
-import { For, Show, createSignal, onMount } from 'solid-js';
+import { For, Show, createMemo, createSignal, onMount } from 'solid-js';
 import StatusBadge from '../../components/StatusBadge.jsx';
+import { ApiError } from '../../api/client.js';
 import * as api from '../../api/providers.js';
+import * as models from '../../api/models.js';
+import '../../styles/providers-status.css';
 
+// What an operator can register by hand. `local_openai_compatible` is absent on
+// purpose: that kind is created by an install, never typed into the form.
 const KINDS = [
   { id: 'omniroute', label: 'OmniRoute router' },
   { id: 'openai_compatible', label: 'OpenAI-compatible server' },
@@ -15,6 +26,34 @@ const KINDS = [
   { id: 'anthropic', label: 'Anthropic' },
   { id: 'nvidia', label: 'NVIDIA' },
   { id: 'local_vllm', label: 'Local vLLM' },
+];
+
+const KIND_LABELS = {
+  ...Object.fromEntries(KINDS.map((kind) => [kind.id, kind.label])),
+  local_openai_compatible: 'Model server of an install',
+};
+
+// The meaning of each status, in the badge's tooltip and again as a second line.
+// `pending` never says "offline": nothing has failed, a server has not started.
+const STATUS_MEANING = {
+  pending:
+    'Created by an install whose model server is not started yet, so a new sandbox ' +
+    'is not given this profile until a probe has seen it answer.',
+  reachable: 'The endpoint answered the last probe.',
+  unreachable: 'The endpoint did not answer the last probe. The probe detail says why.',
+};
+
+const STATUS_LINE = {
+  pending: 'Model server not started yet (install phase 2)',
+  reachable: 'Answered the last probe',
+  unreachable: 'Did not answer the last probe',
+};
+
+const FILTERS = [
+  { id: 'all', label: 'All' },
+  { id: 'pending', label: 'Pending' },
+  { id: 'reachable', label: 'Reachable' },
+  { id: 'unreachable', label: 'Unreachable' },
 ];
 
 const blank = {
@@ -25,11 +64,42 @@ const blank = {
   secret_ref: 'file:///secrets/',
 };
 
+// A probe is recent enough that "3 min ago" is more useful than a timestamp.
+function relative(iso) {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return 'at an unknown time';
+  const minutes = Math.round((Date.now() - then) / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} h ago`;
+  return new Date(iso).toLocaleString();
+}
+
+function shortId(id) {
+  return typeof id === 'string' ? id.slice(0, 8) : 'unknown';
+}
+
+// The refusal names what holds the profile; the sentence has to agree with the
+// count, or the list below it reads like a contradiction.
+function holders(blocked) {
+  const count = blocked.sandboxes.length;
+  if (count > 1) return `${count} sandboxes still select it`;
+  return 'a sandbox still selects it';
+}
+
 export default function ProvidersPage() {
   const [items, setItems] = createSignal([]);
+  const [installs, setInstalls] = createSignal([]);
   const [error, setError] = createSignal(null);
   const [notice, setNotice] = createSignal(null);
+  // The last probe of this session, per profile. The server also persists the
+  // verdict; this keeps the sentence next to the row that produced it.
   const [probes, setProbes] = createSignal({});
+  const [probing, setProbing] = createSignal({});
+  // A 409 provider.in_use with the sandboxes that still select the profile.
+  const [blocked, setBlocked] = createSignal(null);
+  const [status, setStatus] = createSignal('all');
   const [form, setForm] = createSignal({ ...blank });
   const [editing, setEditing] = createSignal(null);
   const [busy, setBusy] = createSignal(false);
@@ -38,13 +108,49 @@ export default function ProvidersPage() {
 
   async function load() {
     setError(null);
-    try {
-      const result = await api.list();
-      setItems(result.items || []);
-    } catch (failure) {
-      setError(failure.message);
+    const [profiles, installList] = await Promise.allSettled([
+      api.list(),
+      models.installs(),
+    ]);
+
+    if (profiles.status === 'fulfilled') {
+      setItems(profiles.value.items || []);
+    } else {
+      setError(profiles.reason.message);
     }
+
+    // Naming the model and the node is a convenience: a reader without
+    // `model.read` still sees the profile, with the install id in the tooltip.
+    setInstalls(installList.status === 'fulfilled' ? installList.value?.items || [] : []);
   }
+
+  // The status the row shows: the answer of a probe in this session if there is
+  // one, otherwise what the server stored.
+  const statusOf = (profile) => {
+    const probe = probes()[profile.id];
+    if (probe) return probe.reachable ? 'reachable' : 'unreachable';
+    return profile.status || 'unknown';
+  };
+
+  const installOf = (profile) => {
+    if (!profile.model_install_id) return null;
+    return installs().find((install) => install.id === profile.model_install_id) || null;
+  };
+
+  const counts = createMemo(() => {
+    const all = items();
+    return {
+      all: all.length,
+      pending: all.filter((profile) => statusOf(profile) === 'pending').length,
+      reachable: all.filter((profile) => statusOf(profile) === 'reachable').length,
+      unreachable: all.filter((profile) => statusOf(profile) === 'unreachable').length,
+    };
+  });
+
+  const visible = createMemo(() => {
+    if (status() === 'all') return items();
+    return items().filter((profile) => statusOf(profile) === status());
+  });
 
   async function submit(event) {
     event.preventDefault();
@@ -95,29 +201,52 @@ export default function ProvidersPage() {
   async function probe(profile) {
     setError(null);
     setNotice(null);
+    setBlocked(null);
+    setProbing({ ...probing(), [profile.id]: true });
     try {
       const result = await api.probe(profile.id);
       setProbes({ ...probes(), [profile.id]: result });
+      // The server stores the verdict and the time of the probe, so the row
+      // reads the same after a reload as it does right now.
+      await load();
     } catch (failure) {
       setError(failure.message);
+    } finally {
+      const next = { ...probing() };
+      delete next[profile.id];
+      setProbing(next);
     }
   }
 
   async function destroy(profile) {
-    if (!window.confirm(`Remove provider “${profile.name}”? A sandbox that already uses its endpoint keeps working; a new one will not get it.`)) {
-      return;
-    }
+    const answer = window.confirm(
+      `Remove provider “${profile.name}”? If a sandbox still selects it the server ` +
+        'refuses, because that sandbox would keep an endpoint nobody maintains.',
+    );
+    if (!answer) return;
     setError(null);
+    setNotice(null);
+    setBlocked(null);
     try {
       await api.remove(profile.id);
+      setNotice(`Provider “${profile.name}” removed.`);
       await load();
     } catch (failure) {
-      setError(failure.message);
+      // 409 provider.in_use is an answer, not a malfunction: it names what holds
+      // the profile. Everything else is a failure and keeps the plain message.
+      if (failure instanceof ApiError && failure.code === 'provider.in_use') {
+        const names = Array.isArray(failure.details?.sandboxes)
+          ? failure.details.sandboxes.filter((name) => typeof name === 'string')
+          : [];
+        setBlocked({ name: profile.name, message: failure.message, sandboxes: names });
+      } else {
+        setError(failure.message);
+      }
     }
   }
 
   return (
-    <section class="page">
+    <section class="page prov-page">
       <header class="page-head">
         <div>
           <h1>Providers</h1>
@@ -134,12 +263,50 @@ export default function ProvidersPage() {
       <Show when={error()}><p class="error">{error()}</p></Show>
       <Show when={notice()}><p class="notice">{notice()}</p></Show>
 
+      <Show when={blocked()}>
+        <div class="error prov-blocked">
+          <p>
+            <strong>{blocked().name}</strong> was not removed: {holders(blocked())}, and that
+            workload would keep an endpoint nobody maintains.
+          </p>
+          <Show
+            when={blocked().sandboxes.length > 0}
+            fallback={<p class="small">{blocked().message}</p>}
+          >
+            <p class="small">Sandboxes that select it:</p>
+            <ul class="plain prov-blocked-names">
+              <For each={blocked().sandboxes}>
+                {(name) => <li class="mono small">{name}</li>}
+              </For>
+            </ul>
+          </Show>
+          <p class="small">
+            Point those sandboxes at another provider, then remove this profile again.
+          </p>
+          <button class="tiny ghost" onClick={() => setBlocked(null)}>Dismiss</button>
+        </div>
+      </Show>
+
       <Show
         when={items().length > 0}
         fallback={<p class="muted">No provider profile yet. Register one below.</p>}
       >
+        <div class="facets prov-filters">
+          <For each={FILTERS}>
+            {(filter) => (
+              <button
+                class={`chip ${status() === filter.id ? 'active' : ''}`}
+                aria-pressed={status() === filter.id}
+                onClick={() => setStatus(filter.id)}
+              >
+                {filter.label} <b>{counts()[filter.id]}</b>
+              </button>
+            )}
+          </For>
+        </div>
+
         <div class="table-scroll">
-          <table>
+          <table class="prov-table">
             <thead>
               <tr>
                 <th>Name</th>
@@ -147,18 +314,49 @@ export default function ProvidersPage() {
                 <th>Endpoint</th>
                 <th>Model</th>
                 <th>Credential</th>
-                <th>Probe</th>
+                <th>Status</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              <For each={items()}>
+              <For each={visible()}>
                 {(profile) => (
                   <tr>
-                    <td class="mono">{profile.name}</td>
-                    <td class="small">
-                      {KINDS.find((kind) => kind.id === profile.kind)?.label || profile.kind}
+                    <td>
+                      <div class="mono">{profile.name}</div>
+                      <Show when={profile.model_install_id}>
+                        <div class="small prov-origin">
+                          <Show
+                            when={installOf(profile)}
+                            fallback={
+                              <span title={profile.model_install_id}>
+                                from install <span class="mono">{shortId(profile.model_install_id)}</span>
+                              </span>
+                            }
+                          >
+                            {(install) => (
+                              <>
+                                from install of{' '}
+                                <span
+                                  class="prov-ref"
+                                  title={`Model ${install().model_key} · install ${install().id}`}
+                                >
+                                  {install().model_name}
+                                </span>{' '}
+                                on{' '}
+                                <span
+                                  class="prov-ref"
+                                  title={`Node ${install().node_id}`}
+                                >
+                                  {install().node_name}
+                                </span>
+                              </>
+                            )}
+                          </Show>
+                        </div>
+                      </Show>
                     </td>
+                    <td class="small">{KIND_LABELS[profile.kind] || profile.kind}</td>
                     <td class="mono small">{profile.endpoint}</td>
                     <td class="mono small">{profile.model || '—'}</td>
                     <td class="narrow">
@@ -169,19 +367,43 @@ export default function ProvidersPage() {
                         <span class="badge ok" title={profile.secret_ref}><i />configured</span>
                       </Show>
                     </td>
-                    <td class="small">
-                      <Show when={probes()[profile.id]} fallback={<span class="muted">not probed</span>}>
-                        <span class={probes()[profile.id].reachable ? 'badge ok' : 'badge bad'}>
-                          <i />{probes()[profile.id].reachable ? 'reachable' : 'unreachable'}
-                        </span>
-                        <div class="muted small">{probes()[profile.id].detail}</div>
-                        <Show when={probes()[profile.id].model_count !== null}>
-                          <div class="muted small">{probes()[profile.id].model_count} models</div>
-                        </Show>
+                    <td class="prov-status">
+                      <StatusBadge
+                        status={statusOf(profile)}
+                        title={STATUS_MEANING[statusOf(profile)] || 'The server reported no status.'}
+                      />
+                      <div class="muted small prov-line">
+                        {STATUS_LINE[statusOf(profile)] || 'No status reported'}
+                      </div>
+                      <Show when={probes()[profile.id]}>
+                        {(result) => (
+                          <div class="prov-detail">
+                            <div class={`small ${result().reachable ? '' : 'bad-text'}`}>
+                              {result().detail}
+                            </div>
+                            <div class="muted small">
+                              {result().model_count === null || result().model_count === undefined
+                                ? ''
+                                : `${result().model_count} models · `}
+                              {result().status ? `HTTP ${result().status}` : 'no HTTP answer'}
+                            </div>
+                          </div>
+                        )}
+                      </Show>
+                      <Show when={!probes()[profile.id] && profile.last_probed_at}>
+                        <div class="muted small prov-line">
+                          Last probed {relative(profile.last_probed_at)}
+                        </div>
                       </Show>
                     </td>
                     <td class="actions">
-                      <button class="tiny" onClick={() => probe(profile)}>Probe</button>
+                      <button
+                        class="tiny"
+                        disabled={Boolean(probing()[profile.id])}
+                        onClick={() => probe(profile)}
+                      >
+                        {probing()[profile.id] ? 'Probing…' : 'Probe'}
+                      </button>
                       <button class="tiny" onClick={() => setEditing({ ...profile })}>Edit</button>
                       <button class="tiny danger" onClick={() => destroy(profile)}>Remove</button>
                     </td>
@@ -191,6 +413,12 @@ export default function ProvidersPage() {
             </tbody>
           </table>
         </div>
+
+        <Show when={visible().length === 0}>
+          <p class="muted">
+            No provider has the status “{status()}”. Pick another filter.
+          </p>
+        </Show>
       </Show>
 
       <Show when={editing()}>
@@ -200,6 +428,12 @@ export default function ProvidersPage() {
             Name and kind are fixed: other rows and the audit trail refer to them.
             To change either, remove the profile and register a new one.
           </p>
+          <Show when={editing().model_install_id}>
+            <p class="warn-note small">
+              This profile belongs to a model install. Its endpoint is derived from the
+              install and the node; changing it here separates the two.
+            </p>
+          </Show>
           <label class="field">
             <span>Endpoint</span>
             <input value={editing().endpoint}

@@ -21,8 +21,15 @@ export function catalog(refresh = false, filters = {}) {
   })}`);
 }
 
-export function installed() {
-  return request('models/installed');
+/**
+ * Every install in the environment, one row per model per node.
+ *
+ * The row carries `model_key`, `model_name`, `node_id`, and `node_name`, so a
+ * screen that only holds an install id can name the model and the machine
+ * without a second call.
+ */
+export function installs(node) {
+  return request(`models/installs${query({ node })}`);
 }
 
 export function hardware(refresh = false) {

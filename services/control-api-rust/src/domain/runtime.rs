@@ -157,20 +157,11 @@ pub fn normalize_memory_limit(value: &str) -> Result<String, String> {
     let lowered = trimmed.to_ascii_lowercase();
     let (number, unit) = split_quantity(&lowered);
 
-    let multiplier: u64 = match unit {
-        "" => 1,
-        "b" => 1,
-        "k" | "kb" => 1_000,
-        "ki" | "kib" => 1_024,
-        "m" | "mb" => 1_000_000,
-        "mi" | "mib" => 1_048_576,
-        "g" | "gb" => 1_000_000_000,
-        "gi" | "gib" => 1_073_741_824,
-        "t" | "tb" => 1_000_000_000_000,
-        "ti" | "tib" => 1_099_511_627_776,
-        other => {
+    let multiplier = match memory_multiplier(unit) {
+        Some(multiplier) => multiplier,
+        None => {
             return Err(format!(
-                "Unknown memory unit '{other}'. Use b, k, m, g, or ki, mi, gi."
+                "Unknown memory unit '{unit}'. Use b, k, m, g, or ki, mi, gi."
             ))
         }
     };
@@ -195,6 +186,47 @@ pub fn normalize_memory_limit(value: &str) -> Result<String, String> {
     Ok(format!("{bytes}b"))
 }
 
+/// The number of bytes one unit stands for.
+///
+/// One table for reading a limit and for answering "how big is that", so a
+/// sandbox's request and the budget it is checked against cannot disagree about
+/// what `2Gi` means.
+fn memory_multiplier(unit: &str) -> Option<u64> {
+    Some(match unit {
+        "" | "b" => 1,
+        "k" | "kb" => 1_000,
+        "ki" | "kib" => 1_024,
+        "m" | "mb" => 1_000_000,
+        "mi" | "mib" => 1_048_576,
+        "g" | "gb" => 1_000_000_000,
+        "gi" | "gib" => 1_073_741_824,
+        "t" | "tb" => 1_000_000_000_000,
+        "ti" | "tib" => 1_099_511_627_776,
+        _ => return None,
+    })
+}
+
+/// The size a memory limit names, in bytes.
+///
+/// The same parsing as `normalize_memory_limit`, because a request has to be
+/// compared against a node's budget before it is accepted, and comparing a
+/// string with a byte count is how "32Gi fits in 7.8 GiB" gets written.
+pub fn memory_bytes(value: &str) -> Result<i64, String> {
+    let lowered = value.trim().to_ascii_lowercase();
+    if lowered.is_empty() {
+        return Err("A memory limit is required.".to_string());
+    }
+    let (number, unit) = split_quantity(&lowered);
+    let multiplier = memory_multiplier(unit)
+        .ok_or_else(|| format!("Unknown memory unit '{unit}'. Use b, k, m, g, or ki, mi, gi."))?;
+    let quantity: i64 = number
+        .parse()
+        .map_err(|_| format!("'{number}' is not a whole number of memory units."))?;
+    quantity
+        .checked_mul(multiplier as i64)
+        .ok_or_else(|| "The memory limit is too large.".to_string())
+}
+
 /// Split `2gi` into (`2`, `gi`). A trailing non-digit run is the unit.
 fn split_quantity(value: &str) -> (&str, &str) {
     let split = value
@@ -212,6 +244,18 @@ mod tests {
         assert_eq!(normalize_memory_limit("2Gi").as_deref(), Ok("2147483648b"));
         assert_eq!(normalize_memory_limit("512Mi").as_deref(), Ok("536870912b"));
         assert_eq!(normalize_memory_limit("1g").as_deref(), Ok("1000000000b"));
+    }
+
+    #[test]
+    fn a_limit_has_a_byte_count() {
+        assert_eq!(memory_bytes("2Gi"), Ok(2_147_483_648));
+        assert_eq!(memory_bytes("512Mi"), Ok(536_870_912));
+        assert_eq!(memory_bytes("1g"), Ok(1_000_000_000));
+        assert!(memory_bytes("2Xi").is_err());
+        assert!(memory_bytes("").is_err());
+        // The two readings agree, which is the point of one table.
+        let normalized = normalize_memory_limit("3Gi").expect("valid");
+        assert_eq!(normalized, format!("{}b", memory_bytes("3Gi").expect("valid")));
     }
 
     #[test]

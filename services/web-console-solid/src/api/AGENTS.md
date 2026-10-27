@@ -24,7 +24,7 @@ component never contains a URL.
 
 | File | Resource |
 |---|---|
-| `client.js` | fetch wrapper, CSRF, environment header, error mapping |
+| `client.js` | fetch wrapper, CSRF, environment header, error mapping with `code` and `details` |
 | `auth.js` | login, logout, identity, environments |
 | `sandboxes.js` | list, detail, create, actions, logs, exec, inference, rules, agents |
 | `nodes.js` | nodes with their computed budget: free memory, cores, sandbox count |
@@ -33,7 +33,8 @@ component never contains a URL.
 | `telemetry.js` | history, facets, the SSE stream |
 | `cluster.js` | gateways, settings, sync, supervisors, topology |
 | `providers.js` | profiles, probe; locators only, never a value |
-| `models.js` | catalog with filters, hardware, facets, requirements, install, uninstall |
+| `models.js` | catalog with filters, hardware, facets, requirements, installs, install, uninstall |
+| `nodes.js` | nodes with their budget, one node, its sandboxes, probe, display rename |
 | `jobs.js` | jobs, logs, schedules |
 
 ## Extending
