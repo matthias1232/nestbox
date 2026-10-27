@@ -7,6 +7,7 @@
 
 import { Show, For, createSignal, onMount } from 'solid-js';
 import { useSession } from './state/session.jsx';
+import * as auth from './api/auth.js';
 import LoginPage from './features/auth/LoginPage.jsx';
 import SandboxListPage from './features/sandboxes/SandboxListPage.jsx';
 import TrafficPage from './features/traffic/TrafficPage.jsx';
@@ -32,17 +33,15 @@ export default function App() {
   const [checked, setChecked] = createSignal(false);
 
   // A reload must not show the login form to someone who is still signed in.
-  // The session cookie is the truth; `me` asks the server.
+  // The session cookie is HttpOnly, so the only way to know is to ask the
+  // server; a 401 here is the normal "not signed in" answer, not a failure.
   onMount(async () => {
     try {
-      const identity = await fetch('/api/v1/auth/me', { credentials: 'same-origin' });
-      if (identity.ok) {
-        const data = await identity.json();
-        // A page reload loses the CSRF token, which is intentional: it lives in
-        // memory only. The next login restores it. Without it a mutating action
-        // would fail with a clear 403 rather than silently succeed.
-        session.restore?.(data);
-      }
+      const data = await auth.me();
+      // A page reload loses the CSRF token, which is intentional: it lives in
+      // memory only. The next login restores it. Without it a mutating action
+      // fails with a clear 403 rather than silently succeeding.
+      session.restore(data);
     } catch {
       /* not signed in */
     } finally {
