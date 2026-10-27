@@ -99,6 +99,26 @@ pub async fn list(
     // count query.
     let fetch_limit = params.limit + 1;
 
+    // Two shapes, because the cursor key has two types. A timestamp column
+    // compared against a text parameter is a type error the planner raises even
+    // when the parameter is null, so the branch has to exist in the SQL, not in
+    // the data.
+    let text_sorted = matches!(
+        params.sort,
+        crate::domain::pagination::SortField::Name
+            | crate::domain::pagination::SortField::Status
+    );
+
+    // The two branches have the same parameter count and the same positions;
+    // only the type of the cursor key differs. Keeping the numbering identical
+    // means the bind list stays one shape, and no parameter is sent that the
+    // statement does not reference — which Postgres rejects.
+    let cursor_clause = if text_sorted {
+        format!("($6::text IS NULL OR ({order_column}, s.id) {comparison} ($6, $7))")
+    } else {
+        format!("($6::timestamptz IS NULL OR ({order_column}, s.id) {comparison} ($6, $7))")
+    };
+
     let sql = format!(
         "SELECT {SANDBOX_COLUMNS}
            FROM sandboxes s
@@ -108,21 +128,28 @@ pub async fn list(
             AND ($3::text IS NULL OR s.pack_key = $3)
             AND ($4::text IS NULL OR g.name = $4)
             AND ($5::text IS NULL OR s.name ILIKE '%' || $5 || '%')
-            AND ($6::timestamptz IS NULL OR ({order_column}, s.id) {comparison} ($6, $7))
-            AND ($8::text IS NULL OR ({order_column}, s.id) {comparison} ($8::text, $7))
+            AND {cursor_clause}
           ORDER BY {order_column} {direction}, s.id {direction}
-          LIMIT $9"
+          LIMIT $8"
     );
 
-    let rows = sqlx::query(&sql)
+    let mut query = sqlx::query(&sql)
         .bind(environment_id)
         .bind(status_filter.as_deref())
         .bind(pack_filter.as_deref())
         .bind(gateway_filter.as_deref())
-        .bind(params.search.as_deref())
-        .bind(cursor_ts)
+        .bind(params.search.as_deref());
+
+    // Exactly one of the two cursor keys is bound, at the position the branch
+    // expects.
+    query = if text_sorted {
+        query.bind(cursor_text.as_deref())
+    } else {
+        query.bind(cursor_ts)
+    };
+
+    let rows = query
         .bind(cursor_id)
-        .bind(cursor_text.as_deref())
         .bind(fetch_limit)
         .fetch_all(scope.connection())
         .await?;
