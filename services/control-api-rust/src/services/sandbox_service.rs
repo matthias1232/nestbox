@@ -195,6 +195,11 @@ pub async fn create(
 
     let name = SandboxName::new(&request.name).map_err(ApiError::validation)?;
 
+    // Normalise before anything is stored, so the spec holds exactly what the
+    // runtime was asked for and a later restart cannot reinterpret it.
+    let memory_limit = crate::domain::runtime::normalize_memory_limit(&request.memory_limit)
+        .map_err(ApiError::validation)?;
+
     let (default_image, default_command) = pack_defaults(&request.pack_key);
     let image = if request.image.trim().is_empty() {
         default_image.to_string()
@@ -226,7 +231,7 @@ pub async fn create(
 
     let spec = serde_json::json!({
         "pack_key": request.pack_key,
-        "memory_limit": request.memory_limit,
+        "memory_limit": memory_limit,
         "cpu_limit": request.cpu_limit,
         "pids_limit": request.pids_limit,
     });
@@ -296,7 +301,7 @@ pub async fn create(
         environment,
         pack_key: sandbox.pack_key.clone(),
         tool_profile: String::new(),
-        memory_limit: request.memory_limit.clone(),
+        memory_limit: memory_limit.clone(),
         cpu_limit: request.cpu_limit,
         pids_limit: request.pids_limit,
     };
