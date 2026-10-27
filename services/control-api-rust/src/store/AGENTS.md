@@ -51,6 +51,11 @@ than by the compiler.
 | `postgres/agent_packs.rs` | Baselines, agent packs, tool catalog |
 | `postgres/recipes.rs` | Recipes and build outcomes |
 | `postgres/persistent_roots.rs` | Roots, mounts, sandbox agents |
+
+Mounts have no `environment_id` column of their own: they hang off a root and a
+sandbox. Every mount query therefore carries the tenant either through
+`persistent_roots.environment_id` or through the sandbox join, and the row-level
+security policy on `mounts` repeats the sandbox check.
 | `postgres/jobs.rs` | Jobs, targets, schedules |
 | `postgres/auth.rs` | Users, sessions, scopes |
 | `postgres/environments.rs` | Environments and clusters |

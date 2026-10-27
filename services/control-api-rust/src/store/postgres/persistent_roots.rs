@@ -163,11 +163,12 @@ pub async fn mounts_for_sandbox(
         "SELECT {MOUNT_COLUMNS}, r.host_path
            FROM mounts m
            JOIN persistent_roots r ON r.id = m.root_id
-          WHERE m.sandbox_id = $1 AND m.status = 'mounted'
+          WHERE m.sandbox_id = $1 AND m.status = 'mounted' AND r.environment_id = $2
           ORDER BY m.mount_path"
     );
     let rows = sqlx::query(&sql)
         .bind(sandbox_id)
+        .bind(scope.environment_id())
         .fetch_all(scope.connection())
         .await?;
     rows.iter()
@@ -183,10 +184,11 @@ pub async fn mounts_for_root(
     let rows = sqlx::query(
         "SELECT m.sandbox_id, s.name AS sandbox_name, m.mount_path, m.read_only
            FROM mounts m JOIN sandboxes s ON s.id = m.sandbox_id
-          WHERE m.root_id = $1 AND m.status = 'mounted'
+          WHERE m.root_id = $1 AND m.status = 'mounted' AND s.environment_id = $2
           ORDER BY s.name",
     )
     .bind(root_id)
+    .bind(scope.environment_id())
     .fetch_all(scope.connection())
     .await?;
     rows.iter()
@@ -238,10 +240,14 @@ pub async fn dismount(
     sandbox_id: Uuid,
 ) -> Result<(), StoreError> {
     let result = sqlx::query(
-        "UPDATE mounts SET status = 'dismounted' WHERE root_id = $1 AND sandbox_id = $2",
+        "UPDATE mounts SET status = 'dismounted'
+          WHERE root_id = $1 AND sandbox_id = $2
+            AND EXISTS (SELECT 1 FROM sandboxes s
+                         WHERE s.id = mounts.sandbox_id AND s.environment_id = $3)",
     )
     .bind(root_id)
     .bind(sandbox_id)
+    .bind(scope.environment_id())
     .execute(scope.connection())
     .await?;
     if result.rows_affected() == 0 {
