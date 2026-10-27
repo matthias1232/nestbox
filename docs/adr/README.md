@@ -25,6 +25,10 @@ supersedes the old one and note the supersession in both files.
 | [0015](0015-published-api-contract-is-binding.md) | The published API contract is binding | Accepted |
 | [0016](0016-provider-credentials-resolved-at-use.md) | Provider credentials are resolved at use, never stored or returned | Accepted |
 | [0017](0017-server-computed-bars-and-honest-unified-memory.md) | Resource bars are server-computed, and unified memory is recognised, never inferred | Accepted |
+| [0018](0018-a-model-is-an-install-on-a-node.md) | A model is an install on a node, and the fit is measured against what is free | Accepted |
+| [0019](0019-catalog-sync-derives-by-rule.md) | The catalog is derived from the repositories by rule, and a curated row wins | Accepted |
+| [0020](0020-packs-are-data.md) | Baselines, agent packs, and tools are data | Accepted |
+| [0021](0021-persistence-is-bind-mounts.md) | Persistent data lives in bind mounts, one read-write mount per root | Accepted |
 
 ## Writing a new ADR
 
