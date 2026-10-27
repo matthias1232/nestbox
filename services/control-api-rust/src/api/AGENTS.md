@@ -41,7 +41,7 @@ The architecture test enforces the last two.
 | `cluster.rs` | Gateways, supervisors, topology |
 | `providers.rs` | Provider profiles, probe |
 | `models.rs` | Catalog with filters, hardware, facets, requirements, installs, sync |
-| `nodes.rs` | Nodes, budget, probe (handlers: `feat/nodes-api`) |
+| `nodes.rs` | Nodes with budget and sandbox count, one node, its sandboxes, display rename (probe: `feat/node-hardware-probe`) |
 | `packs.rs` | Baselines, agent packs, tool catalog (`feat/packs-as-data`) |
 | `recipes.rs` | Recipe CRUD, build, instantiate (`feat/recipes-build`) |
 | `persistent_roots.rs` | Roots, mount, dismount, usage (`feat/persistent-roots`) |
