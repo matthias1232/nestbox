@@ -10,8 +10,12 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
+use chrono::Utc;
 
-use crate::domain::runtime::{BuildRequest, BuildResult, ExecResult, HardwareReport, RuntimeFacts, SandboxSpec};
+use crate::domain::metrics::{InventoryProbe, ProcessEntry, ProcessTable};
+use crate::domain::runtime::{
+    BuildRequest, BuildResult, ExecResult, HardwareReport, RuntimeFacts, SandboxSpec,
+};
 use crate::runtime::{RuntimeAdapter, RuntimeError};
 
 /// Take a lock, recovering from poisoning.
@@ -183,6 +187,102 @@ impl RuntimeAdapter for FakeRuntime {
             image_id: Some("sha256:fake".into()),
             log: "fake build".into(),
             success: true,
+        })
+    }
+
+    async fn processes(&self, name: &str) -> Result<ProcessTable, RuntimeError> {
+        // A stopped sandbox has no table; the fake answers like the runner does
+        // rather than inventing rows for a container that is not there.
+        let guard = lock(&self.sandboxes);
+        let facts = guard
+            .get(name)
+            .ok_or_else(|| RuntimeError::NotFound(name.to_string()))?;
+        if facts.status != "running" {
+            return Err(RuntimeError::Rejected(format!(
+                "the sandbox is '{}'",
+                facts.status
+            )));
+        }
+
+        Ok(ProcessTable {
+            taken_at: Utc::now(),
+            columns: vec![
+                "PID".into(),
+                "PPID".into(),
+                "USER".into(),
+                "%CPU".into(),
+                "%MEM".into(),
+                "ELAPSED".into(),
+                "COMMAND".into(),
+            ],
+            items: vec![
+                ProcessEntry {
+                    pid: 1,
+                    ppid: None,
+                    user: "nestbox".into(),
+                    cpu_pct: Some(0.1),
+                    mem_pct: Some(0.4),
+                    elapsed: Some("00:04:12".into()),
+                    command: "hermes serve --port 8080".into(),
+                },
+                ProcessEntry {
+                    pid: 42,
+                    ppid: Some(1),
+                    user: "nestbox".into(),
+                    cpu_pct: Some(0.0),
+                    mem_pct: Some(0.1),
+                    elapsed: Some("00:04:05".into()),
+                    command: "node /usr/local/bin/mcp-hub".into(),
+                },
+            ],
+            truncated: false,
+        })
+    }
+
+    async fn inventory(&self, name: &str) -> Result<InventoryProbe, RuntimeError> {
+        let guard = lock(&self.sandboxes);
+        if !guard.contains_key(name) {
+            return Err(RuntimeError::NotFound(name.to_string()));
+        }
+
+        Ok(InventoryProbe {
+            taken_at: Utc::now(),
+            facts: serde_json::json!({
+                "os": {
+                    "ID": "ubuntu",
+                    "NAME": "Ubuntu",
+                    "VERSION_ID": "24.04",
+                    "PRETTY_NAME": "Ubuntu 24.04.1 LTS",
+                    "kernel": "Linux 6.8.0-45-generic",
+                    "arch": "x86_64",
+                },
+                "packages": [
+                    { "name": "bash", "version": "5.2.21-2ubuntu4" },
+                    { "name": "git", "version": "1:2.43.0-1ubuntu7.2" },
+                    { "name": "python3", "version": "3.12.3-0ubuntu2" },
+                ],
+                "agents": {
+                    "hermes": "hermes 0.22.5",
+                    "node": "v22.11.0",
+                    "python3": "Python 3.12.3",
+                    "git": "git version 2.43.0",
+                },
+                "listening": [
+                    { "address": "0.0.0.0:8080", "protocol": "tcp" },
+                    { "address": "[::]:22", "protocol": "tcp" },
+                ],
+                "env_keys": ["HOME", "PATH", "HERMES_PORT"],
+                "mounts": [
+                    { "target": "/home/nestbox", "fstype": "ext4", "source": "/dev/sda1" }
+                ],
+                "image": {
+                    "reference": "nestbox/tool-hermes:0.22.5",
+                    "id": "sha256:fake",
+                    "created": "2026-10-20T09:00:00Z",
+                    "labels": { "nestbox.pack": "hermes" },
+                },
+            }),
+            note: None,
         })
     }
 }

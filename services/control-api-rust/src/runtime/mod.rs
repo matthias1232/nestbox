@@ -7,7 +7,10 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::domain::runtime::{BuildRequest, BuildResult, ExecResult, HardwareReport, RuntimeFacts, SandboxSpec};
+use crate::domain::metrics::{InventoryProbe, ProcessTable};
+use crate::domain::runtime::{
+    BuildRequest, BuildResult, ExecResult, HardwareReport, RuntimeFacts, SandboxSpec,
+};
 
 /// Fehler aus der Ausführungsschicht.
 #[derive(Debug, Error)]
@@ -67,6 +70,23 @@ pub trait RuntimeAdapter: Send + Sync {
     /// Asked of the runner rather than measured here, because the control
     /// plane may run in a container that sees none of the node's devices.
     async fn hardware(&self) -> Result<HardwareReport, RuntimeError>;
+
+    /// The container's process table, read live.
+    ///
+    /// The runner answers with `docker top`: the same list a `ps` inside the
+    /// container would print, without a shell and without a format string a
+    /// caller could steer. The table is capped by the runner, which says whether
+    /// it cut it.
+    async fn processes(&self, name: &str) -> Result<ProcessTable, RuntimeError>;
+
+    /// A fresh inventory snapshot, taken by the container's fixed probe script.
+    ///
+    /// The script ships with the runner's image and takes no argument, so
+    /// nothing in this call can change what it reads. The answer keeps the
+    /// probe's sections as a document: the service that stores it decides which
+    /// keys survive, because the table has fixed columns and the probe may gain
+    /// a section.
+    async fn inventory(&self, name: &str) -> Result<InventoryProbe, RuntimeError>;
 
     /// Build an image from a generated Dockerfile.
     async fn build(&self, request: BuildRequest) -> Result<BuildResult, RuntimeError>;

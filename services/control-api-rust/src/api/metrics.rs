@@ -1,18 +1,24 @@
 //! Resource history and the process table of one sandbox.
 //!
-//! Routes are registered here so the contract is fixed before the
-//! implementation lands; the `feat/sandbox-metrics` package fills the bodies.
+//! Two shapes, two sources: the history is stored (raw for an hour, rolled up for
+//! a week) and the process table is live from the runner. Both are bounded — the
+//! history by its point budget, the table by the runner's own cap — so neither
+//! can answer with a document the console cannot draw.
+//!
 //! The ingest route is not session-authenticated: a node presents its own token,
 //! so it carries no CSRF requirement and accepts samples only for the sandboxes
-//! it runs.
+//! in its environment.
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
 use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::api::principal::Auth;
+use crate::domain::metrics::{MetricBatch, MetricRange, MetricSeries, ProcessTable};
 use crate::error::ApiError;
+use crate::services::metrics_service::{self, IngestOutcome};
 use crate::state::AppState;
 
 /// Query for one sandbox's metrics.
@@ -26,27 +32,46 @@ pub struct MetricsQuery {
 
 /// CPU, memory, network and disk over a window.
 pub async fn metrics(
-    State(_state): State<AppState>,
-    _auth: Auth,
-    Path(_id): Path<Uuid>,
-    Query(_query): Query<MetricsQuery>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::not_implemented("GET /sandboxes/{id}/metrics"))
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Query(query): Query<MetricsQuery>,
+) -> Result<Json<MetricSeries>, ApiError> {
+    // An unknown window is a 422 rather than a silent fallback to an hour: a
+    // console that asks for something else than it draws is a bug worth naming.
+    let range = match query.range.as_deref() {
+        None => MetricRange::OneHour,
+        Some(raw) => MetricRange::parse(raw).ok_or_else(|| {
+            ApiError::validation("The range must be one of 1h, 24h, or 7d.")
+        })?,
+    };
+
+    let series = metrics_service::series(&state.services, &auth.principal, id, range, query.step)
+        .await?;
+    Ok(Json(series))
 }
 
 /// Record a batch of samples from a node.
+///
+/// Accepted rather than created: the batch is a report, not a resource. The
+/// answer says what was stored and what was dropped, because a node that keeps
+/// sending unknown sandbox names is a deployment problem the operator can only
+/// see if the count comes back.
 pub async fn ingest(
-    State(_state): State<AppState>,
-    Json(_batch): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::not_implemented("POST /internal/metrics/ingest"))
+    State(state): State<AppState>,
+    auth: Auth,
+    Json(batch): Json<MetricBatch>,
+) -> Result<(StatusCode, Json<IngestOutcome>), ApiError> {
+    let outcome = metrics_service::ingest(&state.services, &auth.principal, batch).await?;
+    Ok((StatusCode::ACCEPTED, Json(outcome)))
 }
 
 /// The sandbox's process table, read live through the runner.
 pub async fn processes(
-    State(_state): State<AppState>,
-    _auth: Auth,
-    Path(_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::not_implemented("GET /sandboxes/{id}/processes"))
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ProcessTable>, ApiError> {
+    let table = metrics_service::processes(&state.services, &auth.principal, id).await?;
+    Ok(Json(table))
 }

@@ -47,8 +47,8 @@ The architecture test enforces the last two.
 | `persistent_roots.rs` | Roots, mount, dismount, usage |
 | `sandbox_agents.rs` | Agents inside a sandbox: list, add, remove with `keep_persistent` |
 | `jobs.rs` | Jobs, schedules |
-| `metrics.rs` | Resource history, node sample ingest, process table (`feat/sandbox-metrics`) |
-| `inventory.rs` | Snapshot and refresh (`feat/sandbox-metrics`) |
+| `metrics.rs` | Resource history, node sample ingest, process table |
+| `inventory.rs` | Snapshot and refresh |
 | `access.rs` | SSH key, one-time download, rotation, ports, sessions (`feat/sandbox-access`) |
 | `traffic.rs` | Traffic rows, one body, map edges, effective policies, MCP calls (`feat/live-traffic`) |
 | `mcp.rs` | MCP registry and sandbox attachments (`feat/mcp-registry`) |

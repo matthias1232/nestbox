@@ -30,3 +30,4 @@ Two different jobs:
 | `architecture.rs` | Layer boundaries, `AGENTS.md` presence, doc comments |
 | `database.rs` | Schema, row-level security, seed, and the constraints the services rely on (skips without `TEST_DATABASE_URL`) |
 | `recipes.rs` | The builder against a database: drafts, revisions, build outcome, instantiate, capacity |
+| `metrics.rs` | Sample ingest, the hour/day/week reads, rollup idempotency, partition retention, the process table and the inventory snapshot against a database |

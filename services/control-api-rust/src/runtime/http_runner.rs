@@ -5,9 +5,11 @@
 //! [`RuntimeAdapter`]-Vertrag und dessen HTTP-Endpunkten.
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use reqwest::StatusCode;
 use serde::Deserialize;
 
+use crate::domain::metrics::{InventoryProbe, ProcessTable};
 use crate::domain::runtime::{
     BuildRequest, BuildResult, ExecResult, HardwareReport, NetworkInterface, RuntimeFacts,
     RuntimeResources, SandboxSpec,
@@ -245,6 +247,41 @@ impl RuntimeAdapter for HttpRunner {
 
     async fn hardware(&self) -> Result<HardwareReport, RuntimeError> {
         self.send(reqwest::Method::GET, "/v1/hardware", None).await
+    }
+
+    async fn processes(&self, name: &str) -> Result<ProcessTable, RuntimeError> {
+        self.send(
+            reqwest::Method::GET,
+            &format!("/v1/sandboxes/{name}/processes"),
+            None,
+        )
+        .await
+    }
+
+    async fn inventory(&self, name: &str) -> Result<InventoryProbe, RuntimeError> {
+        /// The runner's envelope: its own name for the sandbox, the moment, the
+        /// sections, and why a snapshot may be partial.
+        #[derive(Deserialize)]
+        struct RunnerInventory {
+            taken_at: DateTime<Utc>,
+            inventory: serde_json::Value,
+            #[serde(default)]
+            note: Option<String>,
+        }
+
+        let answer: RunnerInventory = self
+            .send(
+                reqwest::Method::GET,
+                &format!("/v1/sandboxes/{name}/inventory"),
+                None,
+            )
+            .await?;
+
+        Ok(InventoryProbe {
+            taken_at: answer.taken_at,
+            facts: answer.inventory,
+            note: answer.note,
+        })
     }
 
     async fn build(&self, request: BuildRequest) -> Result<BuildResult, RuntimeError> {
