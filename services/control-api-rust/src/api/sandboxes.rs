@@ -10,6 +10,7 @@ use uuid::Uuid;
 use crate::api::principal::Auth;
 use crate::domain::pagination::ListParams;
 use crate::error::ApiError;
+use crate::services::node_service;
 use crate::services::sandbox_service::{self, CreateSandbox, LifecycleAction};
 use crate::state::AppState;
 
@@ -24,6 +25,9 @@ pub struct ListQuery {
     pub sort: Option<String>,
     pub direction: Option<String>,
     pub search: Option<String>,
+    /// Only sandboxes on this node, by name or id. A node that does not exist
+    /// is a 404 rather than an empty page: an empty page means "none there".
+    pub node: Option<String>,
     /// `filter[status]=running` and friends.
     #[serde(flatten)]
     pub filters: std::collections::BTreeMap<String, String>,
@@ -37,7 +41,7 @@ pub async fn list(
 ) -> Result<Json<crate::domain::pagination::Page<crate::domain::sandbox::SandboxSummary>>, ApiError> {
     // Only `filter[...]` keys become filters; anything else is a typo and is
     // ignored rather than silently broadening the query.
-    let filters: std::collections::BTreeMap<String, String> = query
+    let mut filters: std::collections::BTreeMap<String, String> = query
         .filters
         .iter()
         .filter_map(|(key, value)| {
@@ -46,6 +50,20 @@ pub async fn list(
                 .map(|field| (field.to_string(), value.clone()))
         })
         .collect();
+
+    // `node_id` is the key the store reads, and it is set below from a node the
+    // service resolved. A client-supplied one never reaches SQL.
+    filters.remove("node_id");
+    // `?node=` names a node; an unknown one is a 404, not an empty page.
+    if let Some(reference) = query
+        .node
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let node = node_service::resolve(&state.services, &auth.principal, reference).await?;
+        filters.insert("node_id".to_string(), node.id.to_string());
+    }
 
     let params = ListParams::from_query(
         query.cursor,
