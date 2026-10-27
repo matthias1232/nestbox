@@ -29,7 +29,7 @@ pub mod topology;
 pub mod traffic;
 
 use axum::Router;
-use axum::routing::{delete, get, post, put};
+use axum::routing::{any, delete, get, post, put};
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::TraceLayer;
 
@@ -145,16 +145,20 @@ pub fn router(state: AppState) -> Router {
         )
         // Internal: node-token endpoints for the proxy and the runner.
         //
-        // The policy check answers twice on purpose. Envoy's ext_authz filter
-        // appends the original request path to its `path_prefix`, so the proxy
-        // calls `/internal/policy/check/<the path it is asking about>`. The
-        // handler ignores that suffix — the facts it decides on are in the
-        // headers — but the route has to exist, or every request would be a 404
+        // The policy check is registered twice and accepts any method, for one
+        // reason: Envoy's ext_authz HTTP filter forwards the original method and
+        // appends the original path to its `path_prefix`. So the proxy calls
+        // `/internal/policy/check/<the path it is asking about>` with `GET` when
+        // the agent used `GET`. The handler reads headers, not a body, and
+        // ignores the suffix; without both routes every request would be a 404
         // and therefore (fail closed) a deny.
-        .route("/api/v1/internal/policy/check", post(policies::internal_check))
+        .route(
+            "/api/v1/internal/policy/check",
+            any(policies::internal_check),
+        )
         .route(
             "/api/v1/internal/policy/check/{*suffix}",
-            post(policies::internal_check),
+            any(policies::internal_check),
         )
         .route(
             "/api/v1/internal/telemetry/batch",

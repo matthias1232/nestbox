@@ -298,12 +298,22 @@ pub async fn close_window(
 /// Decide one egress request on behalf of a node's proxy.
 ///
 /// The caller is a node, not a browser: it presents the node token, so there is
-/// no session and no CSRF token. Default deny applies here — an unparseable
-/// request is refused, never allowed. The `feat/policy-decider` package fills
-/// the body; until then the proxy has nothing to ask.
+/// no session and no CSRF token. Default deny applies here — a request that
+/// cannot be read is refused, never allowed.
+///
+/// The facts arrive as **headers**, not as a JSON body. Envoy's `ext_authz`
+/// HTTP filter forwards a request that keeps the original method and appends the
+/// original path to `path_prefix`; it copies only the headers it is configured
+/// to copy. So the route accepts any method, and this handler reads
+/// `x-nestbox-sandbox`, the authority, and the original path. A decider that
+/// required a POST and a body would refuse every real request.
+///
+/// The `feat/policy-decider` package fills the body; until then the proxy has
+/// nothing to ask, and a stub answering 501 is a deny because Envoy treats a
+/// non-200 authorization response as a refusal.
 pub async fn internal_check(
     State(_state): State<AppState>,
-    Json(_request): Json<serde_json::Value>,
+    _headers: axum::http::HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     Err(ApiError::not_implemented("POST /internal/policy/check"))
 }

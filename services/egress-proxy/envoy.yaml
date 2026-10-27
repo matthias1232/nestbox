@@ -11,11 +11,11 @@
 #      facts the Lua filter extracted. The control API redacts and stores it.
 #
 # What is deliberately *not* here yet, and belongs to the `feat/egress-envoy`
-# package: CONNECT termination with this node's own CA (`connect_config.
-# terminate_tls` plus an upstream certificate), so a TLS request can be seen as
-# a path rather than a tunnel. Until then HTTPS is logged as a CONNECT tunnel
-# with host, port, SNI, and byte counts — and the console says so instead of
-# implying it saw more than it did.
+# package: TLS termination of a CONNECT tunnel with this node's own CA and an
+# upstream certificate, so a TLS request can be seen as a path rather than a
+# tunnel. Until then HTTPS is logged as a CONNECT tunnel with host, port, SNI,
+# and byte counts — and the console says so instead of implying it saw more than
+# it did.
 #
 # No listener is published on the host: the proxy is reachable from the sandbox
 # network only. An unauthenticated forward proxy on a LAN interface is an open
@@ -48,9 +48,15 @@ static_resources:
                 stat_prefix: egress
                 codec_type: AUTO
                 # CONNECT is how a TLS client asks for a tunnel through a proxy.
+                # Only the upgrade type is set here. `connect_config` (which is
+                # what enables TLS termination with this node's CA) does not
+                # exist under this message in v1.31 — the proxy rejected it at
+                # startup, which is exactly what a config that is checked at
+                # boot is for. The `feat/egress-envoy` package adds termination
+                # with the right field for its version and a test that the
+                # container starts.
                 upgrade_configs:
                   - upgrade_type: CONNECT
-                    connect_config: {}
                 access_log:
                   - name: envoy.access_loggers.stdout
                     typed_config:
