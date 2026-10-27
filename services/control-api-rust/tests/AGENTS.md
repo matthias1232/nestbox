@@ -25,3 +25,4 @@ Two different jobs:
 |---|---|
 | `architecture.rs` | Layer boundaries, `AGENTS.md` presence, doc comments |
 | `database.rs` | Schema, row-level security, seed, and the constraints the services rely on (skips without `TEST_DATABASE_URL`) |
+| `policy_decider.rs` | The egress check end to end: allow/deny/audit, windows, the compiled hash, the deployment comparison, the node token, and the scoped lookup under the application role (skips without `TEST_DATABASE_URL`) |

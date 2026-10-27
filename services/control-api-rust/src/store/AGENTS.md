@@ -42,7 +42,7 @@ than by the compiler.
 |---|---|
 | `mod.rs` | `TenantScope`, shared helpers, re-exports |
 | `postgres/sandboxes.rs` | Sandbox reads and writes |
-| `postgres/policies.rs` | Policy documents, versions, rules |
+| `postgres/policies.rs` | Policy documents, versions, rules, and the compiled rule-set hash |
 | `postgres/telemetry.rs` | Event insert and query |
 | `postgres/gateways.rs` | Gateways and supervisors |
 | `postgres/models.rs` | Catalog (with SQL filters and facets) and hardware profiles per node |
@@ -63,10 +63,24 @@ security policy on `mounts` repeats the sandbox check.
 | `postgres/audit.rs` | Append-only audit writes |
 | `postgres/metrics.rs` | Samples, rollup, partition maintenance |
 | `postgres/access.rs` | SSH keys, port pool, inventory, sessions |
-| `postgres/egress.rs` | Compiled policy hash, decisions, windows |
+| `postgres/egress.rs` | Compiled policy hash, decisions, windows, the node token locator, and the deployment comparison |
 | `postgres/mcp.rs` | MCP registry, attachments, tool calls |
 | `postgres/traffic.rs` | Traffic rows, map edges, per-destination counts |
 | `postgres/traffic_bodies.rs` | Redacted bodies, capped and short-lived |
+
+## Unscoped reads, and why each one is allowed
+
+Two categories exist, and neither is a shortcut:
+
+1. **Global tables.** `nodes` and `policy_compilations` are not tenant-scoped by
+   design (a machine is shared by every environment). The node token locator and
+   the reported policy hash are read and written there without a scope.
+2. **The scope itself.** `egress::sandbox_scope` answers "which environment is
+   this sandbox in" before a scope can be set. It walks the environments table
+   (no row-level policy, by design) and asks each candidate inside a scoped
+   transaction. The alternative — reading `sandboxes` without a scope — returns
+   nothing for the application role, and reaching for a privileged role to make
+   it work is how a tenant filter becomes optional.
 
 ## Extending this module
 

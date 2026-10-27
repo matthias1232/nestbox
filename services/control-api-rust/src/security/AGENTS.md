@@ -33,6 +33,10 @@ not another.
    path outside the secret directory and a file that group or world can read.
    The value it returns goes into a container environment or an outbound
    request, never into a response, a log, or the database (ADR 0016).
+7. A node token is verified by `node_token::verify` and nowhere else. Every
+   failure — no locator, an unreadable file, an empty token, a wrong token —
+   is the same refusal, because a caller must not learn whether a node is
+   configured. There is no "no token configured, so allow" branch.
 
 ## Conventions
 
@@ -47,6 +51,7 @@ not another.
 |---|---|
 | `password.rs` | Argon2id hashing and verification |
 | `session.rs` | Session and CSRF token generation, hashing, comparison |
+| `node_token.rs` | A node's bearer token: read through `secrets`, compared in constant time, fail-closed |
 | `secrets.rs` | Resolve a `file://` locator to a value, with path and permission guards |
 | `redaction.rs` | Masking secrets in strings and JSON values |
 | `headers.rs` | CSP, HSTS, frame options, CORS policy |
