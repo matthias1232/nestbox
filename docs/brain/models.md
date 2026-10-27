@@ -77,14 +77,20 @@ Order matters, and the order is the rule:
 
 1. remote → `remote`
 2. installed → `already_installed` / `update_available`
-3. unified-only without a unified pool → `needs_unified_memory`
-4. `cpu` → RAM and cores → `cpu_installable` / `insufficient_ram` / `insufficient_cpu`
-5. `hybrid` → the GPU gate if there is a GPU, else the CPU gate
-6. `cuda` → `no_gpu` / `insufficient_gpus` / `insufficient_vram` / `installable`
+3. the figure the chosen path needs is not published → `unknown`
+4. unified-only without a unified pool → `needs_unified_memory`
+5. `cpu` → RAM and cores → `cpu_installable` / `insufficient_ram` / `insufficient_cpu`
+6. `hybrid` → the GPU gate if there is a GPU, else the CPU gate
+7. `cuda` → `no_gpu` / `insufficient_gpus` / `insufficient_vram` / `installable`
+
+`unknown` is the verdict for a synced row whose repository published no size:
+the sync stores null gates instead of an estimate (ADR 0019), and the reason
+names the figure that is missing. It is never in `fits()` and never installable,
+because a requirement of zero is not a requirement.
 
 `Fit::fits()` is the console's "fits this machine" filter: `installable`,
 `cpu_installable`, `already_installed`, `update_available`. `Fit::allows_install()`
-is the button: everything except `already_installed`.
+is the button: everything except `already_installed` and `unknown`.
 
 ## Have versus need
 

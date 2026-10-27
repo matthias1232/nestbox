@@ -51,6 +51,7 @@ reading both.
 | `builder_service.rs` | Recipes: validation against the catalogs, the Dockerfile generator, content hash, build job, instantiate |
 | `gateway_service.rs` | Registry, settings, drift, sync |
 | `job_service.rs` | Job creation and progress |
+| `catalog_sync/` | The model catalogue is rebuilt from Hugging Face, Ollama, NGC, and NIM, never over a curated row |
 | `schedule_service.rs` | Schedule evaluation and runs |
 | `metrics_service.rs` | Sample ingest, ranged query, rollup, retention (`feat/sandbox-metrics`) |
 | `inventory_service.rs` | Snapshot storage and age; never an environment value (`feat/sandbox-metrics`) |
