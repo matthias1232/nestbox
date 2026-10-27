@@ -145,6 +145,51 @@ impl SessionKind {
             Self::Ssh => "ssh",
         }
     }
+
+    /// The kind a stored `kind` column names, or `None` for a value this
+    /// version does not know.
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "terminal" => Self::Terminal,
+            "ssh" => Self::Ssh,
+            _ => return None,
+        })
+    }
+}
+
+/// The range a node publishes ports from, and the address a client outside the
+/// node dials. Read from `nodes.public_address` and the pool bounds (0021).
+///
+/// The pool is a property of the node, not of a sandbox: two sandboxes on one
+/// node draw from the same range, which is why the claim is a unique key
+/// `(node_id, port)` rather than a per-sandbox counter.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct NodePortPool {
+    pub node_id: Uuid,
+    /// The address a client uses. `None` until the node is given one.
+    pub public_address: Option<String>,
+    /// First port of the range, inclusive.
+    pub start: i32,
+    /// Last port of the range, inclusive.
+    pub end: i32,
+}
+
+impl NodePortPool {
+    /// How many ports the range holds. Never negative, even for a misconfigured
+    /// row, so a caller cannot turn a bad range into a huge loop.
+    pub fn capacity(&self) -> i32 {
+        (self.end - self.start + 1).max(0)
+    }
+
+    /// Whether a port belongs to this node's range.
+    pub fn contains(&self, port: i32) -> bool {
+        port >= self.start && port <= self.end
+    }
+}
+
+/// Whether a container port can be published at all.
+pub fn is_publishable_port(port: i32) -> bool {
+    (1..=65535).contains(&port)
 }
 
 /// Limits on interactive access, as one place to read them from.

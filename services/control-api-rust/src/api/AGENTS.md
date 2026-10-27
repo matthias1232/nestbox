@@ -49,7 +49,7 @@ The architecture test enforces the last two.
 | `jobs.rs` | Jobs, schedules |
 | `metrics.rs` | Resource history, node sample ingest, process table (`feat/sandbox-metrics`) |
 | `inventory.rs` | Snapshot and refresh (`feat/sandbox-metrics`) |
-| `access.rs` | SSH key, one-time download, rotation, ports, sessions (`feat/sandbox-access`) |
+| `access.rs` | SSH key, one-time download, rotation, ports, sessions |
 | `traffic.rs` | Traffic rows, one body, map edges, effective policies, MCP calls (`feat/live-traffic`) |
 | `mcp.rs` | MCP registry and sandbox attachments (`feat/mcp-registry`) |
 | `sandboxes_terminal.rs` | The terminal WebSocket (`feat/terminal`) |

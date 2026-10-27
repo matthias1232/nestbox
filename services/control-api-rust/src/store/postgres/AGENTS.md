@@ -37,6 +37,13 @@ the codebase where SQL appears.
 | `persistent_roots.rs` | Persistent roots, mounts, and the agents inside a sandbox |
 | `recipes.rs` | Recipes, the build outcome, and the link from a sandbox to its recipe |
 | `audit.rs` | Append-only audit writes |
+| `access.rs` | SSH key rows and the one-time download stamp, the node port pool, forwards, sessions |
+
+`access.rs` is the one file here whose claim on a resource is decided by a
+constraint rather than by a read: `claim_port` is
+`INSERT ... ON CONFLICT (node_id, port) DO NOTHING RETURNING port`, and the
+unique key is what makes two sandboxes unable to publish the same port. The
+`SELECT` of occupied ports above it only shortens the search.
 
 ## Extending this folder
 

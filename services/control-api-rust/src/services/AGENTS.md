@@ -54,7 +54,7 @@ reading both.
 | `schedule_service.rs` | Schedule evaluation and runs |
 | `metrics_service.rs` | Sample ingest, ranged query, rollup, retention (`feat/sandbox-metrics`) |
 | `inventory_service.rs` | Snapshot storage and age; never an environment value (`feat/sandbox-metrics`) |
-| `access_service.rs` | SSH key pair as a file with a locator, port pool, sessions (`feat/sandbox-access`) |
+| `access_service.rs` | SSH key pair as a file with a locator, port pool, sessions |
 | `mcp_service.rs` | Registry, attachments, discovery through the policy check (`feat/mcp-registry`) |
 | `persist_service.rs` | Persistent roots: derived host paths, mounts, the one-read-write rule, honest usage |
 
@@ -82,6 +82,35 @@ Three rules follow from that, and all are in `model_service.rs`:
 Phase 1 has one runtime adapter, so only the local node is measured this way. A
 remote node without an adapter gets `unmeasured_hardware` — zeroes and a note,
 never a guess about a machine the control plane cannot see.
+
+## Access: keys, ports, sessions
+
+`access_service.rs` is the only place a private key exists as a value, and only
+for the length of one response (ADR 0024).
+
+- **The file and the row are written in one order.** Key material is generated,
+  written with `create_new` and mode 0600, and only then recorded. A failure
+  writing the row removes the file again, so a crashed create leaves nothing
+  usable. A file without a row is a leftover and is deleted on the next attempt;
+  a row without a file is a broken state the operator repairs by rotating.
+- **The download is stamped by a conditional update.** `download` reads the
+  material first and then runs `UPDATE ... WHERE downloaded_at IS NULL`; the
+  loser of a race gets 410 `key.already_downloaded`. Reading first means an
+  unreadable file does not burn the single chance.
+- **Rotation deletes before it writes.** A crash between the two steps must
+  leave no usable key rather than two.
+- **A port is claimed by the database.** `claim_port` is an insert with
+  `ON CONFLICT DO NOTHING`; the prescan of occupied ports only shortens the
+  search. Withdrawing a forward deletes the pool row first, because
+  `node_port_pool.forward_id` is `ON DELETE SET NULL` and the link would
+  otherwise be lost.
+- **Provisioning is called from the create path** (`api/sandboxes.rs`), so every
+  new sandbox has a key and its ports. It is idempotent: an existing key and
+  existing forwards are returned, not duplicated. A provisioning failure is
+  logged rather than turned into a failed create, because the sandbox row and
+  container already exist by then.
+- **A forward starts `pending`.** It is claimed and visible; `active` means the
+  node's runtime has the `-p` mapping, which is the runner's step.
 
 ## Persistence rules
 

@@ -83,6 +83,14 @@ impl ErrorCode {
     pub const PROVIDER_IN_USE: Self = Self("provider.in_use");
     pub const PROVIDER_PENDING: Self = Self("provider.pending");
 
+    // Access: the SSH key and the published ports (ADR 0024).
+    pub const SSH_KEY_NOT_FOUND: Self = Self("key.not_found");
+    /// The private key was already downloaded once. Rotation is the way back.
+    pub const SSH_KEY_ALREADY_DOWNLOADED: Self = Self("key.already_downloaded");
+    pub const SSH_KEY_UNREADABLE: Self = Self("key.unreadable");
+    pub const PORT_POOL_EXHAUSTED: Self = Self("port.pool_exhausted");
+    pub const FORWARD_NOT_FOUND: Self = Self("forward.not_found");
+
     pub const VALIDATION_FAILED: Self = Self("request.validation_failed");
     pub const PAYLOAD_TOO_LARGE: Self = Self("request.payload_too_large");
     pub const RATE_LIMITED: Self = Self("request.rate_limited");
@@ -167,6 +175,12 @@ impl ApiError {
     /// code: a node without the resources, an incompatible pack.
     pub fn unprocessable(code: ErrorCode, message: impl Into<String>) -> Self {
         Self::new(StatusCode::UNPROCESSABLE_ENTITY, code, message)
+    }
+
+    /// The resource existed and no longer can be handed out: the one-time key
+    /// download after the first call.
+    pub fn gone(code: ErrorCode, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::GONE, code, message)
     }
 
     /// A dependency the request needs is not available.
@@ -256,6 +270,10 @@ pub enum StoreError {
     /// is why it is logged as an error rather than mapped to a friendly message.
     #[error("tenant scope violation")]
     TenantScopeViolation,
+    /// A row holds a value the domain cannot represent. A schema and an
+    /// application that disagree is a bug, so it is a 500 rather than a guess.
+    #[error("unexpected data: {0}")]
+    UnexpectedData(String),
 }
 
 impl From<StoreError> for ApiError {
@@ -281,6 +299,10 @@ impl From<StoreError> for ApiError {
                 ErrorCode::FORBIDDEN,
                 "The resource belongs to another environment.",
             ),
+            StoreError::UnexpectedData(detail) => Self::internal(
+                "The request could not be completed.",
+            )
+            .with_internal(detail),
             StoreError::Database(err) => {
                 Self::internal("The request could not be completed.").with_internal(err.to_string())
             }
