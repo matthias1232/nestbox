@@ -15,8 +15,22 @@ from docker.errors import DockerException, NotFound
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from app import inventory as inventory_probe
+from app import processes as process_table
+from app import stats as resource_stats
+from app import terminal as terminal_transport
+
 app = FastAPI(title="Nestbox Sandbox Runtime", version="1.0.0")
 client = docker.from_env()
+
+# Admin Center adapters. Each module owns its routes and its own Docker client,
+# so the packages that fill them in can change one file without touching the
+# request path that already ships. `terminal` answers 1011 until the PTY pump
+# exists; `inventory`, `processes`, and `stats` answer real data today.
+app.include_router(resource_stats.router)
+app.include_router(process_table.router)
+app.include_router(inventory_probe.router)
+app.include_router(terminal_transport.router)
 NETWORK = os.getenv("NESTBOX_RUNTIME_NETWORK", "nestbox-runtime")
 ALLOWED_IMAGES = set(
     os.getenv(

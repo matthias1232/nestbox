@@ -19,6 +19,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use super::model_install::FreeBudget;
+
 /// A GPU as the platform probe found it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct GpuDevice {
@@ -366,12 +368,16 @@ pub struct FitReport {
 /// 4. `cpu` → RAM and cores only;
 /// 5. `hybrid` → the GPU gate if there is a GPU, else the CPU gate;
 /// 6. `cuda` → the GPU gate.
-pub fn classify(model: &Model, hardware: &HardwareProfile) -> FitReport {
+///
+/// `free` is what the node has left after its installs reserved their share.
+/// The gate runs against that, not against the last measurement, so a second
+/// model that would fit an empty node is reported as insufficient here.
+pub fn classify(model: &Model, hardware: &HardwareProfile, free: &FreeBudget) -> FitReport {
     if model.is_remote || model.state == ModelState::Remote {
         // Nothing is installed here, so no resource gates anything. The bars
         // stay in the response, marked `not_required`, so the table has the
         // same shape on every row.
-        return report(model, hardware, Fit::Remote,
+        return report(model, hardware, free, Fit::Remote,
             "Served by a cloud provider; nothing to install on this machine.".into(),
             false, false);
     }
@@ -384,6 +390,7 @@ pub fn classify(model: &Model, hardware: &HardwareProfile) -> FitReport {
         return report(
             model,
             hardware,
+            free,
             if update { Fit::UpdateAvailable } else { Fit::AlreadyInstalled },
             if update {
                 format!(
@@ -403,6 +410,7 @@ pub fn classify(model: &Model, hardware: &HardwareProfile) -> FitReport {
         return report(
             model,
             hardware,
+            free,
             Fit::NeedsUnifiedMemory,
             format!(
                 "{} needs a unified-memory machine (DGX Spark / GB10) with about {}; \
@@ -417,10 +425,10 @@ pub fn classify(model: &Model, hardware: &HardwareProfile) -> FitReport {
 
     let use_cpu_path = chosen_cpu_path(model, hardware);
     if use_cpu_path {
-        return classify_cpu(model, hardware, use_cpu_path);
+        return classify_cpu(model, hardware, free, use_cpu_path);
     }
 
-    classify_gpu(model, hardware, use_cpu_path)
+    classify_gpu(model, hardware, free, use_cpu_path)
 }
 
 /// Which path the model takes on this machine: the rule the bars follow too.
@@ -436,6 +444,7 @@ fn chosen_cpu_path(model: &Model, hardware: &HardwareProfile) -> bool {
 fn report(
     model: &Model,
     hardware: &HardwareProfile,
+    free: &FreeBudget,
     fit: Fit,
     reason: String,
     cpu_path: bool,
@@ -445,28 +454,34 @@ fn report(
         fit,
         required_vram_bytes: model.min_vram_bytes,
         required_gpus: model.min_gpu_count,
-        available_vram_bytes: hardware.addressable_memory_bytes(),
+        available_vram_bytes: free.vram_free_bytes,
         available_gpus: hardware.gpu_count(),
         vram_shortfall_bytes: None,
         required_ram_bytes: model.min_ram_bytes,
-        available_ram_bytes: hardware.addressable_ram_bytes(),
+        available_ram_bytes: free.ram_free_bytes,
         ram_shortfall_bytes: None,
         required_cpu_cores: model.min_cpu_cores,
         available_cpu_cores: hardware.cores(),
         cpu_path,
-        bars: bars_for(model, hardware, cpu_path, gated),
+        bars: bars_for(model, hardware, free, cpu_path, gated),
         reason,
     }
 }
 
-fn classify_cpu(model: &Model, hardware: &HardwareProfile, cpu_path: bool) -> FitReport {
-    let available_ram = hardware.addressable_ram_bytes();
+fn classify_cpu(
+    model: &Model,
+    hardware: &HardwareProfile,
+    free: &FreeBudget,
+    cpu_path: bool,
+) -> FitReport {
+    let available_ram = free.ram_free_bytes;
     let required_ram = model.min_ram_bytes.unwrap_or(0);
 
-    if available_ram == 0 {
+    if available_ram == 0 && free.ram_total_bytes == 0 {
         return report(
             model,
             hardware,
+            free,
             Fit::InsufficientRam,
             format!(
                 "{} runs on the CPU and needs about {} of RAM, but this machine's RAM \
@@ -481,17 +496,33 @@ fn classify_cpu(model: &Model, hardware: &HardwareProfile, cpu_path: bool) -> Fi
 
     if available_ram < required_ram {
         let shortfall = required_ram - available_ram;
-        let mut fit = report(
-            model,
-            hardware,
-            Fit::InsufficientRam,
+        let reason = if free.ram_reserved_bytes > 0 {
+            format!(
+                "{} needs about {} of RAM on the CPU; {} of this node's {} are reserved by {}. \
+                 {} are free, short by {}.",
+                model.name,
+                human_gib(required_ram),
+                human_gib(free.ram_reserved_bytes),
+                human_gib(free.ram_total_bytes),
+                free.ram_holders(),
+                human_gib(available_ram),
+                human_gib(shortfall)
+            )
+        } else {
             format!(
                 "{} needs about {} of RAM on the CPU; this machine has {}. Short by {}.",
                 model.name,
                 human_gib(required_ram),
                 human_gib(available_ram),
                 human_gib(shortfall)
-            ),
+            )
+        };
+        let mut fit = report(
+            model,
+            hardware,
+            free,
+            Fit::InsufficientRam,
+            reason,
             cpu_path,
             true,
         );
@@ -505,6 +536,7 @@ fn classify_cpu(model: &Model, hardware: &HardwareProfile, cpu_path: bool) -> Fi
             return report(
                 model,
                 hardware,
+                free,
                 Fit::InsufficientCpu,
                 format!(
                     "{} wants at least {} CPU cores; this machine has {}.",
@@ -521,6 +553,7 @@ fn classify_cpu(model: &Model, hardware: &HardwareProfile, cpu_path: bool) -> Fi
     report(
         model,
         hardware,
+        free,
         Fit::CpuInstallable,
         if tight {
             format!(
@@ -542,8 +575,13 @@ fn classify_cpu(model: &Model, hardware: &HardwareProfile, cpu_path: bool) -> Fi
     )
 }
 
-fn classify_gpu(model: &Model, hardware: &HardwareProfile, cpu_path: bool) -> FitReport {
-    let available_vram = hardware.addressable_memory_bytes();
+fn classify_gpu(
+    model: &Model,
+    hardware: &HardwareProfile,
+    free: &FreeBudget,
+    cpu_path: bool,
+) -> FitReport {
+    let available_vram = free.vram_free_bytes;
     let available_gpus = hardware.gpu_count();
     let required_vram = model.min_vram_bytes.unwrap_or(0);
 
@@ -551,6 +589,7 @@ fn classify_gpu(model: &Model, hardware: &HardwareProfile, cpu_path: bool) -> Fi
         let mut fit = report(
             model,
             hardware,
+            free,
             Fit::NoGpu,
             format!(
                 "No GPU detected. {} needs about {} of GPU memory.",
@@ -569,6 +608,7 @@ fn classify_gpu(model: &Model, hardware: &HardwareProfile, cpu_path: bool) -> Fi
         return report(
             model,
             hardware,
+            free,
             Fit::InsufficientGpus,
             format!(
                 "{} needs {} GPUs; this machine has {}.",
@@ -581,17 +621,33 @@ fn classify_gpu(model: &Model, hardware: &HardwareProfile, cpu_path: bool) -> Fi
 
     if available_vram < required_vram {
         let shortfall = required_vram - available_vram;
-        let mut fit = report(
-            model,
-            hardware,
-            Fit::InsufficientVram,
+        let reason = if free.vram_reserved_bytes > 0 {
+            format!(
+                "{} needs about {} of GPU memory; {} of this node's {} are reserved by {}. \
+                 {} are free, short by {}.",
+                model.name,
+                human_gib(required_vram),
+                human_gib(free.vram_reserved_bytes),
+                human_gib(free.vram_total_bytes),
+                free.vram_holders(),
+                human_gib(available_vram),
+                human_gib(shortfall)
+            )
+        } else {
             format!(
                 "{} needs about {}; this machine has {}. Short by {}.",
                 model.name,
                 human_gib(required_vram),
                 human_gib(available_vram),
                 human_gib(shortfall)
-            ),
+            )
+        };
+        let mut fit = report(
+            model,
+            hardware,
+            free,
+            Fit::InsufficientVram,
+            reason,
             cpu_path,
             true,
         );
@@ -604,6 +660,7 @@ fn classify_gpu(model: &Model, hardware: &HardwareProfile, cpu_path: bool) -> Fi
     report(
         model,
         hardware,
+        free,
         Fit::Installable,
         if available_vram < recommended {
             format!(
@@ -634,10 +691,15 @@ fn classify_gpu(model: &Model, hardware: &HardwareProfile, cpu_path: bool) -> Fi
 /// must not show a red GPU bar next to a green "runs on CPU" badge. The unified
 /// bar replaces the VRAM bar on a unified machine, because showing both would
 /// double-count the same pool.
-pub fn resource_bars(model: &Model, hardware: &HardwareProfile) -> Vec<ResourceBar> {
+pub fn resource_bars(
+    model: &Model,
+    hardware: &HardwareProfile,
+    free: &FreeBudget,
+) -> Vec<ResourceBar> {
     bars_for(
         model,
         hardware,
+        free,
         chosen_cpu_path(model, hardware),
         true,
     )
@@ -646,13 +708,14 @@ pub fn resource_bars(model: &Model, hardware: &HardwareProfile) -> Vec<ResourceB
 fn bars_for(
     model: &Model,
     hardware: &HardwareProfile,
+    free: &FreeBudget,
     cpu_path: bool,
     gated: bool,
 ) -> Vec<ResourceBar> {
     let gpu_bar = if hardware.is_unified() {
         bar(
             Resource::UnifiedMemory,
-            Some(hardware.addressable_memory_bytes()),
+            Some(free.vram_free_bytes),
             model.min_vram_bytes,
             model.recommended_vram_bytes,
             gated && !cpu_path,
@@ -660,7 +723,7 @@ fn bars_for(
     } else {
         bar(
             Resource::Vram,
-            Some(hardware.addressable_memory_bytes()).filter(|v| *v > 0),
+            Some(free.vram_free_bytes).filter(|v| *v > 0),
             model.min_vram_bytes,
             model.recommended_vram_bytes,
             gated && !cpu_path,
@@ -669,7 +732,7 @@ fn bars_for(
 
     let ram_bar = bar(
         Resource::Ram,
-        Some(hardware.addressable_ram_bytes()).filter(|v| *v > 0),
+        Some(free.ram_free_bytes).filter(|v| *v > 0),
         model.min_ram_bytes,
         model.recommended_ram_bytes,
         gated && cpu_path,
@@ -724,7 +787,10 @@ fn bar(
 }
 
 /// Bytes as GiB, rounded, for a human-readable reason string.
-fn human_gib(bytes: i64) -> String {
+///
+/// Shared with the reservation rule in `model_install`, so a fit reason and an
+/// install refusal state the same bytes the same way.
+pub(crate) fn human_gib(bytes: i64) -> String {
     const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
     if bytes <= 0 {
         return "0 GiB".into();
@@ -740,9 +806,29 @@ fn human_gib(bytes: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::model_install::{FreeBudget, ReservationHolder};
     use chrono::Utc;
 
     const GIB: i64 = 1024 * 1024 * 1024;
+
+    /// The budget of an empty machine: every byte the measurement reports.
+    fn free(hardware: &HardwareProfile) -> FreeBudget {
+        FreeBudget::new(
+            hardware.addressable_ram_bytes(),
+            hardware.addressable_memory_bytes(),
+            Vec::new(),
+        )
+    }
+
+    /// Classify against an empty node. Tests that need reservations call
+    /// `super::classify` with a budget of their own.
+    fn classify(model: &Model, hardware: &HardwareProfile) -> FitReport {
+        super::classify(model, hardware, &free(hardware))
+    }
+
+    fn resource_bars(model: &Model, hardware: &HardwareProfile) -> Vec<ResourceBar> {
+        super::resource_bars(model, hardware, &free(hardware))
+    }
 
     fn hardware(gpus: &[i64], unified: Option<i64>) -> HardwareProfile {
         HardwareProfile {
@@ -841,6 +927,34 @@ mod tests {
         assert_eq!(report.fit, Fit::InsufficientVram);
         assert_eq!(report.vram_shortfall_bytes, Some(56 * GIB));
         assert!(report.reason.contains("Short by 56 GiB"));
+    }
+
+    #[test]
+    fn an_install_that_already_reserved_the_ram_makes_a_fitting_model_insufficient() {
+        // 16 GiB total, 10 GiB held by one install: a model that needs 8 GiB
+        // fits the hardware but not this node, and the reason says who holds it.
+        let mut hw = hardware(&[], None);
+        hw.system_ram_bytes = Some(16 * GIB);
+        let budget = FreeBudget::new(
+            16 * GIB,
+            0,
+            vec![ReservationHolder {
+                model_key: "qwen3-1.7b".into(),
+                ram_bytes: 10 * GIB,
+                vram_bytes: 0,
+            }],
+        );
+
+        let report = super::classify(&cpu_model(8, None), &hw, &budget);
+        assert_eq!(report.fit, Fit::InsufficientRam);
+        assert_eq!(report.available_ram_bytes, 6 * GIB);
+        assert_eq!(report.ram_shortfall_bytes, Some(2 * GIB));
+        assert!(
+            report.reason.contains("reserved by qwen3-1.7b"),
+            "reason should name the install: {}",
+            report.reason
+        );
+        assert_eq!(super::classify(&cpu_model(4, None), &hw, &budget).fit, Fit::CpuInstallable);
     }
 
     #[test]

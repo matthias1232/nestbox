@@ -28,5 +28,5 @@ Two different jobs:
 | File | Responsibility |
 |---|---|
 | `architecture.rs` | Layer boundaries, `AGENTS.md` presence, doc comments |
-| `database.rs` | Migrations, seeds, row-level security, append-only audit |
+| `database.rs` | Schema, row-level security, seed, and the constraints the services rely on (skips without `TEST_DATABASE_URL`) |
 | `recipes.rs` | The builder against a database: drafts, revisions, build outcome, instantiate, capacity |

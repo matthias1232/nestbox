@@ -83,13 +83,3 @@ pub async fn supervisors(
     let supervisors = gateway_service::supervisors(&state.services, &auth.principal).await?;
     Ok(Json(serde_json::json!({ "items": supervisors })))
 }
-
-/// The cluster graph.
-pub async fn topology(
-    State(state): State<AppState>,
-    auth: Auth,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    Ok(Json(
-        gateway_service::topology(&state.services, &auth.principal).await?,
-    ))
-}

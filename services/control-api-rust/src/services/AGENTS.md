@@ -41,19 +41,40 @@ reading both.
 | `auth_service.rs` | Login, logout, session validation, principal building |
 | `access_control.rs` | Permission evaluation and the refusal message |
 | `sandbox_service.rs` | Lifecycle, placement, bulk actions |
-| `provider_service.rs` | Provider profiles, probe, and the inference environment a sandbox receives |
+| `provider_service.rs` | Provider profiles with their probe status, the pending profile an install creates, the in-use check on delete, and the reachable-only inference environment a sandbox receives |
+| `agent_service.rs` | Agents inside a sandbox: which packs may join, homes and their persistence, the supervisor command |
 | `policy_service.rs` | Validation, diff, scope rules, global override |
 | `telemetry_service.rs` | Ingest, live publish, history queries |
-| `model_service.rs` | Hardware detection (CPU, RAM, GPU, unified pool), fit, facets, catalog filters, install jobs |
+| `model_service.rs` | Hardware detection (CPU, RAM, GPU, unified pool), fit against a node's free budget, facets, catalog filters, installs and their reservations |
+| `node_service.rs` | The nodes list, one node with its budget, a node's sandboxes, name-or-id resolution, display rename |
+| `pack_service.rs` | Baselines, agent packs, and tool catalog as data; pack defaults by row, baseline compatibility, package-name resolution |
 | `builder_service.rs` | Recipes: validation against the catalogs, the Dockerfile generator, content hash, build job, instantiate |
 | `gateway_service.rs` | Registry, settings, drift, sync |
 | `job_service.rs` | Job creation and progress |
 | `schedule_service.rs` | Schedule evaluation and runs |
+| `metrics_service.rs` | Sample ingest, ranged query, rollup, retention (`feat/sandbox-metrics`) |
+| `inventory_service.rs` | Snapshot storage and age; never an environment value (`feat/sandbox-metrics`) |
+| `access_service.rs` | SSH key pair as a file with a locator, port pool, sessions (`feat/sandbox-access`) |
+| `mcp_service.rs` | Registry, attachments, discovery through the policy check (`feat/mcp-registry`) |
+| `persist_service.rs` | Persistent roots: derived host paths, mounts, the one-read-write rule, honest usage |
+
+## Persistence rules
+
+1. A mount source is never taken from a request. `persist_service` derives the
+   host path from a validated slug plus the caller's user id, and that derived
+   path is the only source the runtime ever receives.
+2. `sandbox_service::create` reads a sandbox's mounts from the database, inside
+   the transaction that inserted the sandbox row, and passes them to the runtime.
+3. A bind mount is fixed when the container is created. A mount or dismount
+   changes the row, and therefore what the *next* container for that sandbox
+   receives; it does not rewire a running container.
+4. Archive, never delete, by default. Purging removes the record only: the
+   directory lives on the node, which the control plane cannot reach.
 
 ## The builder
 
-`builder_service.rs` deserves a note because two of its decisions are not
-obvious from the signature.
+`builder_service.rs` deserves a note because its decisions are not obvious from
+the signatures.
 
 - **The Dockerfile is generated, never stored.** The recipe holds the choices;
   the catalogs hold what those choices mean; the generator is the only place the
@@ -64,10 +85,16 @@ obvious from the signature.
   `building`, and a PATCH recovers it. The job body is `builder_service::run_build`,
   public so a test can run it without a detached task.
 - **`instantiate` writes the sandbox row itself** rather than calling
-  `sandbox_service::create`, because a recipe carries mounts, agents, and an
-  image tag that `CreateSandbox` cannot express. It reuses the same pieces
-  (`SandboxName`, the placement rules, `pack_needs_inference`, the status
-  settlement) so the two paths send the same shape to the runtime.
+  `sandbox_service::create`, because a recipe carries an agent set and a
+  content-addressed image tag that `CreateSandbox` cannot express, and its
+  mounts have to be in the spec the container is created with. It reuses the
+  same pieces (`SandboxName`, the placement rules, `pack_needs_inference`, the
+  status settlement), so the two paths send the same shape to the runtime. Once
+  `CreateSandbox` can carry agents and a recipe image, this should collapse into
+  a call to it.
+- **The catalogs are read through the store, not `pack_service`.** Both read the
+  same rows; going through `pack_service` is the cleaner layering and changes
+  nothing about the recipes.
 
 ## Extending this module
 
