@@ -15,6 +15,7 @@ import PoliciesPage from './features/policies/PoliciesPage.jsx';
 import ClusterPage from './features/cluster/ClusterPage.jsx';
 import ProvidersPage from './features/providers/ProvidersPage.jsx';
 import ModelsPage from './features/models/ModelsPage.jsx';
+import NodesPage from './features/nodes/NodesPage.jsx';
 import JobsPage from './features/jobs/JobsPage.jsx';
 import AdminCenter from './features/sandboxes/AdminCenter.jsx';
 
@@ -34,6 +35,7 @@ const ROUTES = [
   { id: 'traffic', label: 'Live traffic' },
   { id: 'policies', label: 'Policies' },
   { id: 'cluster', label: 'Cluster' },
+  { id: 'nodes', label: 'Nodes' },
   { id: 'providers', label: 'Providers' },
   { id: 'models', label: 'Models' },
   { id: 'operations', label: 'Operations' },
@@ -133,11 +135,17 @@ export default function App() {
               fallback={
                 <>
                   <Show when={route() === 'sandboxes'}>
-                    <SandboxListPage onOpenAdmin={openAdmin} />
+                    <SandboxListPage
+                      onOpenAdmin={openAdmin}
+                      onOpenNode={() => setRoute('nodes')}
+                    />
                   </Show>
                   <Show when={route() === 'traffic'}><TrafficPage /></Show>
                   <Show when={route() === 'policies'}><PoliciesPage /></Show>
                   <Show when={route() === 'cluster'}><ClusterPage /></Show>
+                  <Show when={route() === 'nodes'}>
+                    <NodesPage onOpenSandbox={openAdmin} />
+                  </Show>
                   <Show when={route() === 'providers'}><ProvidersPage /></Show>
                   <Show when={route() === 'models'}><ModelsPage /></Show>
                   <Show when={route() === 'operations'}><JobsPage /></Show>
