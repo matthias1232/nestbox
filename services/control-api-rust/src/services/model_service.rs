@@ -1171,22 +1171,26 @@ async fn wait_until_answering(
             }
         };
         let probe = super::provider_service::measure(ctx, &profile).await;
-        if probe.reachable {
+        // A 200, not merely an answer. llama.cpp replies 503 while it maps the
+        // weights, and a provider probe calls any HTTP answer "reachable"
+        // because for a remote endpoint a 401 already proves the server is
+        // there. Here the question is different: has this install finished
+        // loading? Only the served model list answers that.
+        if probe.status == Some(200) {
             return Ok(format!(
-                "{} answered with {} model(s){}",
+                "{} answered 200 with {} model(s)",
                 profile.endpoint,
-                probe.model_count.unwrap_or(0),
-                if probe.detail.is_empty() {
-                    String::new()
-                } else {
-                    format!(" ({})", probe.detail)
-                }
+                probe.model_count.unwrap_or(0)
             ));
         }
+        let status = probe
+            .status
+            .map(|code| format!("HTTP {code}"))
+            .unwrap_or_else(|| "no answer".to_string());
         last = if probe.detail.is_empty() {
-            "no detail".to_string()
+            status
         } else {
-            probe.detail
+            format!("{status}: {}", probe.detail)
         };
     }
     Err(last)

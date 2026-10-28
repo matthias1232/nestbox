@@ -92,15 +92,19 @@ request = urllib.request.Request(
     data=json.dumps({
         "model": "qwen3",
         "messages": [{"role": "user", "content": "Reply with the single word: ready"}],
-        "max_tokens": 16,
+        # Enough for Qwen3's thinking tokens plus the word asked for; the
+        # answer may arrive in `reasoning_content` when thinking is on.
+        "max_tokens": 96,
         "temperature": 0,
     }).encode(),
     headers={"content-type": "application/json"},
 )
 with urllib.request.urlopen(request, timeout=120) as response:
     body = json.load(response)
+message = body["choices"][0]["message"]
 print("  HTTP", response.status)
-print("  answer:", repr(body["choices"][0]["message"]["content"][:80]))
+print("  answer:", repr((message.get("content") or "")[:80]))
+print("  thinking:", repr((message.get("reasoning_content") or "")[:80]))
 print("  model:", body.get("model"), "tokens:", body.get("usage", {}).get("completion_tokens"))
 PY
 
