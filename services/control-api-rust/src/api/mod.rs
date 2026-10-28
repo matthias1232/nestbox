@@ -160,6 +160,14 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/internal/policy/check/{*suffix}",
             any(policies::internal_check),
         )
+        // Envoy appends the original path to the prefix; for a request to `/`
+        // that is a trailing slash, which the wildcard route does not match.
+        // Without this route the proxy's very first plain-HTTP request would be
+        // a 404 — a deny that never asked a question.
+        .route(
+            "/api/v1/internal/policy/check/",
+            any(policies::internal_check),
+        )
         .route(
             "/api/v1/internal/telemetry/batch",
             post(telemetry::internal_batch),
