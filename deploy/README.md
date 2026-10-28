@@ -32,8 +32,10 @@ printf '%s' "postgres://nestbox:${PGPW}@postgres:5432/nestbox" > secrets/databas
 # that directory and must not be able to read the database URLs beside it.
 # `init-data` generates it on first start, so this is only needed if you want it
 # before the first `up`.
+# Hex, not base64: the token is sent as a `Sec-WebSocket-Protocol` entry, and
+# base64's `+`, `/` and `=` are not valid there.
 install -d -m 0755 secrets/node
-head -c 24 /dev/urandom | base64 > secrets/node/token
+head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > secrets/node/token
 
 chmod 0600 secrets/* secrets/node/*
 ```

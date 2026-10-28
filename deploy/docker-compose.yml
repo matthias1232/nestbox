@@ -29,7 +29,11 @@ services:
         # would otherwise fail `up`, and a terminal without a token must not be
         # an option. Idempotent — an existing token is never replaced, because a
         # replacement cuts every open terminal.
-        [ -s /secrets/node/token ] || head -c 24 /dev/urandom | base64 > /secrets/node/token
+        #
+        # Hex on purpose: the token travels as the second entry of
+        # `Sec-WebSocket-Protocol`, and base64's `+`, `/`, `=` are not valid in
+        # a protocol token — the handshake would fail with a bare 400.
+        [ -s /secrets/node/token ] || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > /secrets/node/token
         chown -R 10001:10001 /data /secrets
         chmod 0700 /secrets
         find /secrets -type f -exec chmod 0600 {} + 2>/dev/null || true
@@ -107,15 +111,17 @@ services:
       # The same token the runner demands on the terminal upgrade. It comes from
       # the node directory rather than from a compose secret, because compose
       # checks a secret file when it creates the container — before `init-data`
-      # can generate one — and a fresh appliance would fail to start.
-      NESTBOX_NODE_TOKEN_FILE: /run/secrets/token
+      # can generate one — and a fresh appliance would fail to start. It is not
+      # mounted under `/run/secrets`: that directory belongs to the compose
+      # secrets and is mounted read-only, so a second mount below it fails.
+      NESTBOX_NODE_TOKEN_FILE: /run/node/token
       RUST_LOG: info,tower_http=warn
     secrets:
       - database_url
     volumes:
       - ./data/gateway:/data/gateway:ro
       - ./secrets:/secrets:ro
-      - ./secrets/node:/run/secrets:ro
+      - ./secrets/node:/run/node:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -169,7 +175,7 @@ services:
       # sits on the sandbox network: an open endpoint there would be a shell into
       # every neighbour. It mounts the node directory, not `secrets/`: the
       # runner has the Docker socket and no business reading database URLs.
-      NESTBOX_NODE_TOKEN_FILE: /run/secrets/token
+      NESTBOX_NODE_TOKEN_FILE: /run/node/token
     volumes:
       # The only component that talks to the Docker socket. It is separate from
       # the API on purpose: a compromise of the API does not yield the host.
@@ -178,7 +184,7 @@ services:
       # so a bind source the runner validates is the path Docker mounts.
       - /var/lib/nestbox/persistent:/var/lib/nestbox/persistent
       - /proc:/host/proc:ro
-      - ./secrets/node:/run/secrets:ro
+      - ./secrets/node:/run/node:ro
     expose:
       - "9000"
     networks:

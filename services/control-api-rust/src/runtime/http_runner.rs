@@ -325,6 +325,14 @@ impl RuntimeAdapter for HttpRunner {
                          same on the control API and on the sandbox runner"
                             .to_string(),
                     ),
+                    // The runner's handshake parser refuses a malformed
+                    // `Sec-WebSocket-Protocol` before the endpoint sees it, so a
+                    // token with `+`, `/` or `=` arrives here as a bare 400.
+                    400 => RuntimeError::Rejected(
+                        "the runner rejected the terminal handshake (400); a node token must \
+                         be a single token of letters and digits — hex, not base64"
+                            .to_string(),
+                    ),
                     _ => RuntimeError::Rejected(format!(
                         "the runner refused the terminal ({status})"
                     )),
