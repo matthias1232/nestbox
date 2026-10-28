@@ -41,11 +41,30 @@ misconfigured gateway is worse than waiting for the sync.
 ## Supervisors are observed, not configured
 
 Nestbox reports what a supervisor is doing: health, configuration dirtiness, and
-the result of the last policy apply. The runtime exposes these directly, so the
-console reads them rather than inferring them.
+the result of the last policy apply.
 
-There is no "supervisor policy", because the runtime has no such object. Creating
-one would be a UI for a state that does not exist.
+The supervisor is a process in the sandbox, not a row that a UI pretends is one.
+Every recipe-built image carries `/usr/local/bin/nestbox-agent-supervisor` beside
+the agent, and every sandbox carries a per-sandbox token whose hash is in
+`supervisors.token_hash`. The process posts to
+`/internal/supervisors/{id}/report` every 15 seconds with what it *measured*:
+model reachability, proxy variables, the recipe's tools, the agent process, free
+memory, and policy drift. `last_seen`, `status` and the checks come from that
+report, never from a request that says "running".
+
+Two operator settings are authored, and only two things are executed:
+
+- `PUT /sandboxes/{id}/settings` stores the document and writes it into the
+  sandbox at `/home/agents/supervisor/.nestbox-supervisor/settings.json`.
+- `POST /sandboxes/{id}/supervisor/actions` queues one of `apply_policy`,
+  `restart_agent`, `run_check` into `commands/`. The supervisor answers in
+  `results/` and the newest outcome comes back in `facts.last_action`.
+
+There is no "supervisor policy", because the runtime has no such object. The
+whitelist is the boundary: a command that is not one of the three is rejected by
+the supervisor itself, so a compromised control plane cannot turn it into a
+generic executor. `restart_agent` additionally needs `self_healing` on and a
+`restart_command` in the settings; there is no default command.
 
 ## Multiple gateways
 
