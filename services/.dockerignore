@@ -1,0 +1,11 @@
+# The control-api image builds with `services/` as its context because the
+# binary embeds `tool-images/supervisor/supervisor.py`. Everything else in this
+# folder is a different service's source and must not travel to the daemon:
+# `control-api-rust/target` alone is several gigabytes.
+
+**/target
+**/node_modules
+**/dist
+**/__pycache__
+**/.venv
+**/.git

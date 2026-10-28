@@ -1223,7 +1223,11 @@ fn prerequisites(kinds: &[InstallKind]) -> Vec<&'static str> {
     let mut keys: Vec<&'static str> = Vec::new();
     for kind in kinds {
         let needed: &[&'static str] = match kind {
-            InstallKind::Script => &["curl", "ca-certificates"],
+            // A script installer fetches its payload over HTTPS and, in the
+            // common shape, clones a repository before it runs. Hermes is one
+            // of those: without `git` it stops at "git is required" after the
+            // download already looked like success.
+            InstallKind::Script => &["curl", "ca-certificates", "git"],
             InstallKind::Npm => &["nodejs", "npm"],
             InstallKind::Pip => &["python3", "python3-pip"],
             InstallKind::Binary => &["curl", "ca-certificates"],
@@ -2176,6 +2180,12 @@ mod tests {
         assert_eq!(
             prerequisites(&[InstallKind::Npm]),
             vec!["nodejs", "npm"]
+        );
+        // A script installer alone still needs `git`: the payload is usually a
+        // repository, and Hermes stops with "git is required" without it.
+        assert_eq!(
+            prerequisites(&[InstallKind::Script]),
+            vec!["curl", "ca-certificates", "git"]
         );
         assert_eq!(
             prerequisites(&[InstallKind::Script, InstallKind::Git]),

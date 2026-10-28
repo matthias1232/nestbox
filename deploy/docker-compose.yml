@@ -74,8 +74,10 @@ services:
 
   migrate:
     build:
-      context: ../services/control-api-rust
-      dockerfile: Dockerfile
+      # `services/` and not the crate folder: the binary embeds the supervisor
+      # program from `tool-images/`, so the context has to contain both.
+      context: ../services
+      dockerfile: control-api-rust/Dockerfile
     # Runs the migrations and exits. The API waits for this to complete, so a
     # schema change never races the application startup.
     #
@@ -99,8 +101,8 @@ services:
 
   control-api:
     build:
-      context: ../services/control-api-rust
-      dockerfile: Dockerfile
+      context: ../services
+      dockerfile: control-api-rust/Dockerfile
     restart: unless-stopped
     environment:
       DATABASE_URL_FILE: /run/secrets/database_url
