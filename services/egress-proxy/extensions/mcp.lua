@@ -4,39 +4,42 @@
 -- `Content-Type: application/json`, has `jsonrpc: "2.0"`, and a `method` in the
 -- MCP family is MCP; anything else is "some JSON" and is left alone. For
 -- `tools/call` the tool name is `params.name`, and `Mcp-Session-Id` names the
--- session.
+-- session (the request header, or the one the server assigns in its response).
 --
--- The result is written into dynamic metadata (`nestbox:mcp_*`) where the access
+-- The result is written into dynamic metadata (`nestbox:*`) where the access
 -- log and the decider can read it, and the body is handed on unchanged. This
 -- filter never rewrites a request: a proxy that edits what an agent sends is a
 -- proxy whose logs stop explaining what happened.
 --
--- Skeleton note: the scan below is deliberately narrow — it looks for the
--- method and, only for `tools/call`, the first `name` after it. The
--- `feat/egress-envoy` package replaces it with a proper parse and adds the
--- response side (result, is_error, duration). A wrong tool name in a log is
--- worse than none, so anything unrecognised stays empty.
+-- The Lua filter has no JSON library, so both sides are matched with patterns
+-- over the buffered body. That has two consequences worth stating plainly:
+--
+--   * A batch (`[{...},{...}]`) is classified by its first method only.
+--   * The response body is only readable when Envoy buffered it. The buffer
+--     filter buffers requests, not responses, so on most responses
+--     `handle:body()` raises and the MCP result fields stay empty. The log then
+--     still has the method, the tool, the session and the duration — what it
+--     does not have is the result, and it does not pretend otherwise.
+--
+-- A wrong tool name in a log is worse than none, so anything unrecognised
+-- stays empty.
 
-local MCP_METHODS = {
+local METHODS = {
   "initialize",
-  "tools/list",
-  "tools/call",
+  "tools/",
   "resources/",
   "prompts/",
   "notifications/",
-  "ping",
   "logging/",
   "completion/",
   "sampling/",
   "roots/",
+  "elicitation/",
+  "ping",
 }
 
-local function is_json(headers)
-  local content_type = headers:get("content-type")
-  if not content_type then
-    return false
-  end
-  return string.find(string.lower(content_type), "application/json", 1, true) ~= nil
+local function lower(value)
+  return string.lower(value)
 end
 
 local function set(handle, name, value)
@@ -46,37 +49,89 @@ local function set(handle, name, value)
   handle:streamInfo():dynamicMetadata():set("nestbox", name, value)
 end
 
-local function classify(body, handle)
-  local method = string.match(body, '"method"%s*:%s*"([%w%._%-/]+)"')
-  if not method then
-    return
+local function json(headers)
+  local content_type = headers:get("content-type")
+  if not content_type then
+    return false
   end
-  local recognised = false
-  for _, prefix in ipairs(MCP_METHODS) do
+  return string.find(lower(content_type), "application/json", 1, true) ~= nil
+end
+
+-- Split an authority into host and port, honoring `[2001:db8::1]:443`.
+local function split_authority(authority)
+  if not authority then
+    return nil, nil
+  end
+  authority = string.gsub(authority, "^%s*", "")
+  authority = string.gsub(authority, "%s*$", "")
+  if string.sub(authority, 1, 1) == "[" then
+    local host, port = string.match(authority, "^%[([^%]]+)%]:?(%d*)$")
+    if port == "" then
+      port = nil
+    end
+    return host, port
+  end
+  local host, port = string.match(authority, "^([^:]+):?(%d*)$")
+  if port == "" then
+    port = nil
+  end
+  return host, port
+end
+
+local function is_mcp_method(method)
+  for _, prefix in ipairs(METHODS) do
     if string.sub(method, 1, #prefix) == prefix then
-      recognised = true
-      break
+      return true
     end
   end
-  if not recognised then
-    return
+  return false
+end
+
+-- Return the MCP method and, for `tools/call`, the tool name.
+local function classify(body)
+  -- `jsonrpc: "2.0"` first: without it this is just a body with a "method".
+  if not string.find(body, '"jsonrpc"%s*:%s*"2%.0"') then
+    return nil, nil
   end
-  set(handle, "mcp_method", method)
-  if method == "tools/call" then
-    local after = string.match(body, '"method"%s*:%s*"tools/call"(.*)$')
-    local tool = after and string.match(after, '"name"%s*:%s*"([^"]+)"')
-    if tool then
-      set(handle, "mcp_tool", tool)
-    end
+  local method = string.match(body, '"method"%s*:%s*"([%w%._%-/]+)"')
+  if not method or not is_mcp_method(method) then
+    return nil, nil
   end
+  if method ~= "tools/call" then
+    return method, nil
+  end
+  -- `params.name` is the tool. Search after the `params` key so a `name`
+  -- field in a preceding object cannot be mistaken for it.
+  local after_method = string.match(body, '"method"%s*:%s*"tools/call"(.*)$')
+  if not after_method then
+    return method, nil
+  end
+  local after_params = string.match(after_method, '"params"%s*:%s*{(.*)$') or after_method
+  local tool = string.match(after_params, '"name"%s*:%s*"([^"]+)"')
+  return method, tool
 end
 
 function envoy_on_request(handle)
   local headers = handle:headers()
+
+  local host, port = split_authority(headers:get(":authority"))
+  set(handle, "target_host", host)
+  set(handle, "target_port", port)
+
+  if headers:get(":method") == "CONNECT" then
+    -- A tunnel has no HTTP request inside that this listener can describe, and
+    -- no visible ClientHello. What we do know is the name the client asked
+    -- for; the log says `connect: true` so nobody reads this as a sniffed SNI.
+    set(handle, "connect", "true")
+    set(handle, "sni", host)
+  end
+
   set(handle, "mcp_session_id", headers:get("mcp-session-id"))
-  if not is_json(headers) then
+
+  if not json(headers) then
     return
   end
+
   -- Envoy raises when the body was not buffered (over the limit, or a stream).
   -- That is not an error worth failing the request for: it is a body this
   -- filter cannot see, and the log will show empty MCP fields.
@@ -84,8 +139,46 @@ function envoy_on_request(handle)
   if not ok or body == nil then
     return
   end
-  -- Envoy hands over the buffered body when the buffer limit was not exceeded.
-  -- A body larger than the limit is not classified, and the log says so by
-  -- leaving the MCP fields empty.
-  classify(body:getBytes(0, body:length()), handle)
+  local method, tool = classify(body:getBytes(0, body:length()))
+  if not method then
+    return
+  end
+  set(handle, "app_protocol", "mcp")
+  set(handle, "mcp_method", method)
+  set(handle, "mcp_tool", tool)
+end
+
+function envoy_on_response(handle)
+  local headers = handle:headers()
+
+  -- Servers assign the session on `initialize` and return it as a header. This
+  -- is the only MCP fact that shows up on the response side without a body.
+  local session = headers:get("mcp-session-id")
+  if session then
+    set(handle, "mcp_session_id", session)
+  end
+
+  local content_type = headers:get("content-type")
+  if not content_type or string.find(lower(content_type), "application/json", 1, true) == nil then
+    return
+  end
+
+  local ok, body = pcall(function() return handle:body() end)
+  if not ok or body == nil then
+    return
+  end
+  local text = body:getBytes(0, body:length())
+  if text == nil or text == "" then
+    return
+  end
+  if string.find(text, '"isError"%s*:%s*true') then
+    set(handle, "mcp_is_error", "true")
+    set(handle, "mcp_result_kind", "tool_error")
+  elseif string.find(text, '"error"%s*:') then
+    set(handle, "mcp_is_error", "true")
+    set(handle, "mcp_result_kind", "error")
+  elseif string.find(text, '"result"%s*:') then
+    set(handle, "mcp_is_error", "false")
+    set(handle, "mcp_result_kind", "result")
+  end
 end

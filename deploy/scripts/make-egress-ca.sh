@@ -83,3 +83,21 @@ echo "  and runs update-ca-certificates"
 echo
 echo "the key stays on this node at $key (0600). It must never be copied into a"
 echo "sandbox and never be stored in PostgreSQL."
+echo
+echo "the proxy container reads both files through Docker secrets, not through a"
+echo "bind mount; the compose service needs exactly this:"
+echo
+echo "  secrets:"
+echo "    egress_ca_cert:"
+echo "      file: ./secrets/egress/ca.crt"
+echo "    egress_ca_key:"
+echo "      file: ./secrets/egress/ca.key"
+echo
+echo "  egress-proxy:"
+echo "    secrets: [egress_ca_cert, egress_ca_key]"
+echo
+echo "Docker mounts those at /run/secrets/egress_ca.crt and"
+echo "/run/secrets/egress_ca.key inside that one container. A bind mount would be"
+echo "the wrong tool: the file is 0600 on the host, so the container user cannot"
+echo "read it, and making it world-readable to compensate hands the key to every"
+echo "local user. A secret is per-container, not per-host."

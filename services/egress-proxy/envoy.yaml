@@ -1,21 +1,42 @@
 # Envoy as the egress proxy for every sandbox on this node.
 #
-# Two jobs, one listener:
+# Three jobs, two listeners:
 #
 #   1. **Decide.** Every request is sent to the control API before it leaves.
 #      The control API owns the rules (ADR 0001); this file owns none. If the
 #      control API cannot answer, the request is denied — `failure_mode_allow`
 #      is off, which is the fail-closed half of "default deny".
-#   2. **Record.** The access log is one JSON line per request: host, port,
-#      method, path, status, duration, bytes, user agent, sandbox, and the MCP
-#      facts the Lua filter extracted. The control API redacts and stores it.
+#   2. **Terminate what it is allowed to see.** An HTTPS request arrives as a
+#      CONNECT tunnel. The tunnel is not forwarded as an opaque pipe: Envoy
+#      hands the client's TLS bytes to `egress-mitm` on loopback, which presents
+#      a leaf certificate minted for the requested host from this node's CA,
+#      decrypts, and re-encrypts to the second listener below. That listener
+#      sees a normal HTTPS request, so the path, the body and the MCP facts are
+#      visible instead of guessed.
+#   3. **Record.** One JSON line per request: host, port, method, path, status,
+#      duration, bytes, user agent, sandbox, TLS SNI, the MCP facts the Lua
+#      filter extracted, and the decision the control API returned.
 #
-# What is deliberately *not* here yet, and belongs to the `feat/egress-envoy`
-# package: TLS termination of a CONNECT tunnel with this node's own CA and an
-# upstream certificate, so a TLS request can be seen as a path rather than a
-# tunnel. Until then HTTPS is logged as a CONNECT tunnel with host, port, SNI,
-# and byte counts — and the console says so instead of implying it saw more than
-# it did.
+# Two listeners, because a request that was decrypted is a different request
+# from the CONNECT that carried it:
+#
+#   * `egress` (0.0.0.0:3128) is what a sandbox talks to. Plain HTTP is routed
+#     straight out; CONNECT is terminated and handed to the certificate broker.
+#   * `egress_terminated` (127.0.0.1:10000) is loopback only. The broker
+#     re-encrypts to it with the *original* SNI, so this listener's TLS session
+#     reports the real server name in `%REQUESTED_SERVER_NAME%`.
+#
+# The CONNECT line and the decrypted request line are both logged. The first
+# says "a tunnel to example.com:443 was allowed", the second says "it fetched
+# / with 200". A UI that only shows one of them shows half of what happened.
+#
+# Why the broker is a separate loopback process and not a second Envoy: Envoy
+# can terminate TLS, but it cannot mint a certificate per host name; a TLS
+# server needs a certificate before it knows which one to present. The broker is
+# ~200 lines of Go standard library (see `mitm/main.go`) and does nothing else:
+# sign a leaf, terminate, hand the plaintext on. Every decision still comes from
+# the control API through the filters below, and both listeners run the same
+# filter chain, so there is no second policy.
 #
 # No listener is published on the host: the proxy is reachable from the sandbox
 # network only. An unauthenticated forward proxy on a LAN interface is an open
@@ -27,6 +48,9 @@ admin:
 
 static_resources:
   listeners:
+    # ---------------------------------------------------------------------
+    # 1. The listener a sandbox connects to.
+    # ---------------------------------------------------------------------
     - name: egress
       address:
         socket_address: { address: 0.0.0.0, port_value: 3128 }
@@ -47,14 +71,18 @@ static_resources:
                 "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
                 stat_prefix: egress
                 codec_type: AUTO
+                # Mark RFC1918 downstreams as internal. This is the previous
+                # default made explicit; without it Envoy 1.31 warns at every
+                # start that the default will change.
+                internal_address_config:
+                  cidr_ranges:
+                    - address_prefix: 10.0.0.0
+                      prefix_len: 8
+                    - address_prefix: 172.16.0.0
+                      prefix_len: 12
+                    - address_prefix: 192.168.0.0
+                      prefix_len: 16
                 # CONNECT is how a TLS client asks for a tunnel through a proxy.
-                # Only the upgrade type is set here. `connect_config` (which is
-                # what enables TLS termination with this node's CA) does not
-                # exist under this message in v1.31 — the proxy rejected it at
-                # startup, which is exactly what a config that is checked at
-                # boot is for. The `feat/egress-envoy` package adds termination
-                # with the right field for its version and a test that the
-                # container starts.
                 upgrade_configs:
                   - upgrade_type: CONNECT
                 access_log:
@@ -65,38 +93,93 @@ static_resources:
                         json_format:
                           ts: "%START_TIME%"
                           node: "%ENVIRONMENT(NESTBOX_NODE_NAME)%"
+                          listener: proxy
                           sandbox: "%REQ(x-nestbox-sandbox)%"
+                          # For a CONNECT this is `host:port`, for a plain
+                          # request the Host header. `target_host`/`target_port`
+                          # are the same value split by the Lua filter.
                           host: "%REQ(:authority)%"
+                          target_host: "%DYNAMIC_METADATA(nestbox:target_host)%"
+                          target_port: "%DYNAMIC_METADATA(nestbox:target_port)%"
                           method: "%REQ(:method)%"
                           path: "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%"
+                          # Set only for CONNECT: there is no HTTP request inside
+                          # a tunnel that this listener could describe.
+                          connect: "%DYNAMIC_METADATA(nestbox:connect)%"
+                          # A tunnel has no visible ClientHello, so this is the
+                          # name the client asked for in its CONNECT. The
+                          # decrypted request is logged by the other listener
+                          # with the SNI it actually sent.
+                          sni: "%DYNAMIC_METADATA(nestbox:sni)%"
                           protocol: "%PROTOCOL%"
+                          app_protocol: "%DYNAMIC_METADATA(nestbox:app_protocol)%"
                           status: "%RESPONSE_CODE%"
                           duration_ms: "%DURATION%"
                           bytes_in: "%BYTES_RECEIVED%"
                           bytes_out: "%BYTES_SENT%"
                           user_agent: "%REQ(user-agent)%"
                           request_id: "%REQ(x-request-id)%"
-                          sni: "%REQUESTED_SERVER_NAME%"
-                          mcp_session_id: "%REQ(mcp-session-id)%"
+                          mcp_session_id: "%DYNAMIC_METADATA(nestbox:mcp_session_id)%"
                           mcp_method: "%DYNAMIC_METADATA(nestbox:mcp_method)%"
                           mcp_tool: "%DYNAMIC_METADATA(nestbox:mcp_tool)%"
-                          # Set by the decider as a response header, so the log
-                          # records what was actually decided rather than what
-                          # this file assumes was decided.
-                          decision: "%RESP(x-nestbox-decision)%"
-                          reason: "%RESP(x-nestbox-reason)%"
-                          rule_id: "%RESP(x-nestbox-rule-id)%"
+                          mcp_is_error: "%DYNAMIC_METADATA(nestbox:mcp_is_error)%"
+                          mcp_result_kind: "%DYNAMIC_METADATA(nestbox:mcp_result_kind)%"
+                          # The decision the control API made, copied out of the
+                          # ext_authz response headers into filter metadata (see
+                          # `dynamic_metadata_from_headers` below). Empty until
+                          # a decider answers, which is the truth and not a bug.
+                          decision: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-decision)%"
+                          reason: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-reason)%"
+                          rule_id: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-rule-id)%"
                 route_config:
                   name: egress
                   virtual_hosts:
                     - name: forward
                       domains: ["*"]
                       routes:
+                        # HTTPS: end the CONNECT here and hand the TLS bytes to
+                        # the certificate broker. `connect_config` is what makes
+                        # Envoy strip the CONNECT headers and forward the
+                        # payload as raw TCP; without it Envoy would proxy the
+                        # CONNECT request itself and learn nothing.
+                        - match: { connect_matcher: {} }
+                          route:
+                            cluster: tls_terminator
+                            upgrade_configs:
+                              - upgrade_type: CONNECT
+                                connect_config: {}
+                            # A tunnel may legitimately be idle for a while; it
+                            # is the idle timeout, not the request timeout, that
+                            # ends a dead one.
+                            timeout: 0s
+                            idle_timeout: 300s
+                          typed_per_filter_config:
+                            # The buffer filter waits for the end of the request
+                            # body, and a CONNECT's body is the tunnel: it ends
+                            # when the client is done, long after the client is
+                            # waiting for the 200. Without this, every CONNECT
+                            # hangs until the client gives up — found the hard
+                            # way, and the reason this route disables the filter.
+                            envoy.filters.http.buffer:
+                              "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.BufferPerRoute
+                              disabled: true
+                            # The decision for HTTPS is made once, on the request
+                            # that was decrypted, where the control API can see
+                            # the path, the body and the MCP facts. Asking twice
+                            # would double the decision load and, worse, Envoy
+                            # forwards a CONNECT to ext_authz as a CONNECT whose
+                            # request target is `host:port` — a request the
+                            # control API's `/internal/policy/check` route cannot
+                            # receive. A tunnel that opens is not a request that
+                            # leaves: nothing is sent to the destination until
+                            # the decrypted request is allowed.
+                            envoy.filters.http.ext_authz:
+                              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
+                              disabled: true
+                        # Plain HTTP: host from `:authority`, no CONNECT.
                         - match: { prefix: "/" }
                           route:
                             cluster: dynamic_forward_proxy_cluster
-                            # A long download is not a hung request; the idle
-                            # timeout is what closes a dead one.
                             timeout: 300s
                             idle_timeout: 60s
                 http_filters:
@@ -120,31 +203,171 @@ static_resources:
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
                       transport_api_version: V3
+                      # Which client headers the control API may see. `Host`,
+                      # `Method`, `Path`, `Content-Length` and `Authorization`
+                      # are always included; these are the ones it needs on top.
+                      # This is the top-level field, not the deprecated
+                      # `http_service.authorization_request.allowed_headers`.
+                      allowed_headers:
+                        patterns:
+                          - exact: x-nestbox-sandbox
+                          - exact: x-nestbox-node
+                          - exact: user-agent
+                          - exact: mcp-session-id
                       http_service:
                         server_uri:
                           uri: http://control-api:8000
                           cluster: control_api
                           timeout: 1s
                         # Envoy appends the original request path to
-                        # `path_prefix`; the handler ignores that suffix and
-                        # uses the headers and body Envoy sends. The control
-                        # API registers the exact path and the suffixed form.
+                        # `path_prefix`; the control API registers the exact
+                        # path and the suffixed form.
                         path_prefix: /api/v1/internal/policy/check
-                        authorization_request:
-                          allowed_headers:
-                            patterns:
-                              - exact: x-nestbox-sandbox
-                              - exact: x-nestbox-node
-                              - exact: user-agent
-                              - exact: mcp-session-id
                         authorization_response:
-                          allowed_upstream_headers:
+                          # The decider answers with these headers and Envoy
+                          # copies them into the ext_authz filter metadata.
+                          # Neither the sandbox nor the destination host sees
+                          # them: they are for the access log only.
+                          dynamic_metadata_from_headers:
                             patterns:
                               - exact: x-nestbox-decision
                               - exact: x-nestbox-reason
                               - exact: x-nestbox-rule-id
                       # Fail closed. A control API that cannot answer is not
                       # permission to proceed.
+                      failure_mode_allow: false
+                  - name: envoy.filters.http.dynamic_forward_proxy
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig
+                      dns_cache_config:
+                        name: dynamic_forward_proxy_cache
+                        dns_lookup_family: V4_ONLY
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+    # ---------------------------------------------------------------------
+    # 2. Loopback listener for requests the broker already decrypted.
+    # ---------------------------------------------------------------------
+    # TLS only. The broker re-encrypts with the client's original SNI, so
+    # `%REQUESTED_SERVER_NAME%` is the real server name from the handshake and
+    # the access log can say what the sandbox actually asked for.
+    #
+    # The certificate here is not the node CA's leaf: it is a self-signed
+    # loopback certificate generated at image build time (see the Dockerfile).
+    # The broker connects to 127.0.0.1 and does not verify it; nothing outside
+    # this container can reach this port.
+    - name: egress_terminated
+      address:
+        socket_address: { address: 127.0.0.1, port_value: 10000 }
+      # `tls_inspector` is not optional here even though the filter chain does
+      # not match on it: Envoy records the SNI on the *socket* from the
+      # inspector's ClientHello parse, and `%REQUESTED_SERVER_NAME%` reads it
+      # from there. Without the inspector the log field is empty.
+      listener_filters:
+        - name: envoy.filters.listener.tls_inspector
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector
+      filter_chains:
+        - transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+              common_tls_context:
+                tls_certificates:
+                  - certificate_chain:
+                      filename: /etc/envoy/tls/loopback.crt
+                    private_key:
+                      filename: /etc/envoy/tls/loopback.key
+          filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: egress_terminated
+                codec_type: AUTO
+                internal_address_config:
+                  cidr_ranges:
+                    - address_prefix: 127.0.0.0
+                      prefix_len: 8
+                access_log:
+                  - name: envoy.access_loggers.stdout
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+                      log_format:
+                        json_format:
+                          ts: "%START_TIME%"
+                          node: "%ENVIRONMENT(NESTBOX_NODE_NAME)%"
+                          listener: terminated
+                          sandbox: "%REQ(x-nestbox-sandbox)%"
+                          host: "%REQ(:authority)%"
+                          target_host: "%DYNAMIC_METADATA(nestbox:target_host)%"
+                          target_port: "%DYNAMIC_METADATA(nestbox:target_port)%"
+                          method: "%REQ(:method)%"
+                          path: "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%"
+                          # No value here: this listener never sees a CONNECT.
+                          connect: "%DYNAMIC_METADATA(nestbox:connect)%"
+                          # The real SNI from the ClientHello the broker
+                          # forwarded — this is the handshake, not a guess.
+                          sni: "%REQUESTED_SERVER_NAME%"
+                          protocol: "%PROTOCOL%"
+                          app_protocol: "%DYNAMIC_METADATA(nestbox:app_protocol)%"
+                          status: "%RESPONSE_CODE%"
+                          duration_ms: "%DURATION%"
+                          bytes_in: "%BYTES_RECEIVED%"
+                          bytes_out: "%BYTES_SENT%"
+                          user_agent: "%REQ(user-agent)%"
+                          request_id: "%REQ(x-request-id)%"
+                          mcp_session_id: "%DYNAMIC_METADATA(nestbox:mcp_session_id)%"
+                          mcp_method: "%DYNAMIC_METADATA(nestbox:mcp_method)%"
+                          mcp_tool: "%DYNAMIC_METADATA(nestbox:mcp_tool)%"
+                          mcp_is_error: "%DYNAMIC_METADATA(nestbox:mcp_is_error)%"
+                          mcp_result_kind: "%DYNAMIC_METADATA(nestbox:mcp_result_kind)%"
+                          decision: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-decision)%"
+                          reason: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-reason)%"
+                          rule_id: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-rule-id)%"
+                route_config:
+                  name: egress_terminated
+                  virtual_hosts:
+                    - name: forward
+                      domains: ["*"]
+                      routes:
+                        - match: { prefix: "/" }
+                          route:
+                            cluster: dynamic_forward_proxy_cluster
+                            timeout: 300s
+                            idle_timeout: 60s
+                http_filters:
+                  - name: envoy.filters.http.buffer
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.Buffer
+                      max_request_bytes: 65536
+                  - name: envoy.filters.http.lua
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                      default_source_code:
+                        filename: /etc/envoy/extensions/mcp.lua
+                  - name: envoy.filters.http.ext_authz
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+                      transport_api_version: V3
+                      allowed_headers:
+                        patterns:
+                          - exact: x-nestbox-sandbox
+                          - exact: x-nestbox-node
+                          - exact: user-agent
+                          - exact: mcp-session-id
+                      http_service:
+                        server_uri:
+                          uri: http://control-api:8000
+                          cluster: control_api
+                          timeout: 1s
+                        path_prefix: /api/v1/internal/policy/check
+                        authorization_response:
+                          dynamic_metadata_from_headers:
+                            patterns:
+                              - exact: x-nestbox-decision
+                              - exact: x-nestbox-reason
+                              - exact: x-nestbox-rule-id
                       failure_mode_allow: false
                   - name: envoy.filters.http.dynamic_forward_proxy
                     typed_config:
@@ -167,6 +390,18 @@ static_resources:
           dns_cache_config:
             name: dynamic_forward_proxy_cache
             dns_lookup_family: V4_ONLY
+    # The certificate broker. An endpoint that is down here is an HTTPS request
+    # that fails closed: the client gets a 503 instead of an unverified tunnel.
+    - name: tls_terminator
+      connect_timeout: 2s
+      type: STATIC
+      load_assignment:
+        cluster_name: tls_terminator
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: 10001 }
     - name: control_api
       connect_timeout: 1s
       type: STRICT_DNS
