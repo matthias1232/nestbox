@@ -221,6 +221,10 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/supervisors/{id}",
             patch(cluster::bind_supervisor),
         )
+        .route(
+            "/api/v1/internal/supervisors/{id}/report",
+            post(cluster::report_supervisor),
+        )
         .route("/api/v1/topology", get(topology::topology))
         // Providers
         .route(

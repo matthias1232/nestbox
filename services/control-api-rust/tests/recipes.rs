@@ -25,10 +25,12 @@ use nestbox_control_api::domain::auth::{CredentialSource, Principal, Role};
 use nestbox_control_api::domain::builder::{
     AgentSpec, HomeMode, Persistence, ProjectMount, ResourceLimits,
 };
+use nestbox_control_api::domain::gateway::{SupervisorReport, SupervisorStatus};
 use nestbox_control_api::error::{ApiError, ErrorCode};
 use nestbox_control_api::runtime::fake::FakeRuntime;
 use nestbox_control_api::services::ServiceContext;
 use nestbox_control_api::services::builder_service::{self, RecipeInput};
+use nestbox_control_api::services::gateway_service;
 use nestbox_control_api::store::postgres::recipes as recipe_store;
 use nestbox_control_api::store::TenantScope;
 
@@ -551,6 +553,127 @@ async fn instantiate_places_the_sandbox_with_the_recipes_mount_and_refuses_an_ov
         error.details
     );
     assert!(error.message.contains("cannot host"), "{}", error.message);
+}
+
+/// An instantiated recipe carries a supervisor whose token reports for its row.
+///
+/// The sandbox is handed an id and a token, not the node token; the token opens
+/// exactly one row. A report with the right token moves that row to `running`,
+/// and a report with a wrong token is refused without touching it.
+#[tokio::test]
+async fn an_instantiated_sandbox_reports_through_its_supervisor_token() {
+    let Some(pool) = pool().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+    let pool = &pool;
+    let environment = environment_id(pool).await;
+    let runtime = Arc::new(FakeRuntime::new());
+    let ctx = context(pool, &runtime);
+    let who = principal(environment);
+
+    // The node as VM200 reports it: 8 GiB of RAM, no GPU. The supervisor is
+    // created on the same path, so the sandbox must have a supervisor row by
+    // the time `instantiate` returns.
+    let node: Uuid = sqlx::query_scalar("SELECT id FROM nodes WHERE is_local")
+        .fetch_one(pool)
+        .await
+        .expect("the local node is seeded");
+    sqlx::query(
+        "INSERT INTO hardware_profiles
+             (environment_id, node_id, hostname, gpus, total_vram_bytes, cpu_cores, system_ram_bytes)
+         VALUES ($1, $2, 'test-node', '[]'::jsonb, 0, 4, $3)",
+    )
+    .bind(environment)
+    .bind(node)
+    .bind(8i64 * 1024 * 1024 * 1024)
+    .execute(pool)
+    .await
+    .expect("a measurement");
+
+    let name = unique("supervised");
+    let recipe = builder_service::create(&ctx, &who, shell_recipe(&name))
+        .await
+        .expect("created");
+    // Mark it built so instantiation is about placement, not about building.
+    let hash = "b".repeat(64);
+    let tag = builder_service::image_tag(&name, &hash);
+    let mut scope = TenantScope::begin(pool, environment).await.expect("scope");
+    recipe_store::set_build(
+        &mut scope,
+        recipe.id,
+        nestbox_control_api::domain::builder::RecipeState::Built,
+        Some(tag.as_str()),
+        Some(hash.as_str()),
+        None,
+        None,
+    )
+    .await
+    .expect("build recorded");
+    scope.commit().await.expect("commit");
+
+    let sandbox_name = unique("sandbox");
+    let sandbox = builder_service::instantiate(&ctx, &who, recipe.id, &sandbox_name)
+        .await
+        .expect("the sandbox is placed");
+
+    // 1. The row exists and belongs to this sandbox.
+    let row: (Uuid, Option<Uuid>, String) = sqlx::query_as(
+        "SELECT id, sandbox_id, name FROM supervisors WHERE sandbox_id = $1",
+    )
+    .bind(sandbox.id)
+    .fetch_one(pool)
+    .await
+    .expect("the sandbox has a supervisor");
+    assert_eq!(row.1, Some(sandbox.id));
+    assert!(row.2.contains(&sandbox_name));
+
+    // 2. The token travels in the environment, the id too, and neither is the
+    //    node token.
+    let specs = runtime.created_specs();
+    let spec = specs.last().expect("the runtime was called");
+    let value = |key: &str| {
+        spec.environment
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.clone())
+    };
+    assert_eq!(value("NESTBOX_SUPERVISOR_ID"), Some(row.0.to_string()));
+    let token = value("NESTBOX_SUPERVISOR_TOKEN").expect("the token is in the environment");
+    assert!(!token.is_empty());
+
+    // 3. The token reports for its own row, and only that row.
+    let report = SupervisorReport {
+        status: SupervisorStatus::Running,
+        version: Some("0.1.0".into()),
+        config_dirtiness: 2,
+        last_policy_applied_at: None,
+        checks: Vec::new(),
+        facts: serde_json::json!({"started": true}),
+    };
+    let updated = gateway_service::record_report(&ctx, &token, row.0, report.clone())
+        .await
+        .expect("the token reports");
+    assert_eq!(updated.status, SupervisorStatus::Running);
+    assert_eq!(updated.version.as_deref(), Some("0.1.0"));
+    assert_eq!(updated.config_dirtiness, 2);
+    assert!(updated.last_seen.is_some());
+
+    let refused = gateway_service::record_report(&ctx, "not-the-token", row.0, report)
+        .await
+        .expect_err("a wrong token is refused");
+    assert_eq!(refused.status, axum::http::StatusCode::UNAUTHORIZED);
+
+    let still: String = sqlx::query_scalar("SELECT status FROM supervisors WHERE id = $1")
+        .bind(row.0)
+        .fetch_one(pool)
+        .await
+        .expect("read back");
+    assert_eq!(
+        still,
+        SupervisorStatus::Running.as_str(),
+        "the refusal wrote nothing"
+    );
 }
 
 /// A recipe write without the write permission is refused before any query.

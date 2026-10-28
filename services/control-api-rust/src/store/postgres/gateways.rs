@@ -195,6 +195,83 @@ pub async fn insert_supervisor(
     })
 }
 
+/// Insert a supervisor with the hash of the token it will present.
+pub async fn insert_supervisor_with_token(
+    scope: &mut TenantScope<'_>,
+    gateway_id: Uuid,
+    sandbox_id: Uuid,
+    name: &str,
+    token_hash: &str,
+) -> Result<Supervisor, StoreError> {
+    let row = sqlx::query(
+        "INSERT INTO supervisors (gateway_id, sandbox_id, name, status, token_hash, last_seen)
+         VALUES ($1, $2, $3, 'starting', $4, now())
+         RETURNING id, gateway_id, sandbox_id, name, status, version,
+                   config_dirtiness, last_policy_applied_at, last_seen",
+    )
+    .bind(gateway_id)
+    .bind(sandbox_id)
+    .bind(name)
+    .bind(token_hash)
+    .fetch_one(scope.connection())
+    .await?;
+    let status_raw: String = row.try_get("status")?;
+    Ok(Supervisor {
+        id: row.try_get("id")?,
+        gateway_id: row.try_get("gateway_id")?,
+        sandbox_id: row.try_get("sandbox_id")?,
+        name: row.try_get("name")?,
+        status: SupervisorStatus::parse(&status_raw).unwrap_or(SupervisorStatus::Unknown),
+        version: row.try_get("version")?,
+        config_dirtiness: row.try_get("config_dirtiness")?,
+        last_policy_applied_at: row.try_get("last_policy_applied_at")?,
+        last_seen: row.try_get("last_seen")?,
+    })
+}
+
+/// Find the supervisor a token belongs to.
+///
+/// The internal report endpoint has no session, so this walks the environments
+/// like every other unscoped maintenance read: the token decides which row, and
+/// the row decides the scope. Only the hash is compared.
+pub async fn find_by_token_hash(
+    pool: &sqlx::PgPool,
+    token_hash: &str,
+) -> Result<Option<(Uuid, Uuid, Option<Uuid>)>, StoreError> {
+    let environments: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM environments ORDER BY created_at, id")
+            .fetch_all(pool)
+            .await?;
+
+    for environment_id in environments {
+        let mut tx = pool.begin().await?;
+        sqlx::query("SELECT set_config('app.environment_id', $1, true)")
+            .bind(environment_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        let row = sqlx::query(
+            "SELECT s.id, s.sandbox_id
+               FROM supervisors s
+               JOIN gateways g ON g.id = s.gateway_id
+               JOIN clusters c ON c.id = g.cluster_id
+              WHERE c.environment_id = $1 AND s.token_hash = $2",
+        )
+        .bind(environment_id)
+        .bind(token_hash)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        if let Some(row) = row {
+            let id: Uuid = row.try_get("id")?;
+            let sandbox_id: Option<Uuid> = row.try_get("sandbox_id")?;
+            tx.commit().await?;
+            return Ok(Some((id, environment_id, sandbox_id)));
+        }
+        tx.rollback().await?;
+    }
+    Ok(None)
+}
+
 /// Point a supervisor at a sandbox.
 ///
 /// A supervisor whose sandbox was recreated keeps its identity and loses the
@@ -228,6 +305,66 @@ pub async fn set_supervisor_sandbox(
         last_policy_applied_at: row.try_get("last_policy_applied_at")?,
         last_seen: row.try_get("last_seen")?,
     })
+}
+
+/// Write one report from a supervisor and update its row.
+pub async fn record_report(
+    scope: &mut TenantScope<'_>,
+    supervisor_id: Uuid,
+    report: &crate::domain::gateway::SupervisorReport,
+) -> Result<Supervisor, StoreError> {
+    let row = sqlx::query(
+        "UPDATE supervisors
+            SET status = $2, version = COALESCE($3, version),
+                config_dirtiness = $4,
+                last_policy_applied_at = COALESCE($5, last_policy_applied_at),
+                last_seen = now(), reported = $6
+          WHERE id = $1
+      RETURNING id, gateway_id, sandbox_id, name, status, version,
+                config_dirtiness, last_policy_applied_at, last_seen",
+    )
+    .bind(supervisor_id)
+    .bind(report.status.as_str())
+    .bind(report.version.as_deref())
+    .bind(report.config_dirtiness)
+    .bind(report.last_policy_applied_at)
+    .bind(serde_json::json!({ "checks": report.checks, "facts": report.facts }))
+    .fetch_optional(scope.connection())
+    .await?
+    .ok_or(StoreError::NotFound)?;
+
+    let status_raw: String = row.try_get("status")?;
+    let supervisor = Supervisor {
+        id: row.try_get("id")?,
+        gateway_id: row.try_get("gateway_id")?,
+        sandbox_id: row.try_get("sandbox_id")?,
+        name: row.try_get("name")?,
+        status: SupervisorStatus::parse(&status_raw).unwrap_or(SupervisorStatus::Unknown),
+        version: row.try_get("version")?,
+        config_dirtiness: row.try_get("config_dirtiness")?,
+        last_policy_applied_at: row.try_get("last_policy_applied_at")?,
+        last_seen: row.try_get("last_seen")?,
+    };
+
+    sqlx::query(
+        "INSERT INTO supervisor_reports
+            (environment_id, supervisor_id, sandbox_id, status, version,
+             config_dirtiness, last_policy_applied_at, checks, facts)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+    )
+    .bind(scope.environment_id())
+    .bind(supervisor.id)
+    .bind(supervisor.sandbox_id)
+    .bind(report.status.as_str())
+    .bind(report.version.as_deref())
+    .bind(report.config_dirtiness)
+    .bind(report.last_policy_applied_at)
+    .bind(serde_json::json!(report.checks))
+    .bind(&report.facts)
+    .execute(scope.connection())
+    .await?;
+
+    Ok(supervisor)
 }
 
 /// All supervisors in this environment.

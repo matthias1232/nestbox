@@ -102,6 +102,27 @@ pub async fn create_supervisor(
     Ok((StatusCode::CREATED, Json(supervisor)))
 }
 
+/// A report from the supervisor in a sandbox.
+///
+/// No session: the caller is the process inside the sandbox, and the token it
+/// presents is checked inside the service. The body is the measurement, not a
+/// claim about the control plane.
+pub async fn report_supervisor(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
+    Json(report): Json<crate::domain::gateway::SupervisorReport>,
+) -> Result<Json<crate::domain::gateway::Supervisor>, ApiError> {
+    let token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer ").or_else(|| value.strip_prefix("bearer ")))
+        .unwrap_or_default();
+    let supervisor =
+        gateway_service::record_report(&state.services, token, id, report).await?;
+    Ok(Json(supervisor))
+}
+
 /// The body of a re-bind.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct BindSupervisorRequest {

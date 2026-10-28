@@ -105,6 +105,7 @@ pub const OPERATIONS: &[Operation] = &[
     op("GET", "/api/v1/supervisors", "List supervisors and their config dirtiness", "cluster", "viewer", false, StreamKind::None),
     op("POST", "/api/v1/supervisors", "Register a supervisor for a sandbox", "cluster", "operator", true, StreamKind::None),
     op("PATCH", "/api/v1/supervisors/{id}", "Bind a supervisor to a sandbox", "cluster", "operator", true, StreamKind::None),
+    op("POST", "/api/v1/internal/supervisors/{id}/report", "A supervisor reports what it measured (supervisor token)", "cluster", "node", false, StreamKind::None),
     op("GET", "/api/v1/topology", "The cluster graph", "cluster", "viewer", false, StreamKind::None),
     op("GET", "/api/v1/providers", "List provider endpoint profiles", "providers", "viewer", false, StreamKind::None),
     op("POST", "/api/v1/providers", "Register a provider profile", "providers", "operator", true, StreamKind::None),
@@ -325,6 +326,7 @@ mod tests {
         const NODE_TOKEN_MUTATIONS: &[&str] = &[
             "/api/v1/internal/metrics/ingest",
             "/api/v1/internal/policy/check",
+            "/api/v1/internal/supervisors/{id}/report",
             "/api/v1/internal/telemetry/batch",
         ];
         for operation in OPERATIONS {
@@ -349,6 +351,7 @@ mod tests {
         const NODE_TOKEN_MUTATIONS: &[&str] = &[
             "/api/v1/internal/metrics/ingest",
             "/api/v1/internal/policy/check",
+            "/api/v1/internal/supervisors/{id}/report",
             "/api/v1/internal/telemetry/batch",
         ];
         for path in NODE_TOKEN_MUTATIONS {

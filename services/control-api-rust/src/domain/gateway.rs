@@ -128,6 +128,30 @@ pub struct Supervisor {
     pub last_seen: Option<DateTime<Utc>>,
 }
 
+/// One measured best-practice check the supervisor reports.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SupervisorCheck {
+    /// `ok`, `warn`, or `fail`.
+    pub state: String,
+    /// Stable key, e.g. `model_reachable`.
+    pub key: String,
+    /// What was measured, in one sentence, with the number.
+    pub detail: String,
+}
+
+/// What a supervisor reports about its sandbox.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SupervisorReport {
+    pub status: SupervisorStatus,
+    pub version: Option<String>,
+    pub config_dirtiness: i32,
+    pub last_policy_applied_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub checks: Vec<SupervisorCheck>,
+    #[serde(default)]
+    pub facts: serde_json::Value,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SupervisorStatus {

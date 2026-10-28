@@ -778,6 +778,22 @@ pub async fn instantiate(
     .await
     .map_err(sandbox_write_error)?;
 
+    // Every sandbox gets its supervisor in the same transaction as the row, so
+    // there is no window in which a running sandbox has no one watching it.
+    let supervisor_token = match gateway_id {
+        Some(gateway_id) => Some(
+            crate::services::gateway_service::create_for_sandbox(
+                &mut scope,
+                gateway_id,
+                sandbox.id,
+                &sandbox.name,
+            )
+            .await
+            .map_err(ApiError::from)?,
+        ),
+        None => None,
+    };
+
     store::attach_sandbox(&mut scope, recipe.id, sandbox.id)
         .await
         .map_err(recipe_error)?;
@@ -855,6 +871,21 @@ pub async fn instantiate(
     // The model on this node is on the runtime network; proxying it would turn
     // a local call into a denied egress request.
     crate::services::sandbox_service::add_inference_bypass_vec(&mut environment);
+
+    // The supervisor's identity, not the node's: the token opens exactly one
+    // endpoint and one row, and the node token never enters a sandbox.
+    if let Some((supervisor, token)) = &supervisor_token {
+        environment.push((
+            "NESTBOX_SUPERVISOR_ID".to_string(),
+            supervisor.id.to_string(),
+        ));
+        environment.push(("NESTBOX_SUPERVISOR_TOKEN".to_string(), token.clone()));
+        environment.push((
+            "NESTBOX_CONTROL_URL".to_string(),
+            std::env::var("NESTBOX_CONTROL_URL")
+                .unwrap_or_else(|_| "http://control-api:8000".to_string()),
+        ));
+    }
 
     let runtime_spec = SandboxSpec {
         name: sandbox.name.clone(),
@@ -1022,6 +1053,12 @@ async fn prepare(
         if !keys.iter().any(|chosen| chosen == key) {
             keys.push(key.to_string());
         }
+    }
+    // The supervisor is a Python program shipped in every image and every image
+    // runs one, so the interpreter is needed whether or not the recipe named an
+    // agent.
+    if !keys.iter().any(|chosen| chosen == "python3") {
+        keys.push("python3".to_string());
     }
     let resolved = catalog::tools_by_key(scope, &keys)
         .await
@@ -1297,6 +1334,10 @@ pub fn render(plan: &ImagePlan, tag: &str) -> Result<BuildRequest, String> {
                 "nestbox-supervisor.sh".to_string(),
                 supervisor_script(plan)?,
             ),
+            (
+                "nestbox-agent-supervisor".to_string(),
+                include_str!("../../../tool-images/supervisor/supervisor.py").to_string(),
+            ),
         ],
     })
 }
@@ -1375,7 +1416,8 @@ pub fn dockerfile(plan: &ImagePlan) -> Result<String, String> {
 
     out.push_str("\nCOPY nestbox-entrypoint.sh /usr/local/bin/nestbox-entrypoint\n");
     out.push_str("COPY nestbox-supervisor.sh /usr/local/bin/nestbox-supervisor\n");
-    out.push_str("RUN chmod 0755 /usr/local/bin/nestbox-entrypoint /usr/local/bin/nestbox-supervisor\n");
+    out.push_str("COPY nestbox-agent-supervisor /usr/local/bin/nestbox-agent-supervisor\n");
+    out.push_str("RUN chmod 0755 /usr/local/bin/nestbox-entrypoint /usr/local/bin/nestbox-supervisor /usr/local/bin/nestbox-agent-supervisor\n");
     out.push_str(&format!("WORKDIR {home}\n"));
     out.push_str("ENTRYPOINT [\"/usr/local/bin/nestbox-entrypoint\"]\n");
     out.push_str("CMD [\"sleep\", \"infinity\"]\n");
@@ -1411,7 +1453,7 @@ pub fn entrypoint_script(plan: &ImagePlan) -> Result<String, String> {
 /// API cannot disagree about what a sandbox is running. The image writes it to
 /// `/usr/local/bin/nestbox-supervisor`; the entrypoint execs it.
 pub fn supervisor_script(plan: &ImagePlan) -> Result<String, String> {
-    let launches: Vec<AgentLaunch> = plan
+    let mut launches: Vec<AgentLaunch> = plan
         .agents
         .iter()
         .map(|agent| AgentLaunch {
@@ -1422,6 +1464,25 @@ pub fn supervisor_script(plan: &ImagePlan) -> Result<String, String> {
             port: agent.port,
         })
         .collect();
+    // The supervisor runs beside the agents, in its own home, and reports to the
+    // control plane. It is not a pack: it is part of every image this builder
+    // produces, which is what makes "every sandbox has a supervisor" true
+    // without an operator adding one.
+    launches.push(AgentLaunch {
+        instance: "supervisor".to_string(),
+        home_mode: HomeMode::Isolated,
+        command: vec![
+            "python3".to_string(),
+            "/usr/local/bin/nestbox-agent-supervisor".to_string(),
+        ],
+        env_slots: vec![
+            "NESTBOX_SUPERVISOR_ID".to_string(),
+            "NESTBOX_SUPERVISOR_TOKEN".to_string(),
+            "NESTBOX_CONTROL_URL".to_string(),
+            "NESTBOX_SUPERVISOR_INTERVAL".to_string(),
+        ],
+        port: None,
+    });
     let command = crate::domain::builder::entrypoint_command(&launches);
     match command.as_slice() {
         // The shebang is not decoration: without it the kernel hands the file
@@ -2032,9 +2093,22 @@ mod tests {
             .contains("ENTRYPOINT [\"/usr/local/bin/nestbox-entrypoint\"]"));
         assert!(request.dockerfile.contains("ENV HOME=/home/nestbox"));
         assert!(request.dockerfile.contains("WORKDIR /home/nestbox"));
-        // Both scripts ship, or the entrypoint execs a file that does not exist.
+        // Every script ships, or the entrypoint execs a file that does not exist.
         let names: Vec<&str> = request.files.iter().map(|(name, _)| name.as_str()).collect();
-        assert_eq!(names, vec!["nestbox-entrypoint.sh", "nestbox-supervisor.sh"]);
+        assert_eq!(
+            names,
+            vec![
+                "nestbox-entrypoint.sh",
+                "nestbox-supervisor.sh",
+                "nestbox-agent-supervisor",
+            ]
+        );
+
+        // The supervisor program is a real Python file, not an empty placeholder:
+        // a truncated include would still build and only fail at run time.
+        let (_, program) = &request.files[2];
+        assert!(program.starts_with("#!/usr/bin/env python3"), "the program needs its shebang");
+        assert!(program.contains("NESTBOX_SUPERVISOR_ID"));
 
         let (_, entrypoint) = &request.files[0];
         assert!(entrypoint.starts_with("#!/bin/sh"));

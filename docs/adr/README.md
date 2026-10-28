@@ -36,6 +36,7 @@ supersedes the old one and note the supersession in both files.
 | [0026](0026-mcp-calls-are-traffic-and-stdio-is-not-egress.md) | An MCP call over HTTP is traffic; a stdio server is not egress | Accepted |
 | [0027](0027-bodies-are-logged-fully-and-the-redactor-is-the-boundary.md) | Bodies are logged fully, and the redactor is the boundary | Accepted |
 | [0028](0028-model-serving.md) | An install serves one artefact from one pinned image | Accepted |
+| [0029](0029-a-node-is-a-row-plus-an-adapter.md) | A node is a row plus an adapter; multi-node is not a rename | Accepted |
 
 ## Writing a new ADR
 

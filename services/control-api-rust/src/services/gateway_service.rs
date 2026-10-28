@@ -299,6 +299,69 @@ pub async fn create_supervisor(
     Ok(supervisor)
 }
 
+/// Create the supervisor that belongs to a sandbox.
+///
+/// Every sandbox gets one, and its token is generated here: the plaintext goes
+/// into the sandbox environment, the hash into the row. A reload does not change
+/// it, so a supervisor that restarts keeps reporting for the same row.
+pub async fn create_for_sandbox(
+    scope: &mut TenantScope<'_>,
+    gateway_id: Uuid,
+    sandbox_id: Uuid,
+    name: &str,
+) -> Result<(Supervisor, String), StoreError> {
+    use sha2::{Digest, Sha256};
+
+    let token = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    let hash: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    let supervisor =
+        store::insert_supervisor_with_token(scope, gateway_id, sandbox_id, name, &hash).await?;
+    Ok((supervisor, token))
+}
+
+/// Record one report from a supervisor.
+///
+/// The caller is the process in the sandbox, not a browser: it presents the
+/// token that was generated when its supervisor row was created, and the token
+/// decides which row it may report for. A token without a row, or a row other
+/// than the one in the path, is refused before anything is written.
+pub async fn record_report(
+    ctx: &ServiceContext,
+    token: &str,
+    supervisor_id: Uuid,
+    report: crate::domain::gateway::SupervisorReport,
+) -> Result<Supervisor, ApiError> {
+    use sha2::{Digest, Sha256};
+
+    if token.trim().is_empty() {
+        return Err(ApiError::unauthenticated("The supervisor token was refused."));
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(token.trim().as_bytes());
+    let hash: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+
+    let found = store::find_by_token_hash(&ctx.pool, &hash)
+        .await
+        .map_err(ApiError::from)?;
+    let Some((id, environment_id, _sandbox)) = found else {
+        return Err(ApiError::unauthenticated("The supervisor token was refused."));
+    };
+    if id != supervisor_id {
+        return Err(ApiError::forbidden("supervisor.report"));
+    }
+
+    let mut scope = TenantScope::begin(&ctx.pool, environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let supervisor = store::record_report(&mut scope, id, &report)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(supervisor)
+}
+
 /// Bind a registered supervisor to a sandbox.
 ///
 /// The sandbox must exist in this environment; the row keeps its name and
