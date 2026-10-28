@@ -37,8 +37,6 @@ on it.
 - Removing an agent decides what happens to its persistent home. The "keep its
   data" checkbox is that decision, it defaults to true, and `keep_persistent`
   carries it on the same DELETE.
->>>>>>> origin/feat/m1-rebuild
-
 ## Files
 
 | File | Responsibility |
