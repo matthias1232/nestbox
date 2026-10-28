@@ -248,6 +248,69 @@ pub fn pack_needs_inference(pack_key: &str) -> bool {
     matches!(pack_key, "hermes")
 }
 
+/// The proxy URL used when a node does not name one.
+///
+/// The default matches the runner's `NESTBOX_EGRESS_PROXY_HOST`, because a URL
+/// the sandbox cannot resolve is a sandbox with no egress at all.
+pub const DEFAULT_EGRESS_PROXY: &str = "http://egress-proxy:3128";
+
+/// The egress proxy a sandbox is told about, as the address it can reach.
+///
+/// The sandbox has no route out (the runtime network is `internal`), so this URL
+/// is the only way it reaches anything; whether a request may actually leave is
+/// decided per request by the control API (ADR 0013), not here.
+///
+/// Read from the environment rather than from `nodes.egress_proxy_url` because
+/// that column exists (migration 0022) but the node domain type does not carry it
+/// yet. One value a deploy can set beats a second source of truth in a service;
+/// when the column reaches the domain type, this function reads it and nothing
+/// else changes.
+pub fn egress_proxy_url() -> String {
+    match std::env::var("NESTBOX_EGRESS_PROXY_URL") {
+        Ok(value) if !value.trim().is_empty() => value.trim().to_string(),
+        _ => DEFAULT_EGRESS_PROXY.to_string(),
+    }
+}
+
+/// The host part of a proxy URL, for the bypass list.
+fn proxy_host(proxy: &str) -> &str {
+    proxy
+        .split("://")
+        .nth(1)
+        .unwrap_or(proxy)
+        .split(['/', ':'])
+        .next()
+        .unwrap_or(proxy)
+}
+
+/// The proxy variables a sandbox needs, in both spellings.
+///
+/// Uppercase and lowercase are both set because the tooling disagrees: curl and
+/// wget read `http_proxy`, Go and many Rust clients read `HTTP_PROXY`, npm reads
+/// both and prefers the uppercase one. Setting a single spelling is the classic
+/// "the proxy works in the terminal but not in the agent" bug, and a missed
+/// variable is not a hole — it is a tool that cannot leave, which looks like a
+/// broken network and gets diagnosed as one.
+///
+/// `NO_PROXY` names the proxy itself. Without it a proxy-aware tool sends the
+/// request for the proxy *to* the proxy, which is a loop. Loopback stays out of
+/// the proxy because nothing on it leaves the container.
+pub fn egress_environment(proxy: &str) -> Vec<(String, String)> {
+    let bypass = format!("localhost,127.0.0.1,::1,{}", proxy_host(proxy));
+    let mut values = Vec::with_capacity(8);
+    for key in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"] {
+        values.push((key.to_string(), proxy.to_string()));
+        values.push((key.to_lowercase(), proxy.to_string()));
+    }
+    for key in ["NO_PROXY", "no_proxy"] {
+        values.push((key.to_string(), bypass.clone()));
+    }
+    // Sorted so the spec — and any JSON that echoes it — is stable between
+    // creates.
+    values.sort();
+    values
+}
+
 /// Create a sandbox: validate, place, persist, then ask the runtime.
 ///
 /// Order matters. The row is written first so a failed runtime call leaves a
@@ -337,12 +400,18 @@ pub async fn create(
         })?;
     }
 
+    // Recorded in the spec as well as passed in the environment: "what was this
+    // sandbox told" has to be answerable from the row after the fact, not
+    // reconstructed from a later deploy's configuration.
+    let egress_proxy = egress_proxy_url();
+
     let spec = serde_json::json!({
         "pack_key": request.pack_key,
         "memory_limit": memory_limit,
         "cpu_limit": request.cpu_limit,
         "pids_limit": request.pids_limit,
         "node": node.name,
+        "egress_proxy": &egress_proxy,
     });
 
     let sandbox = store::insert(
@@ -391,7 +460,7 @@ pub async fn create(
     // environment. The credential is resolved from the provider profile's
     // locator at this moment and never stored (ADR 0005), so recreating the
     // sandbox picks up a rotated key without an edit here.
-    let environment = if pack_needs_inference(&sandbox.pack_key) {
+    let mut environment = if pack_needs_inference(&sandbox.pack_key) {
         match crate::services::provider_service::inference_environment(
             ctx,
             principal.environment_id,
@@ -410,6 +479,12 @@ pub async fn create(
     } else {
         Vec::new()
     };
+
+    // The proxy every sandbox is told about. Without it the sandbox is isolated
+    // but blind — no tool can resolve an address, because the sandbox network
+    // answers no external name. With it, each request still needs a rule: the
+    // environment is a convenience for tools, not a permission.
+    environment.extend(egress_environment(&egress_proxy));
 
     let runtime_spec = SandboxSpec {
         name: sandbox.name.clone(),
@@ -766,6 +841,56 @@ mod tests {
         assert!(pack_needs_inference("hermes"));
         assert!(!pack_needs_inference("ubuntu-dev"));
         assert!(!pack_needs_inference("openclaw"));
+    }
+
+    #[test]
+    fn the_egress_environment_names_both_spellings_of_every_variable() {
+        let values = egress_environment(DEFAULT_EGRESS_PROXY);
+        let keys: Vec<&str> = values.iter().map(|(key, _)| key.as_str()).collect();
+        for key in [
+            "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY",
+            "all_proxy", "NO_PROXY", "no_proxy",
+        ] {
+            assert!(keys.contains(&key), "{key} is missing from {keys:?}");
+        }
+        for (key, value) in &values {
+            if key.eq_ignore_ascii_case("no_proxy") {
+                continue;
+            }
+            assert_eq!(value, DEFAULT_EGRESS_PROXY);
+        }
+    }
+
+    #[test]
+    fn a_tool_is_not_told_to_reach_the_proxy_through_the_proxy() {
+        let values = egress_environment("http://egress-proxy:3128");
+        let bypass = values
+            .iter()
+            .find(|(key, _)| key == "NO_PROXY")
+            .map(|(_, value)| value.as_str())
+            .unwrap_or_default();
+        assert!(bypass.contains("egress-proxy"), "{bypass}");
+        assert!(bypass.contains("127.0.0.1"));
+        assert!(bypass.contains("localhost"));
+    }
+
+    #[test]
+    fn the_proxy_host_is_extracted_from_whatever_url_shape_a_node_reports() {
+        assert_eq!(proxy_host("http://egress-proxy:3128"), "egress-proxy");
+        assert_eq!(proxy_host("https://proxy.node.internal"), "proxy.node.internal");
+        assert_eq!(proxy_host("http://10.90.92.30:3128/"), "10.90.92.30");
+        // A bare host:port is not a URL the check constraint would accept, but
+        // the parser must not mangle it into something that looks like an alias.
+        assert_eq!(proxy_host("egress-proxy:3128"), "egress-proxy");
+    }
+
+    #[test]
+    fn an_empty_proxy_setting_falls_back_to_the_node_default() {
+        // The function reads the process environment, so the test asserts the
+        // shape of the default rather than mutating a global other tests share.
+        assert!(DEFAULT_EGRESS_PROXY.starts_with("http://"));
+        assert!(DEFAULT_EGRESS_PROXY.ends_with(":3128"));
+        assert!(DEFAULT_EGRESS_PROXY.contains(proxy_host(DEFAULT_EGRESS_PROXY)));
     }
 
     #[test]

@@ -6,6 +6,7 @@ OpenShell SDK adapter without changing the public control-plane contract.
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 from datetime import UTC, datetime
@@ -24,6 +25,18 @@ from app import terminal as terminal_transport
 app = FastAPI(title="Nestbox Sandbox Runtime", version="1.0.0")
 client = docker.from_env()
 
+# Uvicorn configures its own loggers and leaves the root logger bare, so a module
+# logger's `info` would be dropped and only its warnings would reach the console
+# through the last-resort handler. The egress wiring is exactly the thing an
+# operator needs to see in the log next to the access lines, so give the root one
+# handler if nobody else did.
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=os.getenv("NESTBOX_LOG_LEVEL", "INFO"),
+        format="%(levelname)s:     %(name)s - %(message)s",
+    )
+logger = logging.getLogger("nestbox.runner")
+
 # Admin Center adapters. Each module owns its routes and its own Docker client,
 # so the packages that fill them in can change one file without touching the
 # request path that already ships. `terminal` answers 1011 until the PTY pump
@@ -33,6 +46,19 @@ app.include_router(process_table.router)
 app.include_router(inventory_probe.router)
 app.include_router(terminal_transport.router)
 NETWORK = os.getenv("NESTBOX_RUNTIME_NETWORK", "nestbox-runtime")
+# The only way out of a sandbox. It is joined to the sandbox network by this
+# adapter rather than by compose, because this adapter is what creates that
+# network; see `attach_egress_proxy`.
+EGRESS_PROXY_CONTAINER = os.getenv("NESTBOX_EGRESS_PROXY_CONTAINER", "nestbox-egress-proxy-1")
+# The name a sandbox resolves the proxy under, and the port it listens on. The
+# control API writes `http://<host>:<port>` into the sandbox environment, so the
+# two defaults have to agree; `NESTBOX_EGRESS_PROXY_URL` there is the other half.
+EGRESS_PROXY_HOST = os.getenv("NESTBOX_EGRESS_PROXY_HOST", "egress-proxy")
+EGRESS_PROXY_PORT = 3128
+# Ports a tool would try when it ignores the proxy environment. Redirecting them
+# inside the proxy container can only narrow what a sandbox reaches, never widen
+# it, which is why a failure to install the rules is reported and not fatal.
+REDIRECT_PORTS = (80, 443, 8080)
 ALLOWED_IMAGES = set(
     os.getenv(
         "NESTBOX_ALLOWED_IMAGES",
@@ -94,18 +120,177 @@ def container_name(name: str) -> str:
     return f"nestbox-sandbox-{name}"
 
 
-def ensure_network() -> None:
-    """Make sure the runtime network exists, internal if this process creates it.
+def ensure_network() -> Any:
+    """Return the sandbox network, or refuse one that has a route out.
 
-    Normally the network is a Compose network and the runner is already on it;
-    this path exists for a runner started outside Compose. It is internal when
-    created here, because the whole point of the runtime network is that the
-    egress proxy is the only way out.
+    Docker has no per-container "no default route", so the network carries the
+    property instead: `internal: true` means the bridge has no gateway, no NAT
+    and no DNS beyond container names. A container on it gets a route to its own
+    subnet and nothing else — no default route, no way to reach the host, and an
+    external name answers `SERVFAIL`.
+
+    A network that already exists with `Internal=false` is exactly the state
+    this replaces: every sandbox on it has a default route and full egress. It is
+    refused with 503 rather than reused, because a create that quietly succeeds
+    on an open network is the failure that made the old setup look policed while
+    nothing was. `internal` cannot be flipped on an existing bridge, so the fix
+    is an operator action (remove the network, let this adapter recreate it) and
+    it is named in the error.
     """
     try:
-        client.networks.get(NETWORK)
+        network = client.networks.get(NETWORK)
     except NotFound:
-        client.networks.create(NETWORK, driver="bridge", internal=True, labels={"nestbox.managed": "true"})
+        return client.networks.create(
+            NETWORK,
+            driver="bridge",
+            internal=True,
+            labels={"nestbox.managed": "true"},
+        )
+    if not network.attrs.get("Internal", False):
+        raise HTTPException(
+            503,
+            f"sandbox network '{NETWORK}' has a route out (internal=false). "
+            "Remove it and create a sandbox again so the adapter recreates it "
+            "with no default route; nothing on an open network is policed.",
+        )
+    return network
+
+
+def find_egress_proxy() -> Any | None:
+    """The node's egress proxy container, by configured name or compose label."""
+    try:
+        return client.containers.get(EGRESS_PROXY_CONTAINER)
+    except NotFound:
+        pass
+    try:
+        containers = client.containers.list(
+            all=True, filters={"label": "com.docker.compose.service=egress-proxy"}
+        )
+    except DockerException:
+        return None
+    return containers[0] if containers else None
+
+
+def egress_proxy_endpoint(network: Any, name: str) -> dict[str, Any] | None:
+    """The network endpoint of a container, or `None` when it is not attached."""
+    try:
+        network.reload()
+    except DockerException:
+        return None
+    for endpoint in (network.attrs.get("Containers") or {}).values():
+        if endpoint.get("Name") == name:
+            return endpoint
+    return None
+
+
+def egress_proxy_aliases(proxy: Any) -> list[str]:
+    """The names the proxy answers to on the sandbox network.
+
+    Read from the container, not from the network: `network inspect` lists the
+    endpoint but not its aliases, so a check against that view reports "no alias"
+    for a proxy that has one and would reconnect it on every create.
+    """
+    try:
+        proxy.reload()
+    except DockerException:
+        return []
+    endpoint = (proxy.attrs.get("NetworkSettings", {}).get("Networks") or {}).get(NETWORK) or {}
+    return list(endpoint.get("Aliases") or [])
+
+
+def attach_egress_proxy(network: Any, proxy: Any) -> str:
+    """Put the proxy on the sandbox network under the name the env names it.
+
+    The proxy is the only container besides this adapter that belongs on the
+    sandbox network, and it is joined here because this adapter is what creates
+    the network. The alias is not cosmetic: a manual `connect` gives the
+    container only its container name, so a sandbox asking for
+    `http://egress-proxy:3128` would not resolve and every request would fail
+    with a proxy that is right there. `aliases` is what makes the name the
+    control API writes into the environment true.
+
+    Idempotent, and a failure is reported rather than fatal: an unreachable proxy
+    leaves the sandbox isolated, which is the safe direction.
+    """
+    endpoint = egress_proxy_endpoint(network, proxy.name)
+    if endpoint is not None and EGRESS_PROXY_HOST in egress_proxy_aliases(proxy):
+        return "attached"
+    if endpoint is not None:
+        # Present without the name a sandbox asks for: reconnect so the alias
+        # exists. Envoy keeps its listener; only the endpoint is re-added.
+        try:
+            network.disconnect(proxy)
+        except DockerException:
+            pass
+    try:
+        network.connect(proxy, aliases=[EGRESS_PROXY_HOST])
+        return "attached-now"
+    except DockerException as exc:
+        if "already exists" in str(exc) or "already attached" in str(exc):
+            return "attached"
+        return f"failed: {exc}"
+
+
+def redirect_rule_status(proxy: Any) -> str:
+    """Install the NAT redirect for ports a proxy-unaware tool would use.
+
+    Idempotent: each port is checked with `-C` before `-A`, so a restart of this
+    adapter does not stack duplicate rules. Installed *inside* the proxy
+    container because that is the one component with `NET_ADMIN` (deploy README);
+    a sandbox has every capability dropped and cannot install anything.
+
+    This is a convenience, never the boundary. A sandbox has no default route, so
+    a raw socket is already unroutable; the rule only helps traffic that does
+    reach the proxy container — a client that addresses the proxy as a
+    gateway-like host on 80/443/8080 instead of 3128. That is why an image
+    without `iptables` is reported as `unavailable` and not treated as a hole:
+    the sandbox is exactly as isolated either way.
+    """
+    try:
+        for port in REDIRECT_PORTS:
+            match = [
+                "-t", "nat", "-p", "tcp", "--dport", str(port),
+                "-j", "REDIRECT", "--to-ports", str(EGRESS_PROXY_PORT),
+            ]
+            check = proxy.exec_run(["iptables", "-C", *match], demux=False)
+            if check.exit_code == 0:
+                continue
+            if check.exit_code in (126, 127):
+                return "unavailable: the proxy image has no iptables"
+            added = proxy.exec_run(["iptables", "-A", *match], demux=False)
+            if added.exit_code in (126, 127):
+                return "unavailable: the proxy image has no iptables"
+            if added.exit_code != 0:
+                detail = (added.output or b"").decode(errors="replace").strip()
+                if "executable file not found" in detail:
+                    return "unavailable: the proxy image has no iptables"
+                return f"failed: {detail or added.exit_code}"
+    except DockerException as exc:
+        return f"failed: {exc}"
+    return f"prepared: {','.join(str(port) for port in REDIRECT_PORTS)} -> {EGRESS_PROXY_PORT}"
+
+
+def prepare_egress(network: Any) -> dict[str, str]:
+    """Make the proxy reachable from the sandbox network, and say what happened.
+
+    Called before a container is created, so the proxy is on the network the
+    moment the first sandbox is. Every value is a fact — `attached`, `missing`,
+    `unavailable` — because this is what an operator has to check when a sandbox
+    "has no internet", and a cheerful `ok` would hide the interesting case.
+    """
+    proxy = find_egress_proxy()
+    if proxy is None:
+        return {
+            "proxy": "missing",
+            "attached": "no",
+            "redirects": "no proxy container",
+        }
+    return {
+        "proxy": proxy.name,
+        "attached": attach_egress_proxy(network, proxy),
+        "redirects": redirect_rule_status(proxy),
+    }
+
 
 
 def utc(value: str | None) -> str | None:
@@ -153,18 +338,93 @@ def details(item: Any) -> dict[str, Any]:
 
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
+    """Docker reachable, and what the way out of a sandbox currently looks like."""
     try:
         client.ping()
     except DockerException as exc:
         raise HTTPException(503, f"Docker runtime unavailable: {exc}") from exc
-    return {"status": "ok", "adapter": "docker-development", "network": NETWORK}
+    try:
+        internal = client.networks.get(NETWORK).attrs.get("Internal", False)
+        network_state = "internal" if internal else "open"
+    except NotFound:
+        network_state = "absent"
+    except DockerException:
+        network_state = "unknown"
+    proxy = find_egress_proxy()
+    return {
+        "status": "ok",
+        "adapter": "docker-development",
+        "network": NETWORK,
+        "network_isolation": network_state,
+        "egress_proxy": proxy.name if proxy else "missing",
+    }
+
+
+@app.get("/v1/egress")
+def egress() -> dict[str, Any]:
+    """The sandbox path out, as facts.
+
+    Read-only on purpose: it inspects the network and the proxy and reports what
+    it found. The redirect check asks the proxy container whether each rule is
+    present (`iptables -C`) instead of installing it, because a GET that changes
+    firewall state is a GET an operator cannot trust to be harmless.
+    """
+    try:
+        network = client.networks.get(NETWORK)
+    except NotFound:
+        return {
+            "network": NETWORK,
+            "network_isolation": "absent",
+            "proxy": None,
+            "attached": False,
+            "alias": EGRESS_PROXY_HOST,
+            "redirects": "no network",
+        }
+    except DockerException as exc:
+        raise HTTPException(503, f"Docker runtime unavailable: {exc}") from exc
+    proxy = find_egress_proxy()
+    endpoint = egress_proxy_endpoint(network, proxy.name) if proxy else None
+    missing = redirect_missing(proxy) if endpoint is not None else "proxy not attached"
+    aliases = egress_proxy_aliases(proxy) if proxy else []
+    return {
+        "network": NETWORK,
+        "network_isolation": "internal" if network.attrs.get("Internal", False) else "open",
+        "proxy": proxy.name if proxy else None,
+        "attached": endpoint is not None,
+        "alias": EGRESS_PROXY_HOST,
+        "alias_present": EGRESS_PROXY_HOST in aliases,
+        "proxy_url": f"http://{EGRESS_PROXY_HOST}:{EGRESS_PROXY_PORT}",
+        "redirects": "prepared" if not missing else missing,
+    }
+
+
+def redirect_missing(proxy: Any) -> str:
+    """The first port with no redirect rule, or an empty string when all exist.
+
+    The mirror of `redirect_rule_status` for a read-only report: it only asks,
+    never appends.
+    """
+    for port in REDIRECT_PORTS:
+        match = [
+            "-t", "nat", "-p", "tcp", "--dport", str(port),
+            "-j", "REDIRECT", "--to-ports", str(EGRESS_PROXY_PORT),
+        ]
+        try:
+            check = proxy.exec_run(["iptables", "-C", *match], demux=False)
+        except DockerException as exc:
+            return f"unavailable ({exc})"
+        if check.exit_code in (126, 127):
+            return "unavailable: the proxy image has no iptables"
+        if check.exit_code != 0:
+            return f"port {port} has no redirect"
+    return ""
 
 
 @app.post("/v1/sandboxes", status_code=201)
 def create_sandbox(body: SandboxRequest) -> dict[str, Any]:
     if not image_allowed(body.image):
         raise HTTPException(422, "image is not in the approved phase-1 catalog")
-    ensure_network()
+    network = ensure_network()
     name = container_name(body.name)
     try:
         return details(client.containers.get(name))
@@ -185,6 +445,15 @@ def create_sandbox(body: SandboxRequest) -> dict[str, Any]:
         from docker.types import DeviceRequest
 
         extra["device_requests"] = [DeviceRequest(count=body.gpu_count, capabilities=[["gpu"]])]
+    # Before the container exists, so the proxy is on the network the moment a
+    # sandbox can send its first request. The result is logged and served by
+    # `/v1/egress`; it is not fatal, because a sandbox without a reachable proxy
+    # is isolated rather than exposed.
+    egress_state = prepare_egress(network)
+    if egress_state["proxy"] == "missing" or not egress_state["attached"].startswith("attached"):
+        logger.warning("egress proxy not reachable from the sandbox network: %s", egress_state)
+    else:
+        logger.info("egress ready for %s: %s", body.name, egress_state)
     try:
         container = client.containers.run(
             body.image,
@@ -647,6 +916,14 @@ def exec_in_sandbox(name: str, body: ExecRequest) -> dict[str, Any]:
 def lifecycle(name: str, action: str) -> dict[str, Any]:
     if action not in {"start", "stop", "restart", "remove"}:
         raise HTTPException(422, "unsupported lifecycle action")
+    if action in {"start", "restart"}:
+        # A deploy that recreates the proxy container drops its endpoint on the
+        # sandbox network, and a sandbox that was working before the deploy would
+        # come back with an unreachable proxy. A start is the natural moment to
+        # repair the wiring, and the call is idempotent. Before the container
+        # runs, so it never has a moment without a proxy.
+        egress_state = prepare_egress(ensure_network())
+        logger.info("egress for %s before %s: %s", name, action, egress_state)
     try:
         container = client.containers.get(container_name(name))
         if action == "remove":
