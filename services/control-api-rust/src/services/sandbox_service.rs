@@ -294,6 +294,16 @@ pub fn add_inference_bypass(environment: &mut BTreeMap<String, String>) {
         .next()
         .unwrap_or("")
         .to_string();
+    add_host_bypass(environment, &host);
+}
+
+/// Keep one host out of the proxy, in both spellings of `NO_PROXY`.
+///
+/// The sandbox talks to two things that are not egress: the model on its own
+/// node and the control plane it reports to. Both are on the internal network,
+/// and through the proxy they would be denied requests — a supervisor whose
+/// reports are refused by the very policy it is meant to observe.
+pub fn add_host_bypass(environment: &mut BTreeMap<String, String>, host: &str) {
     if host.is_empty() {
         return;
     }
@@ -303,7 +313,7 @@ pub fn add_inference_bypass(environment: &mut BTreeMap<String, String>) {
             continue;
         }
         let value = if current.is_empty() {
-            host.clone()
+            host.to_string()
         } else {
             format!("{current},{host}")
         };
@@ -318,6 +328,33 @@ pub fn add_inference_bypass(environment: &mut BTreeMap<String, String>) {
 pub fn add_inference_bypass_vec(environment: &mut Vec<(String, String)>) {
     let mut map: BTreeMap<String, String> = environment.iter().cloned().collect();
     add_inference_bypass(&mut map);
+    *environment = map.into_iter().collect();
+}
+
+/// The same bypass for a host named by an environment value, on the runtime
+/// vector.
+///
+/// The control API's address is a variable (`NESTBOX_CONTROL_URL`), so the host
+/// is taken from the value that was just written rather than parsed twice.
+pub fn add_env_url_bypass_vec(environment: &mut Vec<(String, String)>, key: &str) {
+    let Some(value) = environment
+        .iter()
+        .rev()
+        .find(|(name, _)| name == key)
+        .map(|(_, value)| value.clone())
+    else {
+        return;
+    };
+    let host = value
+        .split("://")
+        .nth(1)
+        .unwrap_or(&value)
+        .split(['/', ':'])
+        .next()
+        .unwrap_or("")
+        .to_string();
+    let mut map: BTreeMap<String, String> = environment.iter().cloned().collect();
+    add_host_bypass(&mut map, &host);
     *environment = map.into_iter().collect();
 }
 
@@ -911,6 +948,29 @@ mod tests {
             environment.get("no_proxy").map(String::as_str),
             Some("model-qwen3-1-7b")
         );
+    }
+
+    /// The supervisor reports to the control plane, so that host must not be
+    /// proxied: through the proxy the report is a denied egress request, and the
+    /// supervisor silently never reports.
+    #[test]
+    fn the_control_plane_is_kept_out_of_the_proxy_too() {
+        let mut environment: Vec<(String, String)> = vec![
+            ("NESTBOX_CONTROL_URL".to_string(), "http://control-api:8000".to_string()),
+            ("NO_PROXY".to_string(), "localhost,egress-proxy".to_string()),
+        ];
+        add_env_url_bypass_vec(&mut environment, "NESTBOX_CONTROL_URL");
+        let value = |key: &str| {
+            environment
+                .iter()
+                .find(|(name, _)| name == key)
+                .map(|(_, value)| value.clone())
+        };
+        assert_eq!(
+            value("NO_PROXY").as_deref(),
+            Some("localhost,egress-proxy,control-api")
+        );
+        assert_eq!(value("no_proxy").as_deref(), Some("control-api"));
     }
 
     #[test]

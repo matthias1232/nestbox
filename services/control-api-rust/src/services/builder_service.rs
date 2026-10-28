@@ -902,6 +902,13 @@ pub async fn instantiate(
             std::env::var("NESTBOX_CONTROL_URL")
                 .unwrap_or_else(|_| "http://control-api:8000".to_string()),
         ));
+        // The report goes to the control plane, not to the internet. Without
+        // this the supervisor's own reports are denied by the egress policy it
+        // is supposed to observe.
+        crate::services::sandbox_service::add_env_url_bypass_vec(
+            &mut environment,
+            "NESTBOX_CONTROL_URL",
+        );
     }
 
     let runtime_spec = SandboxSpec {
