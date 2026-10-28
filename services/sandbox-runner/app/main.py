@@ -95,10 +95,17 @@ def container_name(name: str) -> str:
 
 
 def ensure_network() -> None:
+    """Make sure the runtime network exists, internal if this process creates it.
+
+    Normally the network is a Compose network and the runner is already on it;
+    this path exists for a runner started outside Compose. It is internal when
+    created here, because the whole point of the runtime network is that the
+    egress proxy is the only way out.
+    """
     try:
         client.networks.get(NETWORK)
     except NotFound:
-        client.networks.create(NETWORK, driver="bridge", internal=False, labels={"nestbox.managed": "true"})
+        client.networks.create(NETWORK, driver="bridge", internal=True, labels={"nestbox.managed": "true"})
 
 
 def utc(value: str | None) -> str | None:

@@ -92,7 +92,11 @@ services:
     environment:
       DATABASE_URL_FILE: /run/secrets/database_url
       NESTBOX_RUNNER_URL: http://sandbox-runner:9000
-      NESTBOX_RUNTIME_NETWORK: nestbox-runtime
+      # The name Compose actually gives the network, not a hand-written one.
+      # `nestbox-runtime` and `nestbox_runtime` are two different bridges, and a
+      # mismatch puts sandboxes on a network that is not the internal one the
+      # proxy and the API are attached to.
+      NESTBOX_RUNTIME_NETWORK: ${COMPOSE_PROJECT_NAME:-nestbox}_runtime
       NESTBOX_SECRET_DIR: /secrets
       NESTBOX_SESSION_COOKIE_SECURE: "false"
       RUST_LOG: info,tower_http=warn
@@ -145,7 +149,9 @@ services:
     restart: unless-stopped
     environment:
       NESTBOX_ALLOWED_IMAGES: ubuntu:24.04,nestbox-ubuntu-dev:local,nestbox-hermes:local,nestbox-openclaw:local,nestbox-tool-git:local
-      NESTBOX_RUNTIME_NETWORK: nestbox-runtime
+      # See control-api: this must be the Compose network, or the runner creates
+      # a second bridge and every sandbox/model lands on the wrong one.
+      NESTBOX_RUNTIME_NETWORK: ${COMPOSE_PROJECT_NAME:-nestbox}_runtime
       # Bind mounts for persistent roots come only from this tree.
       NESTBOX_PERSISTENT_BASE: /var/lib/nestbox/persistent
       # The host's /proc, so the hardware report describes the machine.

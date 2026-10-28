@@ -85,7 +85,7 @@ for p in json.load(sys.stdin)['items']:
 "
 
 say "a real chat completion on the runtime network"
-docker exec nestbox-sandbox-runner python3 - <<'PY'
+docker exec -i nestbox-sandbox-runner-1 python3 - <<'PY'
 import json, urllib.request
 request = urllib.request.Request(
     "http://model-qwen3-1-7b:8080/v1/chat/completions",
@@ -105,7 +105,7 @@ print("  model:", body.get("model"), "tokens:", body.get("usage", {}).get("compl
 PY
 
 say "the artefact on the node"
-docker exec nestbox-sandbox-runner sh -c 'ls -l /var/lib/nestbox/models/qwen3-1.7b/'
+docker exec nestbox-sandbox-runner-1 sh -c 'ls -l /var/lib/nestbox/models/qwen3-1.7b/'
 
 say "uninstall stops the server and releases the memory"
 api -X POST "$B/models/qwen3-1.7b/uninstall" -d '{"node":"local"}' -o /tmp/p2-un.json -w 'uninstall %{http_code}\n'
