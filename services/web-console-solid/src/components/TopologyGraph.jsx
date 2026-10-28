@@ -10,7 +10,10 @@
 // egress column makes that explicit: every sandbox's traffic leaves through its
 // gateway, never directly.
 //
-// The component knows nothing about gateways: it receives nodes and edges.
+// The component knows nothing about gateways: it receives nodes and edges. The
+// sandbox column is grouped by the node each sandbox runs on, because "which
+// machine is this on" is the question the graph is opened for; the group comes
+// from the server's `node_name`, never from a guess in the browser.
 
 import { For, Show, createMemo } from 'solid-js';
 
@@ -30,6 +33,8 @@ const COLUMN_WIDTH = 190;
 const NODE_HEIGHT = 46;
 const NODE_GAP = 14;
 const HEADER = 44;
+// Height of a node-group caption in the sandbox column.
+const CAPTION = 20;
 
 export default function TopologyGraph(props) {
   const columns = createMemo(() => {
@@ -41,6 +46,12 @@ export default function TopologyGraph(props) {
     }
     // One egress node per gateway: the policy decision point. It is derived,
     // not served, because it is a property of "a gateway exists", not data.
+    // Grouped by node, then by name: the answer to "what runs on this machine"
+    // should not depend on the order the rows arrived in.
+    buckets.sandbox.sort((left, right) => {
+      const byNode = String(left.node_name || '').localeCompare(String(right.node_name || ''));
+      return byNode !== 0 ? byNode : String(left.name).localeCompare(String(right.name));
+    });
     for (const gateway of buckets.gateway) {
       buckets.egress.push({
         id: `egress:${gateway.id}`,
@@ -68,9 +79,40 @@ export default function TopologyGraph(props) {
     return out;
   });
 
+  // The sandbox column is taller than its row count: each node group starts
+  // with a caption. The layout is computed once here so the edges and the boxes
+  // cannot disagree about where a sandbox is.
+  const sandboxLayout = createMemo(() => {
+    const placed = [];
+    const captions = [];
+    let y = HEADER;
+    let previous = null;
+    for (const sandbox of columns().sandbox) {
+      const group = sandbox.node_name || '';
+      if (group !== previous) {
+        captions.push({ label: group || 'no node', y });
+        y += CAPTION;
+        previous = group;
+      }
+      placed.push({ node: sandbox, y });
+      y += NODE_HEIGHT + NODE_GAP;
+    }
+    return { placed, captions, bottom: y };
+  });
+
   const positions = createMemo(() => {
     const map = new Map();
     for (const [kind, nodes] of Object.entries(columns())) {
+      if (kind === 'sandbox') {
+        for (const entry of sandboxLayout().placed) {
+          map.set(entry.node.id, {
+            x: 24 + COLUMN[kind] * COLUMN_WIDTH,
+            y: entry.y,
+            node: entry.node,
+          });
+        }
+        continue;
+      }
       nodes.forEach((node, index) => {
         map.set(node.id, {
           x: 24 + COLUMN[kind] * COLUMN_WIDTH,
@@ -85,9 +127,12 @@ export default function TopologyGraph(props) {
   const height = createMemo(() => {
     const tallest = Math.max(
       1,
-      ...Object.values(columns()).map((nodes) => nodes.length),
+      ...['gateway', 'supervisor', 'egress'].map((kind) => columns()[kind].length),
     );
-    return HEADER + tallest * (NODE_HEIGHT + NODE_GAP) + 24;
+    return Math.max(
+      HEADER + tallest * (NODE_HEIGHT + NODE_GAP),
+      sandboxLayout().bottom,
+    ) + 24;
   });
 
   return (
@@ -125,6 +170,18 @@ export default function TopologyGraph(props) {
                 </Show>
               );
             }}
+          </For>
+
+          <For each={sandboxLayout().captions}>
+            {(caption) => (
+              <text
+                class="group-caption"
+                x={24 + COLUMN.sandbox * COLUMN_WIDTH}
+                y={caption.y}
+              >
+                {truncate(caption.label === 'no node' ? 'no node' : `node: ${caption.label}`, 26)}
+              </text>
+            )}
           </For>
 
           <For each={[...positions().values()]}>

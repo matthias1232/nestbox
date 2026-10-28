@@ -173,6 +173,14 @@ pub struct Model {
     pub runtime: ModelRuntime,
     pub arch: Option<String>,
     pub artifact_format: Option<String>,
+    /// Where the weights come from, as `huggingface:<repo>/<file>`.
+    ///
+    /// A model without this has no artefact the platform knows how to fetch, so
+    /// it cannot be installed as a local server; the install says that instead
+    /// of reserving memory for nothing.
+    pub artifact_ref: Option<String>,
+    /// The runtime in `model_server_images` that serves this model, if any.
+    pub serve_runtime: Option<String>,
     pub publisher: Option<String>,
     pub license: Option<String>,
     pub description: Option<String>,
@@ -919,6 +927,8 @@ mod tests {
             runtime: ModelRuntime::Cuda,
             arch: Some("tensorrt".into()),
             artifact_format: None,
+        artifact_ref: None,
+        serve_runtime: None,
             publisher: Some("NVIDIA".into()),
             license: None,
             description: None,

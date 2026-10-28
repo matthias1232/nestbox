@@ -289,6 +289,10 @@ ul.plain { list-style: none; padding: 0; margin: 0; display: flex; flex-directio
 .topology text { font-family: var(--font); fill: var(--fg); }
 .topology .column-title { fill: var(--fg-faint); font-size: 11px;
                           text-transform: uppercase; letter-spacing: 0.08em; }
+/* A node group in the sandbox column: a caption, not a box, because the group
+   is a property of the sandboxes below it, not an object of its own. */
+.topology .group-caption { fill: var(--fg-faint); font-size: 10px;
+                           text-transform: uppercase; letter-spacing: 0.06em; }
 .topology .node rect { fill: var(--bg-raised); stroke: var(--border-strong); stroke-width: 1; }
 .topology .node:hover rect { stroke: var(--accent); cursor: pointer; }
 .topology .node.ok rect { stroke: #1c4030; }

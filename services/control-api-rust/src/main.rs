@@ -66,6 +66,15 @@ async fn main() {
         Err(error) => tracing::warn!(code = error.code.0, "could not settle interrupted builds"),
     }
 
+    // The same for an install caught between "reserved" and "answering": the
+    // container it may have started is stopped and the row is marked failed,
+    // instead of showing `downloading` forever.
+    match nestbox_control_api::services::model_service::settle_all(&state.services).await {
+        Ok(0) => {}
+        Ok(settled) => tracing::info!(settled, "settled model installs interrupted by a restart"),
+        Err(error) => tracing::warn!(code = error.code.0, "could not settle interrupted installs"),
+    }
+
     let listener = match tokio::net::TcpListener::bind(&config.listen_addr).await {
         Ok(listener) => listener,
         Err(error) => {

@@ -138,6 +138,58 @@ pub struct ExecResult {
     pub truncated: bool,
 }
 
+/// One model artefact to fetch onto a node.
+///
+/// A single file, named by repository and file name, because that is what a
+/// GGUF model is: one complete file whose name the platform would otherwise
+/// have to guess from a snapshot listing.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ModelDownload {
+    /// The catalog key; also the directory name under the model base.
+    pub model_key: String,
+    /// `org/repo` on Hugging Face.
+    pub repo: String,
+    /// The file inside the repository.
+    pub file: String,
+    /// Refuse an artefact larger than this, so a mistyped repository cannot
+    /// fill the node's disk before anyone notices.
+    pub max_bytes: i64,
+}
+
+/// Where a download left the artefact, and whether it had to fetch it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct ModelDownloadResult {
+    /// The path on the node, inside the model base.
+    pub path: String,
+    pub bytes: i64,
+    /// True when the file was already there and was not fetched again.
+    pub cached: bool,
+}
+
+/// A model server container to start for an install.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ModelServe {
+    pub model_key: String,
+    /// `repo@sha256:…`; the runtime refuses anything else.
+    pub image: String,
+    /// The argument vector. `{model}` has already been replaced by the path
+    /// inside the container; the runtime still refuses an absolute path that is
+    /// not the model it mounted.
+    pub command: Vec<String>,
+    pub memory_limit_bytes: i64,
+    pub cpu_cores: f64,
+    pub port: u16,
+}
+
+/// A started model server.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct ModelServeResult {
+    pub name: String,
+    #[serde(default)]
+    pub container_id: Option<String>,
+    pub status: String,
+}
+
 /// Convert an operator-facing memory limit into the form Docker accepts.
 ///
 /// Operators write `2Gi` because that is what Kubernetes and every cloud console

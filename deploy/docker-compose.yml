@@ -150,6 +150,15 @@ services:
       NESTBOX_PERSISTENT_BASE: /var/lib/nestbox/persistent
       # The host's /proc, so the hardware report describes the machine.
       NESTBOX_HOST_PROC: /host/proc
+      # Model artefacts. The runner fetches them and starts one server
+      # container per install; both use this path, inside and out, so the bind
+      # source it validates is the directory Docker mounts.
+      NESTBOX_MODEL_BASE: /var/lib/nestbox/models
+      # The only images a model server may start, by digest (ADR 0022). An
+      # image is a dependency with a version, and `latest` is not a version.
+      NESTBOX_MODEL_IMAGES: ghcr.io/ggml-org/llama.cpp@sha256:8ee4ec7ce58a921313d07390c6699af13aa5ec083f3cdf67e5f4155767047373
+      # A single download may not exceed this, whatever the API asks for.
+      NESTBOX_MODEL_MAX_BYTES: "34359738368"
     volumes:
       # The only component that talks to the Docker socket. It is separate from
       # the API on purpose: a compromise of the API does not yield the host.
@@ -157,6 +166,7 @@ services:
       # Persistent roots live here on the host; the same path inside and out
       # so a bind source the runner validates is the path Docker mounts.
       - /var/lib/nestbox/persistent:/var/lib/nestbox/persistent
+      - /var/lib/nestbox/models:/var/lib/nestbox/models
       - /proc:/host/proc:ro
     expose:
       - "9000"

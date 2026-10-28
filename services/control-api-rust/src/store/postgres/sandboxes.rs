@@ -439,12 +439,13 @@ pub type Timestamp = DateTime<Utc>;
 /// would float unconnected and the view would say nothing about the flow.
 pub async fn topology_rows(
     scope: &mut TenantScope<'_>,
-) -> Result<Vec<(Uuid, String, Option<Uuid>, String)>, StoreError> {
+) -> Result<Vec<TopologySandbox>, StoreError> {
     let rows = sqlx::query(
-        "SELECT id, name, gateway_id, status
-           FROM sandboxes
-          WHERE environment_id = $1
-          ORDER BY name
+        "SELECT s.id, s.name, s.gateway_id, s.status, s.node_id, n.name AS node_name
+           FROM sandboxes s
+           LEFT JOIN nodes n ON n.id = s.node_id
+          WHERE s.environment_id = $1
+          ORDER BY n.name NULLS LAST, s.name
           LIMIT 2000",
     )
     .bind(scope.environment_id())
@@ -453,12 +454,30 @@ pub async fn topology_rows(
 
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
-        out.push((
-            row.try_get("id")?,
-            row.try_get("name")?,
-            row.try_get("gateway_id")?,
-            row.try_get("status")?,
-        ));
+        out.push(TopologySandbox {
+            id: row.try_get("id")?,
+            name: row.try_get("name")?,
+            gateway_id: row.try_get("gateway_id")?,
+            status: row.try_get("status")?,
+            node_id: row.try_get("node_id")?,
+            node_name: row.try_get("node_name")?,
+        });
     }
     Ok(out)
+}
+
+/// One sandbox as the cluster graph needs it: where it is and which node holds
+/// it.
+///
+/// The node is part of the answer so the console can group the graph without a
+/// second placement rule of its own, and a sandbox whose node row is gone still
+/// appears, with an empty node name.
+#[derive(Debug, Clone)]
+pub struct TopologySandbox {
+    pub id: Uuid,
+    pub name: String,
+    pub gateway_id: Option<Uuid>,
+    pub status: String,
+    pub node_id: Option<Uuid>,
+    pub node_name: Option<String>,
 }

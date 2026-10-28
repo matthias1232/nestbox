@@ -212,6 +212,57 @@ async fn the_local_node_and_builder_catalogs_are_seeded() {
     assert!(sync_schedule >= 1, "the catalog sync schedule is seeded");
 }
 
+/// The model that can actually be served, and the image allowed to serve it.
+///
+/// A digest, not a tag: an image is a dependency with a version (ADR 0022), and
+/// the runner refuses anything that is not exactly this reference.
+#[tokio::test]
+async fn the_installable_model_names_its_artefact_and_server_image() {
+    let Some(pool) = connect().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+
+    let (key, artifact, runtime): (String, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT key, artifact_ref, serve_runtime FROM models WHERE serve_runtime IS NOT NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("one servable model");
+    assert_eq!(key, "qwen3-1.7b");
+    let artifact = artifact.expect("artifact_ref");
+    assert_eq!(artifact, "huggingface:Qwen/Qwen3-1.7B-GGUF/Qwen3-1.7B-Q8_0.gguf");
+    assert_eq!(runtime.as_deref(), Some("llama_cpp"));
+
+    // Every other row is explicitly not servable instead of quietly naming a
+    // runtime nobody registered.
+    let unservable: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM models WHERE serve_runtime IS NOT NULL AND artifact_ref IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("query");
+    assert_eq!(unservable, 0);
+
+    let digest: String =
+        sqlx::query_scalar("SELECT digest FROM model_server_images WHERE runtime = 'llama_cpp'")
+            .fetch_one(&pool)
+            .await
+            .expect("llama.cpp image");
+    assert!(digest.starts_with("ghcr.io/ggml-org/llama.cpp@sha256:"), "{digest}");
+    assert!(!digest.ends_with(":latest"), "a tag is not a pin");
+
+    // The constraint refuses a tag, which is what keeps the row honest even if
+    // someone writes it by hand.
+    let rejected = sqlx::query(
+        "INSERT INTO model_server_images (runtime, image, digest, port, command)
+         VALUES ('bad', 'example/model', 'example/model:latest', 8080, '{}')",
+    )
+    .execute(&pool)
+    .await;
+    assert!(rejected.is_err(), "a tag must not satisfy the digest constraint");
+}
+
 /// Row-level security refuses a row from another environment.
 ///
 /// This is the second line of defence (ADR 0004): even a query that forgot its

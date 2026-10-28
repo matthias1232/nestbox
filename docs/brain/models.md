@@ -113,16 +113,26 @@ minimum solid and the recommendation lighter.
 
 Each is a job, because each has stages and can fail partway.
 
-| Action | Stages (Phase 2 for the artefact download) |
+| Action | Stages |
 |---|---|
-| Install | download → verify checksum → unpack → start server → register provider → publish endpoint |
-| Update | compare versions → install new → switch over → keep old until healthy |
-| Uninstall | stop server → remove artifacts → revoke provider profile |
+| Install | reserve → `downloading` (the node fetches one artefact) → `starting` (the container is up) → `installed` (the profile answers) |
+| Uninstall | stop the container → revoke the provider profile → release the reservation |
 
-**The download is not implemented yet.** An install job records the intent and
-state transition; no weights are fetched. The Models page says this in plain
-words rather than showing a progress bar that counts nothing. This is the one
-honest gap in the feature, and it is listed in `docs/architecture/phase1-review.md`.
+The file is one GGUF named by `models.artifact_ref`
+(`huggingface:<repo>/<file>`); the image is one row in `model_server_images`,
+pinned by digest. A model with no artefact is refused with
+`422 model.not_servable` **before** memory is reserved: reserving for something
+that cannot run is a truthless number. Only models with an artefact can be
+installed, which today means `qwen3-1.7b` (Qwen3-1.7B-Q8_0, ~1.8 GiB, llama.cpp
+on CPU). See ADR 0028.
+
+The artefact is not deleted on uninstall, so reinstalling the same model does
+not download it again; the container is stopped, which is what returns the
+memory.
+
+**No update path yet.** `updating` exists in the state machine and the model
+table, but nothing implements "install the new version beside the old one". An
+install of a different version is a new install of a new catalogue row.
 
 ## Cloud models
 

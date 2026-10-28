@@ -15,7 +15,13 @@ use super::model::{human_gib, Model, ModelState};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum InstallState {
+    /// Reserved and committed; nothing fetched yet.
     Installing,
+    /// The node's runner is fetching the artefact.
+    Downloading,
+    /// The artefact is on disk and the server container is up, but it has not
+    /// answered a probe yet.
+    Starting,
     Installed,
     Updating,
     Uninstalling,
@@ -26,6 +32,8 @@ impl InstallState {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Installing => "installing",
+            Self::Downloading => "downloading",
+            Self::Starting => "starting",
             Self::Installed => "installed",
             Self::Updating => "updating",
             Self::Uninstalling => "uninstalling",
@@ -36,6 +44,8 @@ impl InstallState {
     pub fn parse(value: &str) -> Option<Self> {
         Some(match value {
             "installing" => Self::Installing,
+            "downloading" => Self::Downloading,
+            "starting" => Self::Starting,
             "installed" => Self::Installed,
             "updating" => Self::Updating,
             "uninstalling" => Self::Uninstalling,
@@ -59,7 +69,7 @@ impl InstallState {
     /// installed" and "update available" are answered from `model_installs`.
     pub fn model_state(self) -> ModelState {
         match self {
-            Self::Installing => ModelState::Installing,
+            Self::Installing | Self::Downloading | Self::Starting => ModelState::Installing,
             Self::Installed => ModelState::Installed,
             Self::Updating => ModelState::Updating,
             Self::Uninstalling => ModelState::Uninstalling,
@@ -344,6 +354,8 @@ mod tests {
             runtime: ModelRuntime::Hybrid,
             arch: None,
             artifact_format: None,
+            artifact_ref: None,
+            serve_runtime: None,
             publisher: None,
             license: None,
             description: None,
@@ -465,5 +477,141 @@ mod tests {
             ModelState::Installed
         );
         assert_eq!(InstallState::Failed.model_state(), ModelState::Failed);
+    }
+}
+
+/// An approved image that serves a model, from `model_server_images`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ModelServerImage {
+    /// `llama_cpp` today; the column exists so a second runtime is a row, not
+    /// a code change.
+    pub runtime: String,
+    /// The repository, without the digest.
+    pub image: String,
+    /// `repo@sha256:…`, the only form a node starts.
+    pub digest: String,
+    /// The port the server listens on inside its container.
+    pub port: u16,
+    /// The argument vector, with `{model}` and `{threads}` as placeholders.
+    pub command: Vec<String>,
+    pub notes: Option<String>,
+}
+
+/// One model artefact, parsed from `models.artifact_ref`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Artifact {
+    /// `org/repo` on Hugging Face.
+    pub repo: String,
+    /// The file inside the repository.
+    pub file: String,
+}
+
+impl Artifact {
+    /// Parse `huggingface:<repo>/<file>`.
+    ///
+    /// The shape is checked by a database constraint as well; parsing here means
+    /// a row that slipped through is reported as "cannot be served" instead of
+    /// becoming a download URL assembled from unvalidated text.
+    pub fn parse(reference: &str) -> Option<Self> {
+        let rest = reference.strip_prefix("huggingface:")?;
+        let (repo, file) = rest.rsplit_once('/')?;
+        let mut parts = repo.split('/');
+        let owner = parts.next()?;
+        let name = parts.next()?;
+        if parts.next().is_some() || owner.is_empty() || name.is_empty() || file.is_empty() {
+            return None;
+        }
+        Some(Self {
+            repo: format!("{owner}/{name}"),
+            file: file.to_string(),
+        })
+    }
+}
+
+impl ModelServerImage {
+    /// Turn the stored template into the argument vector to start.
+    ///
+    /// Only the two placeholders are substituted, and `{model}` becomes the
+    /// path inside the container. The runner re-checks that path, so a template
+    /// that names something else is refused on the node instead of mounted.
+    pub fn command_for(&self, model_path: &str, threads: i64) -> Vec<String> {
+        self.command
+            .iter()
+            .map(|part| {
+                part.replace("{model}", model_path)
+                    .replace("{threads}", &threads.max(1).to_string())
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod serving_tests {
+    use super::{Artifact, ModelServerImage};
+
+    #[test]
+    fn every_serving_state_round_trips_and_holds_its_reservation() {
+        use super::InstallState;
+        use crate::domain::model::ModelState;
+        for state in [
+            InstallState::Installing,
+            InstallState::Downloading,
+            InstallState::Starting,
+            InstallState::Installed,
+            InstallState::Updating,
+            InstallState::Uninstalling,
+        ] {
+            assert_eq!(InstallState::parse(state.as_str()), Some(state));
+            assert!(state.reserves(), "{} must keep its reservation", state.as_str());
+        }
+        // A failed install holds nothing, which is what makes a retry possible
+        // without a second reservation.
+        assert!(!InstallState::Failed.reserves());
+        // The three phases before "installed" all read as `installing` in the
+        // catalogue: there is one installed state, and it is the one that
+        // answers.
+        for state in [
+            InstallState::Installing,
+            InstallState::Downloading,
+            InstallState::Starting,
+        ] {
+            assert_eq!(state.model_state(), ModelState::Installing);
+        }
+        assert_eq!(InstallState::Installed.model_state(), ModelState::Installed);
+    }
+
+    #[test]
+    fn artifact_reference_is_repo_and_file() {
+        let artifact = Artifact::parse("huggingface:Qwen/Qwen3-1.7B-GGUF/Qwen3-1.7B-Q8_0.gguf")
+            .expect("parse");
+        assert_eq!(artifact.repo, "Qwen/Qwen3-1.7B-GGUF");
+        assert_eq!(artifact.file, "Qwen3-1.7B-Q8_0.gguf");
+    }
+
+    #[test]
+    fn artifact_reference_refuses_other_schemes_and_shapes() {
+        for value in [
+            "",
+            "https://huggingface.co/Qwen/x/y.gguf",
+            "huggingface:Qwen",
+            "huggingface:/y.gguf",
+            "huggingface:a/b/c/y.gguf",
+        ] {
+            assert!(Artifact::parse(value).is_none(), "{value} should not parse");
+        }
+    }
+
+    #[test]
+    fn server_command_substitutes_both_placeholders() {
+        let image = ModelServerImage {
+            runtime: "llama_cpp".into(),
+            image: "ghcr.io/ggml-org/llama.cpp".into(),
+            digest: "ghcr.io/ggml-org/llama.cpp@sha256:0".into(),
+            port: 8080,
+            command: vec!["-m".into(), "{model}".into(), "--threads".into(), "{threads}".into()],
+            notes: None,
+        };
+        let command = image.command_for("/models/m.gguf", 0);
+        assert_eq!(command, vec!["-m", "/models/m.gguf", "--threads", "1"]);
     }
 }

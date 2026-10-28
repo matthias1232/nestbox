@@ -22,6 +22,11 @@ control plane.
 | `POST` | `/v1/sandboxes/{name}/{start,stop,restart,remove}` | Lifecycle |
 | `GET` | `/v1/sandboxes/{name}/logs?tail=` | Last lines of stdout/stderr |
 | `POST` | `/v1/sandboxes/{name}/exec` | Run one argument vector, return output |
+| `GET` | `/v1/hardware` | Raw `/proc` and `nvidia-smi` text for the control plane to parse |
+| `POST` | `/v1/builds` | Build a recipe image from a generated Dockerfile |
+| `POST` | `/v1/models/download` | Fetch one GGUF into `NESTBOX_MODEL_BASE` |
+| `POST` | `/v1/models/serve` | Start one model server container |
+| `GET`/`DELETE` | `/v1/models/serve/{key}` | Inspect or stop it |
 
 ## Security rules
 
@@ -36,6 +41,14 @@ control plane.
    command cannot exhaust the API's memory or hold a worker forever.
 5. The runner listens only on the internal `control` network and is not
    published on the host.
+6. A model server starts only from an image in `NESTBOX_MODEL_IMAGES`, compared
+   as an exact `repo@sha256:…` reference. Every absolute path in its command
+   must be the mounted model file, the model directory is mounted read-only at
+   `/models`, and the container joins the internal runtime network only — so it
+   can answer the API and the sandboxes, and reach nothing else.
+7. A model download is written to `<file>.part` and renamed after the last
+   byte; the key, repository, and file name are validated and the resolved
+   directory must stay inside `NESTBOX_MODEL_BASE`.
 
 ## Why not a PTY
 

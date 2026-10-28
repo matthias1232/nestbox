@@ -257,18 +257,23 @@ pub async fn topology(
         }));
     }
 
-    for (id, name, gateway_id, status) in sandboxes {
+    for sandbox in sandboxes {
         nodes.push(serde_json::json!({
-            "id": id,
+            "id": sandbox.id,
             "kind": "sandbox",
-            "name": name,
-            "status": status,
-            "placed": gateway_id.is_some(),
+            "name": sandbox.name,
+            "status": sandbox.status,
+            "placed": sandbox.gateway_id.is_some(),
+            // The node the sandbox runs on. A sandbox whose node is unknown
+            // reports null rather than being left out: "not placed" and "no
+            // node" are different facts.
+            "node_id": sandbox.node_id,
+            "node_name": sandbox.node_name,
         }));
-        if let Some(gateway) = gateway_id {
+        if let Some(gateway) = sandbox.gateway_id {
             edges.push(serde_json::json!({
                 "from": gateway,
-                "to": id,
+                "to": sandbox.id,
                 "kind": "hosts",
             }));
         }

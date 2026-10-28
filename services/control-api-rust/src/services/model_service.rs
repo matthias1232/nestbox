@@ -20,13 +20,14 @@ use crate::domain::model::{
     classify, Fit, FitReport, GpuDevice, HardwareProfile, Model, ModelState,
 };
 use crate::domain::model_install::{
-    reservation_for, FreeBudget, InstallState, ModelInstall,
+    reservation_for, Artifact, FreeBudget, InstallState, ModelInstall,
 };
 use crate::domain::node::{Node, NodeBudget, NodeStatus};
-use crate::domain::runtime::HardwareReport;
+use crate::domain::runtime::{HardwareReport, ModelDownload, ModelServe};
 use crate::error::{ApiError, ErrorCode, StoreError};
 use crate::runtime::RuntimeError;
 use crate::store::TenantScope;
+use crate::store::postgres::jobs as job_store;
 use crate::store::postgres::model_installs as install_store;
 use crate::store::postgres::models as store;
 use crate::store::postgres::nodes;
@@ -420,6 +421,31 @@ pub async fn install(
     // open.
     let resolved = resolve_node_for(ctx, principal, node_name).await?;
     let model = model_by_key(ctx, principal, key).await?;
+
+    // A model without an artefact this platform can fetch cannot become a
+    // server, and reserving memory for it would be a promise nobody keeps. The
+    // refusal comes before the probe because it does not depend on the node.
+    let artifact = model
+        .artifact_ref
+        .as_deref()
+        .and_then(Artifact::parse)
+        .ok_or_else(|| {
+            ApiError::unprocessable(
+                ErrorCode::MODEL_NOT_SERVABLE,
+                format!(
+                    "{} has no artefact this platform can fetch, so it cannot be installed \
+                     as a local model server.",
+                    model.name
+                ),
+            )
+        })?;
+    let serve_runtime = model.serve_runtime.clone().ok_or_else(|| {
+        ApiError::unprocessable(
+            ErrorCode::MODEL_NOT_SERVABLE,
+            format!("{} has no server runtime registered.", model.name),
+        )
+    })?;
+
     let measured = load_hardware(ctx, principal.environment_id, false, &resolved).await?;
     // The node as the probe left it: install decides on the fresh `container_gpu`.
     let node = measured.node.clone();
@@ -507,6 +533,15 @@ pub async fn install(
         ));
     }
 
+    // The registry row is the image the node will be told to start. Without it
+    // the reservation would be for a model nobody can serve.
+    if store::server_image(&mut scope, &serve_runtime).await.is_err() {
+        return Err(ApiError::unprocessable(
+            ErrorCode::MODEL_NOT_SERVABLE,
+            format!("No server image is registered for runtime '{serve_runtime}'."),
+        ));
+    }
+
     let install = install_store::insert(
         &mut scope,
         install_store::NewInstall {
@@ -537,6 +572,8 @@ pub async fn install(
             "node": node.name,
             "reserved_ram_bytes": reserved_ram_bytes,
             "reserved_vram_bytes": reserved_vram_bytes,
+            "artifact": format!("{}:{}", artifact.repo, artifact.file),
+            "serve_runtime": serve_runtime,
         }),
         None,
         Some(principal.user_id),
@@ -570,6 +607,24 @@ pub async fn install(
     .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
 
+    // Detached, like a recipe build: the request answers as soon as the
+    // reservation is committed, and the outcome lands on the install row. A
+    // restart settles what the task leaves behind (see `settle_serving`).
+    let worker = ctx.clone();
+    let environment_id = principal.environment_id;
+    let install_id = install.id;
+    let job_id = job.id;
+    tokio::spawn(async move {
+        if let Err(error) = run_install(&worker, environment_id, install_id, job_id).await {
+            tracing::error!(
+                code = error.code.0,
+                install = %install_id,
+                job = %job_id,
+                "model install could not record its outcome"
+            );
+        }
+    });
+
     Ok(serde_json::json!({
         "job_id": job.id,
         "install_id": install.id,
@@ -580,8 +635,10 @@ pub async fn install(
         "reserved_vram_bytes": reserved_vram_bytes,
         "provider_profile_id": profile.id,
         "fit": report.fit,
-        "note": "Memory is reserved and the provider profile is pending; weights are not \
-                 downloaded and no model server is started in this phase.",
+        "artifact": format!("huggingface:{}/{}", artifact.repo, artifact.file),
+        "serve_runtime": serve_runtime,
+        "note": "Memory is reserved. The node is fetching the artefact and will start the \
+                 server; the state moves through downloading and starting to installed.",
     }))
 }
 
@@ -631,6 +688,27 @@ pub async fn uninstall(
             .map_err(ApiError::from)?;
     }
 
+    // The server goes before the row does. If the node cannot stop it, the
+    // row stays: an install that is gone from the database while its container
+    // still holds memory is worse than an uninstall that has to be retried.
+    // The artefact stays on disk, so installing the same model again does not
+    // download it a second time.
+    scope.commit().await.map_err(ApiError::from)?;
+    if let Err(error) = ctx.runtime.stop_model(&install.model_key).await {
+        return Err(ApiError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            ErrorCode::NODE_RUNTIME_UNAVAILABLE,
+            format!(
+                "The model server for '{}' could not be stopped: {error}. The install was kept \
+                 so it can be retried.",
+                install.model_key
+            ),
+        ));
+    }
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+
     install_store::delete(&mut scope, install.id)
         .await
         .map_err(ApiError::from)?;
@@ -660,7 +738,440 @@ pub async fn uninstall(
         "node": node.name,
         "released_ram_bytes": install.reserved_ram_bytes,
         "released_vram_bytes": install.reserved_vram_bytes,
+        "server_stopped": true,
+        "note": "The artefact stays on the node; installing this model again reuses it.",
     }))
+}
+
+/// The `model_install` job body: fetch, start, probe, record.
+///
+/// Every network call happens outside a transaction, so a slow download does
+/// not hold a connection or a row lock. Each step writes the state an operator
+/// can see, which is what makes a stuck install diagnosable instead of just
+/// "installing" forever: `downloading` means the artefact, `starting` means the
+/// server, and a failure names which of the two it was.
+///
+/// Public so a test can drive it without an HTTP request and without the
+/// detached task.
+pub async fn run_install(
+    ctx: &ServiceContext,
+    environment_id: Uuid,
+    install_id: Uuid,
+    job_id: Uuid,
+) -> Result<(), ApiError> {
+    let mut scope = TenantScope::begin(&ctx.pool, environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let started = job_store::start(&mut scope, job_id).await;
+
+    let install = match install_store::get_by_id(&mut scope, install_id).await {
+        Ok(install) => install,
+        Err(error) => {
+            let message = "The install row no longer exists.";
+            let _ = job_store::log(&mut scope, job_id, "error", message).await;
+            let _ = job_store::finish(&mut scope, job_id, None).await;
+            let _ = scope.commit().await;
+            return Err(ApiError::from(error));
+        }
+    };
+    let model = store::get_by_key(&mut scope, &install.model_key).await?;
+    let node = nodes::get(&mut scope, install.node_id).await?;
+
+    let runtime_name = model.serve_runtime.clone().unwrap_or_default();
+    let image = store::server_image(&mut scope, &runtime_name).await?;
+    let artifact = Artifact::parse(model.artifact_ref.as_deref().unwrap_or_default());
+
+    let plan = match (started, artifact) {
+        (Ok(()), Some(artifact)) => Ok((model, node, image, artifact)),
+        (Err(error), _) => Err(ApiError::from(error)),
+        (_, None) => Err(ApiError::unprocessable(
+            ErrorCode::MODEL_NOT_SERVABLE,
+            "The catalogue row has no readable artefact reference.",
+        )),
+    };
+    scope.commit().await.map_err(ApiError::from)?;
+
+    let (model, node, image, artifact) = match plan {
+        Ok(plan) => plan,
+        Err(error) => {
+            return fail_install(ctx, environment_id, install_id, job_id, &error.message).await;
+        }
+    };
+
+    // 1. Fetch. The node owns the disk and the file names; it refuses anything
+    //    outside its model base and anything larger than the row advertised.
+    set_phase(
+        ctx,
+        environment_id,
+        install_id,
+        job_id,
+        InstallState::Downloading,
+        &format!("Fetching {} from {}.", artifact.file, artifact.repo),
+    )
+    .await?;
+
+    let expected = model
+        .weights_bytes
+        .filter(|bytes| *bytes > 0)
+        .map(|bytes| bytes + bytes / 5 + 64 * 1024 * 1024)
+        .unwrap_or(8 * 1024 * 1024 * 1024);
+    let download = ctx
+        .runtime
+        .download_model(ModelDownload {
+            model_key: model.key.clone(),
+            repo: artifact.repo.clone(),
+            file: artifact.file.clone(),
+            max_bytes: expected,
+        })
+        .await;
+    let download = match download {
+        Ok(download) => download,
+        Err(error) => {
+            return fail_install(
+                ctx,
+                environment_id,
+                install_id,
+                job_id,
+                &format!("The node could not fetch the artefact: {error}"),
+            )
+            .await;
+        }
+    };
+    log_install(
+        ctx,
+        environment_id,
+        job_id,
+        &format!(
+            "Artefact {} at {} ({} bytes, {}).",
+            artifact.file,
+            download.path,
+            download.bytes,
+            if download.cached { "already present" } else { "downloaded" }
+        ),
+    )
+    .await;
+
+    // 2. Start. The container gets the reservation as its memory limit, the
+    //    node's cores as threads, and nothing else: no privileges, no host
+    //    mounts beyond the read-only model directory.
+    let threads = node_budget_cores(ctx, environment_id, node.id).await;
+    let model_path = format!("/models/{}", artifact.file);
+    let command = image.command_for(&model_path, threads);
+    let memory_limit = install.reserved_ram_bytes.max(512 * 1024 * 1024);
+
+    set_phase(
+        ctx,
+        environment_id,
+        install_id,
+        job_id,
+        InstallState::Starting,
+        &format!("Starting {} on port {}.", image.image, image.port),
+    )
+    .await?;
+
+    let served = ctx
+        .runtime
+        .serve_model(ModelServe {
+            model_key: model.key.clone(),
+            image: image.digest.clone(),
+            command,
+            memory_limit_bytes: memory_limit,
+            cpu_cores: threads as f64,
+            port: image.port,
+        })
+        .await;
+    let served = match served {
+        Ok(served) => served,
+        Err(error) => {
+            let message = format!("The node could not start the model server: {error}");
+            // A container that failed to start may still exist half-created;
+            // removing it keeps the next attempt from finding a stale name.
+            let _ = ctx.runtime.stop_model(&model.key).await;
+            return fail_install(ctx, environment_id, install_id, job_id, &message).await;
+        }
+    };
+    log_install(
+        ctx,
+        environment_id,
+        job_id,
+        &format!("Server container {} is {}.", served.name, served.status),
+    )
+    .await;
+
+    // 3. Probe. A server that is up is not a server that has loaded the model:
+    //    llama.cpp answers only after the weights are mapped. The profile the
+    //    install created is the one sandboxes will use, so it is the thing that
+    //    has to answer.
+    let ready = wait_until_answering(ctx, environment_id, install.provider_profile_id).await;
+    let profile_id = install.provider_profile_id;
+    match ready {
+        Ok(detail) => {
+            let mut scope = TenantScope::begin(&ctx.pool, environment_id)
+                .await
+                .map_err(ApiError::from)?;
+            install_store::set_state(
+                &mut scope,
+                install_id,
+                InstallState::Installed,
+                Some(&model.version),
+                None,
+            )
+            .await
+            .map_err(ApiError::from)?;
+            if let Some(profile_id) = profile_id {
+                crate::store::postgres::providers::set_status(
+                    &mut scope,
+                    profile_id,
+                    crate::domain::provider::ProviderStatus::Reachable,
+                )
+                .await
+                .map_err(ApiError::from)?;
+            }
+            job_store::log(&mut scope, job_id, "info", &format!("Ready: {detail}."))
+                .await
+                .map_err(ApiError::from)?;
+            job_store::finish(&mut scope, job_id, Some(&serde_json::json!({
+                "model_key": model.key,
+                "node": node.name,
+                "container": served.name,
+                "bytes": download.bytes,
+            })))
+            .await
+            .map_err(ApiError::from)?;
+            scope.commit().await.map_err(ApiError::from)?;
+            Ok(())
+        }
+        Err(detail) => {
+            let _ = ctx.runtime.stop_model(&model.key).await;
+            let message = format!("The model server never answered: {detail}");
+            fail_install(ctx, environment_id, install_id, job_id, &message).await
+        }
+    }
+}
+
+/// Settle interrupted installs in every environment.
+///
+/// A boot routine is cross-tenant maintenance like the builder's: it lists the
+/// environments unscoped (`environments` has no row-level policy, ADR 0004) and
+/// writes only inside each tenant scope.
+pub async fn settle_all(ctx: &ServiceContext) -> Result<u64, ApiError> {
+    let environments: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM environments")
+        .fetch_all(&ctx.pool)
+        .await
+        .map_err(|error| ApiError::from(StoreError::Database(error)))?;
+    let mut settled = 0;
+    for environment_id in environments {
+        settled += settle_serving(ctx, environment_id).await?;
+    }
+    Ok(settled)
+}
+
+/// Settle the installs a restart interrupted.
+///
+/// The pipeline runs detached. When the process dies between the reservation
+/// and the answer, the row says `downloading` or `starting` and the job says
+/// `running`, and neither will ever move. The boot stops whatever container the
+/// node may have started and records the failure, so the operator can retry
+/// without first finding a stale server.
+pub async fn settle_serving(ctx: &ServiceContext, environment_id: Uuid) -> Result<u64, ApiError> {
+    let mut scope = TenantScope::begin(&ctx.pool, environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let stale = sqlx::query_scalar::<_, String>(
+        "SELECT model_key FROM model_installs
+          WHERE environment_id = $1 AND state IN ('downloading', 'starting')",
+    )
+    .bind(environment_id)
+    .fetch_all(scope.connection())
+    .await
+    .map_err(|error| ApiError::from(StoreError::Database(error)))?;
+    scope.commit().await.map_err(ApiError::from)?;
+
+    for key in &stale {
+        // Best effort: a node that is gone has nothing to stop, and the row
+        // still has to be settled.
+        let _ = ctx.runtime.stop_model(key).await;
+    }
+
+    let mut scope = TenantScope::begin(&ctx.pool, environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let message = "The control plane restarted before the install finished. Install the model again.";
+    let settled = sqlx::query(
+        "UPDATE model_installs
+            SET state = 'failed', error = $2, updated_at = now()
+          WHERE environment_id = $1 AND state IN ('downloading', 'starting')",
+    )
+    .bind(environment_id)
+    .bind(message)
+    .execute(scope.connection())
+    .await
+    .map_err(|error| ApiError::from(StoreError::Database(error)))?
+    .rows_affected();
+
+    sqlx::query(
+        "UPDATE jobs
+            SET status = 'failed', error = $2, finished_at = now(), updated_at = now()
+          WHERE environment_id = $1 AND kind = 'model_install' AND status = 'running'",
+    )
+    .bind(environment_id)
+    .bind(message)
+    .execute(scope.connection())
+    .await
+    .map_err(|error| ApiError::from(StoreError::Database(error)))?;
+
+    sqlx::query(
+        "UPDATE provider_profiles
+            SET status = 'unreachable', updated_at = now()
+          WHERE environment_id = $1
+            AND id IN (SELECT provider_profile_id FROM model_installs
+                        WHERE environment_id = $1 AND state = 'failed'
+                          AND provider_profile_id IS NOT NULL)",
+    )
+    .bind(environment_id)
+    .execute(scope.connection())
+    .await
+    .map_err(|error| ApiError::from(StoreError::Database(error)))?;
+
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(settled)
+}
+
+/// Move an install to a phase and say so in the job log.
+async fn set_phase(
+    ctx: &ServiceContext,
+    environment_id: Uuid,
+    install_id: Uuid,
+    job_id: Uuid,
+    state: InstallState,
+    message: &str,
+) -> Result<(), ApiError> {
+    let mut scope = TenantScope::begin(&ctx.pool, environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    install_store::set_state(&mut scope, install_id, state, None, None)
+        .await
+        .map_err(ApiError::from)?;
+    job_store::log(&mut scope, job_id, "info", message)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(())
+}
+
+/// Append one line to the install's job log, ignoring a missing job.
+async fn log_install(ctx: &ServiceContext, environment_id: Uuid, job_id: Uuid, message: &str) {
+    if let Ok(mut scope) = TenantScope::begin(&ctx.pool, environment_id).await {
+        let _ = job_store::log(&mut scope, job_id, "info", message).await;
+        let _ = scope.commit().await;
+    }
+}
+
+/// Record a failed install: state, error, profile status, job.
+async fn fail_install(
+    ctx: &ServiceContext,
+    environment_id: Uuid,
+    install_id: Uuid,
+    job_id: Uuid,
+    message: &str,
+) -> Result<(), ApiError> {
+    let mut scope = TenantScope::begin(&ctx.pool, environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let install = install_store::set_state(
+        &mut scope,
+        install_id,
+        InstallState::Failed,
+        None,
+        Some(message),
+    )
+    .await
+    .map_err(ApiError::from)?;
+    if let Some(profile_id) = install.provider_profile_id {
+        crate::store::postgres::providers::set_status(
+            &mut scope,
+            profile_id,
+            crate::domain::provider::ProviderStatus::Unreachable,
+        )
+        .await
+        .map_err(ApiError::from)?;
+    }
+    job_store::log(&mut scope, job_id, "error", message)
+        .await
+        .map_err(ApiError::from)?;
+    job_store::finish(&mut scope, job_id, None)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(())
+}
+
+/// Wait until the install's provider profile answers, or give up.
+///
+/// llama.cpp loads the GGUF before it serves, which on four cores takes tens of
+/// seconds for a small model and longer for a large one. The bound is generous
+/// but finite, because "still starting" forever is the failure mode this whole
+/// state machine exists to avoid.
+async fn wait_until_answering(
+    ctx: &ServiceContext,
+    environment_id: Uuid,
+    profile_id: Option<Uuid>,
+) -> Result<String, String> {
+    let profile_id = profile_id.ok_or_else(|| "the install has no provider profile".to_string())?;
+    let mut last = "no attempt was made".to_string();
+    for attempt in 0..40 {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        }
+        let profile = {
+            let mut scope = match TenantScope::begin(&ctx.pool, environment_id).await {
+                Ok(scope) => scope,
+                Err(error) => return Err(format!("could not read the profile: {error}")),
+            };
+            let profile = crate::store::postgres::providers::get(&mut scope, profile_id).await;
+            let _ = scope.commit().await;
+            match profile {
+                Ok(profile) => profile,
+                Err(error) => return Err(format!("could not read the profile: {error}")),
+            }
+        };
+        let probe = super::provider_service::measure(ctx, &profile).await;
+        if probe.reachable {
+            return Ok(format!(
+                "{} answered with {} model(s){}",
+                profile.endpoint,
+                probe.model_count.unwrap_or(0),
+                if probe.detail.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", probe.detail)
+                }
+            ));
+        }
+        last = if probe.detail.is_empty() {
+            "no detail".to_string()
+        } else {
+            probe.detail
+        };
+    }
+    Err(last)
+}
+
+/// The threads to give the server: the node's measured cores, at least one.
+async fn node_budget_cores(ctx: &ServiceContext, environment_id: Uuid, node_id: Uuid) -> i64 {
+    let measured = match TenantScope::begin(&ctx.pool, environment_id).await {
+        Ok(mut scope) => {
+            let found = store::latest_hardware(&mut scope, node_id).await;
+            let _ = scope.commit().await;
+            found.ok().flatten()
+        }
+        Err(_) => None,
+    };
+    measured
+        .and_then(|profile| profile.cpu_cores)
+        .map(i64::from)
+        .unwrap_or(1)
+        .max(1)
 }
 
 /// The node a request names, resolved in a transaction of its own.

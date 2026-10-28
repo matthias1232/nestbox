@@ -6,7 +6,7 @@
 const TONES = {
   running: 'ok', healthy: 'ok', succeeded: 'ok', valid: 'ok', installed: 'ok',
   built: 'ok',
-  starting: 'warn', provisioning: 'warn', degraded: 'warn', pending: 'warn',
+  starting: 'warn', downloading: 'warn', provisioning: 'warn', degraded: 'warn', pending: 'warn',
   updating: 'warn', expiring: 'warn', partial: 'warn', building: 'warn',
   stopped: 'muted', unknown: 'muted', cancelled: 'muted', not_installed: 'muted',
   draft: 'muted',

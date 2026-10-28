@@ -9,8 +9,8 @@ use reqwest::StatusCode;
 use serde::Deserialize;
 
 use crate::domain::runtime::{
-    BuildRequest, BuildResult, ExecResult, HardwareReport, NetworkInterface, RuntimeFacts,
-    RuntimeResources, SandboxSpec,
+    BuildRequest, BuildResult, ExecResult, HardwareReport, ModelDownload, ModelDownloadResult,
+    ModelServe, ModelServeResult, NetworkInterface, RuntimeFacts, RuntimeResources, SandboxSpec,
 };
 use crate::runtime::{RuntimeAdapter, RuntimeError};
 
@@ -252,6 +252,42 @@ impl RuntimeAdapter for HttpRunner {
             .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
         self.send(reqwest::Method::POST, "/v1/builds", Some(&payload))
             .await
+    }
+
+    async fn download_model(
+        &self,
+        request: ModelDownload,
+    ) -> Result<ModelDownloadResult, RuntimeError> {
+        let payload = serde_json::to_value(&request)
+            .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        // A download can run for minutes on a slow line, and the default client
+        // timeout is set for exec, not for a multi-gigabyte file.
+        self.send(reqwest::Method::POST, "/v1/models/download", Some(&payload))
+            .await
+    }
+
+    async fn serve_model(&self, request: ModelServe) -> Result<ModelServeResult, RuntimeError> {
+        let payload = serde_json::to_value(&request)
+            .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        self.send(reqwest::Method::POST, "/v1/models/serve", Some(&payload))
+            .await
+    }
+
+    async fn stop_model(&self, model_key: &str) -> Result<(), RuntimeError> {
+        // The runner answers 404 when the container is already gone. That is
+        // the state the caller wants, so it is not an error here.
+        match self
+            .send::<serde_json::Value>(
+                reqwest::Method::DELETE,
+                &format!("/v1/models/serve/{model_key}"),
+                None,
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(RuntimeError::NotFound(_)) => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 }
 

@@ -7,6 +7,7 @@ OpenShell SDK adapter without changing the public control-plane contract.
 from __future__ import annotations
 
 import os
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -313,6 +314,238 @@ def build_image(body: BuildRequest) -> dict[str, Any]:
         return {"tag": body.tag, "image_id": None, "log": ("".join(log_lines) + str(exc))[-65536:], "success": False}
     except DockerException as exc:
         raise HTTPException(400, f"build failed: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# Model serving: fetch one artefact, then run one server container per install.
+#
+# The control plane decides *what* to install; this process decides *how*, on
+# the machine that has the disk and the Docker socket. Two rules keep a buggy
+# caller from turning that into host access:
+#
+#   1. the image must be on the allowlist, by digest, and
+#   2. the file names are validated, and none of them can leave the model base.
+#
+# The model container joins the same internal runtime network as the sandboxes
+# that select its profile, and nothing else.
+# ---------------------------------------------------------------------------
+
+MODEL_BASE = os.path.realpath(os.getenv("NESTBOX_MODEL_BASE", "/var/lib/nestbox/models"))
+MODEL_IMAGES = set(filter(None, os.getenv("NESTBOX_MODEL_IMAGES", "").split(",")))
+MODEL_CONTAINER_PREFIX = "model-"
+MODEL_KEY = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+MODEL_REPO = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
+MODEL_FILE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.gguf$")
+# A download may not be larger than this, whatever the caller asks for: the
+# node's disk is shared with everything else.
+MODEL_DOWNLOAD_CEILING = int(os.getenv("NESTBOX_MODEL_MAX_BYTES", str(32 * 1024**3)))
+MODEL_CONTAINER_PATH = "/models"
+
+
+def model_key(value: str) -> str:
+    if not MODEL_KEY.match(value):
+        raise HTTPException(422, "model key is not a lowercase slug")
+    return value
+
+
+def model_directory(key: str) -> str:
+    """The directory for one model, refused if it is not inside the base.
+
+    `realpath` after the join means `..` and a symlink are both resolved before
+    the prefix check, so neither can name a directory outside the base.
+    """
+    directory = os.path.realpath(os.path.join(MODEL_BASE, key))
+    if os.path.commonpath([MODEL_BASE, directory]) != MODEL_BASE:
+        raise HTTPException(422, "model directory escapes the model base")
+    return directory
+
+
+def model_container(key: str) -> str:
+    # The same transform the control plane uses for the provider endpoint, so
+    # `model-<host>` in the profile is the container that actually runs.
+    return MODEL_CONTAINER_PREFIX + key.replace(".", "-").replace(":", "-").replace("/", "-").lower()
+
+
+class ModelDownloadRequest(BaseModel):
+    model_key: str
+    repo: str
+    file: str
+    max_bytes: int = Field(gt=0)
+
+
+@app.post("/v1/models/download")
+def download_model(body: ModelDownloadRequest) -> dict[str, Any]:
+    """Fetch one file from Hugging Face into the model base.
+
+    Written to `<file>.part` and renamed only after the last byte, so an
+    interrupted download is never mistaken for a finished artefact. A file that
+    is already there is not fetched again: an install retried after a crash
+    resumes at "serve", not at "download".
+    """
+    import shutil
+    import urllib.error
+    import urllib.request
+
+    key = model_key(body.model_key)
+    if not MODEL_REPO.match(body.repo):
+        raise HTTPException(422, "repository must be 'org/name'")
+    if not MODEL_FILE.match(body.file):
+        raise HTTPException(422, "only a *.gguf file from the repository root is accepted")
+    limit = min(body.max_bytes, MODEL_DOWNLOAD_CEILING)
+
+    directory = model_directory(key)
+    os.makedirs(directory, exist_ok=True)
+    target = os.path.join(directory, body.file)
+    partial = target + ".part"
+
+    if os.path.exists(target):
+        return {"path": target, "bytes": os.path.getsize(target), "cached": True}
+
+    url = f"https://huggingface.co/{body.repo}/resolve/main/{body.file}"
+    request = urllib.request.Request(url, headers={"User-Agent": "nestbox-runner"})
+    written = 0
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response, open(partial, "wb") as sink:
+            declared = response.headers.get("Content-Length")
+            if declared is not None and int(declared) > limit:
+                raise HTTPException(
+                    422,
+                    f"{body.file} is {int(declared)} bytes, above the {limit}-byte limit for this node",
+                )
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > limit:
+                    raise HTTPException(422, f"{body.file} grew past the {limit}-byte limit")
+                sink.write(chunk)
+            sink.flush()
+            os.fsync(sink.fileno())
+    except HTTPException:
+        if os.path.exists(partial):
+            os.remove(partial)
+        raise
+    except urllib.error.HTTPError as exc:
+        if os.path.exists(partial):
+            os.remove(partial)
+        raise HTTPException(404, f"Hugging Face answered {exc.code} for {body.repo}/{body.file}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        if os.path.exists(partial):
+            os.remove(partial)
+        raise HTTPException(502, f"download failed: {exc}") from exc
+
+    shutil.move(partial, target)
+    return {"path": target, "bytes": written, "cached": False}
+
+
+class ModelServeRequest(BaseModel):
+    model_key: str
+    image: str = Field(min_length=1, max_length=256)
+    command: list[str] = Field(min_length=1, max_length=32)
+    memory_limit_bytes: int = Field(gt=0)
+    cpu_cores: float = Field(gt=0, le=64)
+    port: int = Field(ge=1024, le=65535)
+
+
+@app.post("/v1/models/serve")
+def serve_model(body: ModelServeRequest) -> dict[str, Any]:
+    """Start the server container for one installed artefact.
+
+    The image must be on `NESTBOX_MODEL_IMAGES`, an exact digest reference. The
+    command is an argument vector, never a shell string; every absolute path in
+    it must be the model file this runner mounted, so the argument list cannot
+    be used to read something else.
+    """
+    key = model_key(body.model_key)
+    if body.image not in MODEL_IMAGES:
+        raise HTTPException(422, "image is not an approved model server image")
+
+    directory = model_directory(key)
+    if not os.path.isdir(directory):
+        raise HTTPException(404, f"no artefact for {key}: {directory} does not exist")
+    artefacts = sorted(name for name in os.listdir(directory) if name.endswith(".gguf"))
+    if len(artefacts) != 1:
+        raise HTTPException(409, f"expected exactly one .gguf for {key}, found {len(artefacts)}")
+    model_path = f"{MODEL_CONTAINER_PATH}/{artefacts[0]}"
+
+    for argument in body.command:
+        if "\x00" in argument or len(argument) > 256:
+            raise HTTPException(422, "invalid argument in the model server command")
+        if argument.startswith("/") and argument != model_path:
+            raise HTTPException(422, f"only {model_path} may be named as a path")
+
+    name = model_container(key)
+    try:
+        existing = client.containers.get(name)
+        existing.reload()
+        if existing.status == "running":
+            return {"name": name, "container_id": existing.id, "status": existing.status}
+        existing.remove(force=True)
+    except NotFound:
+        pass
+
+    ensure_network()
+    try:
+        client.images.get(body.image)
+    except NotFound:
+        client.images.pull(body.image)
+
+    try:
+        container = client.containers.run(
+            body.image,
+            body.command,
+            name=name,
+            detach=True,
+            network=NETWORK,
+            volumes={directory: {"bind": MODEL_CONTAINER_PATH, "mode": "ro"}},
+            mem_limit=str(body.memory_limit_bytes),
+            nano_cpus=int(body.cpu_cores * 1_000_000_000),
+            pids_limit=256,
+            cap_drop=["ALL"],
+            security_opt=["no-new-privileges"],
+            restart_policy={"Name": "unless-stopped"},
+            labels={
+                "nestbox.managed": "true",
+                "nestbox.kind": "model",
+                "nestbox.model": key,
+            },
+        )
+    except DockerException as exc:
+        raise HTTPException(400, f"the model server did not start: {exc}") from exc
+    return {"name": name, "container_id": container.id, "status": container.status}
+
+
+@app.get("/v1/models/serve/{key}")
+def inspect_model(key: str) -> dict[str, Any]:
+    name = model_container(model_key(key))
+    try:
+        item = client.containers.get(name)
+    except NotFound as exc:
+        raise HTTPException(404, f"no model server {name}") from exc
+    item.reload()
+    state = item.attrs.get("State", {})
+    return {
+        "name": name,
+        "container_id": item.id,
+        "status": item.status,
+        "exit_code": state.get("ExitCode"),
+        "error": state.get("Error", ""),
+    }
+
+
+@app.delete("/v1/models/serve/{key}")
+def stop_model(key: str) -> dict[str, Any]:
+    name = model_container(model_key(key))
+    try:
+        item = client.containers.get(name)
+    except NotFound:
+        raise HTTPException(404, f"no model server {name}") from None
+    try:
+        item.remove(force=True)
+    except DockerException as exc:
+        raise HTTPException(400, f"the model server did not stop: {exc}") from exc
+    return {"name": name, "stopped": True}
 
 
 @app.get("/v1/sandboxes")

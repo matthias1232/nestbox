@@ -51,6 +51,10 @@ impl ErrorCode {
     pub const MODEL_NOT_INSTALLABLE: Self = Self("model.not_installable");
     pub const MODEL_ALREADY_INSTALLED: Self = Self("model.already_installed");
     pub const MODEL_INSTALL_NOT_FOUND: Self = Self("model.install_not_found");
+    /// The catalogue row has no artefact this platform can fetch and serve.
+    pub const MODEL_NOT_SERVABLE: Self = Self("model.not_servable");
+    /// The node said no while fetching or starting the server.
+    pub const MODEL_SERVE_FAILED: Self = Self("model.serve_failed");
 
     pub const NODE_NOT_FOUND: Self = Self("node.not_found");
     pub const NODE_RUNTIME_UNAVAILABLE: Self = Self("node.runtime_unavailable");

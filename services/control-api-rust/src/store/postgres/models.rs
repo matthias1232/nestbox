@@ -10,8 +10,9 @@ use crate::error::StoreError;
 const MODEL_COLUMNS: &str = "id, key, name, family, parameters, context_length, quantization, \
      weights_bytes, min_vram_bytes, recommended_vram_bytes, min_gpu_count, min_ram_bytes, \
      recommended_ram_bytes, min_cpu_cores, recommended_cpu_cores, runtime, arch, \
-     artifact_format, publisher, license, description, unified_memory_only, is_cpu_only, \
-     source_uri, version, installed_version, state, installed_at, is_remote, provider_key";
+     artifact_format, artifact_ref, serve_runtime, publisher, license, description, \
+     unified_memory_only, is_cpu_only, source_uri, version, installed_version, state, \
+     installed_at, is_remote, provider_key";
 
 fn row_to_model(row: &sqlx::postgres::PgRow) -> Result<Model, StoreError> {
     let state_raw: String = row.try_get("state")?;
@@ -38,6 +39,8 @@ fn row_to_model(row: &sqlx::postgres::PgRow) -> Result<Model, StoreError> {
         runtime: ModelRuntime::parse(&runtime_raw).unwrap_or(ModelRuntime::Cuda),
         arch: row.try_get("arch")?,
         artifact_format: row.try_get("artifact_format")?,
+        artifact_ref: row.try_get("artifact_ref")?,
+        serve_runtime: row.try_get("serve_runtime")?,
         publisher: row.try_get("publisher")?,
         license: row.try_get("license")?,
         description: row.try_get("description")?,
@@ -530,4 +533,30 @@ pub async fn set_nim_available(
     .execute(scope.connection())
     .await?;
     Ok(result.rows_affected())
+}
+
+/// The server image registered for a runtime, e.g. `llama_cpp`.
+///
+/// Global reference data like the baselines: a runtime has one approved image,
+/// and the digest in this row is the only form the node will start.
+pub async fn server_image(
+    scope: &mut TenantScope<'_>,
+    runtime: &str,
+) -> Result<crate::domain::model_install::ModelServerImage, StoreError> {
+    let row = sqlx::query(
+        "SELECT runtime, image, digest, port, command, notes
+           FROM model_server_images WHERE runtime = $1",
+    )
+    .bind(runtime)
+    .fetch_optional(scope.connection())
+    .await?
+    .ok_or(StoreError::NotFound)?;
+    Ok(crate::domain::model_install::ModelServerImage {
+        runtime: row.try_get("runtime")?,
+        image: row.try_get("image")?,
+        digest: row.try_get("digest")?,
+        port: u16::try_from(row.try_get::<i32, _>("port")?).unwrap_or(8080),
+        command: row.try_get("command")?,
+        notes: row.try_get("notes")?,
+    })
 }

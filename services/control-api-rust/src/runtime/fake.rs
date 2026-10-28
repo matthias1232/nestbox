@@ -11,7 +11,10 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 
-use crate::domain::runtime::{BuildRequest, BuildResult, ExecResult, HardwareReport, RuntimeFacts, SandboxSpec};
+use crate::domain::runtime::{
+    BuildRequest, BuildResult, ExecResult, HardwareReport, ModelDownload, ModelDownloadResult,
+    ModelServe, ModelServeResult, RuntimeFacts, SandboxSpec,
+};
 use crate::runtime::{RuntimeAdapter, RuntimeError};
 
 /// Take a lock, recovering from poisoning.
@@ -29,6 +32,10 @@ fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 pub struct FakeRuntime {
     sandboxes: Mutex<BTreeMap<String, RuntimeFacts>>,
     specs: Mutex<Vec<SandboxSpec>>,
+    /// Model servers that are "running", by key, with the request that started
+    /// them, so a test can assert what the service asked for.
+    models: Mutex<BTreeMap<String, ModelServe>>,
+    downloads: Mutex<Vec<ModelDownload>>,
 }
 
 impl FakeRuntime {
@@ -39,6 +46,16 @@ impl FakeRuntime {
     /// Die Specs aller erzeugten Sandboxes – für Tests der Umgebungsvariablen.
     pub fn created_specs(&self) -> Vec<SandboxSpec> {
         lock(&self.specs).clone()
+    }
+
+    /// Model servers this fake has been asked to start, by catalog key.
+    pub fn served_models(&self) -> BTreeMap<String, ModelServe> {
+        lock(&self.models).clone()
+    }
+
+    /// Artefacts this fake has been asked to fetch, in order.
+    pub fn downloads(&self) -> Vec<ModelDownload> {
+        lock(&self.downloads).clone()
     }
 
     fn with_entry<T>(
@@ -184,5 +201,34 @@ impl RuntimeAdapter for FakeRuntime {
             log: "fake build".into(),
             success: true,
         })
+    }
+
+    async fn download_model(
+        &self,
+        request: ModelDownload,
+    ) -> Result<ModelDownloadResult, RuntimeError> {
+        // The fake claims the bytes without fetching them: a test that wants to
+        // know what was asked reads `downloads()`, not the filesystem.
+        lock(&self.downloads).push(request.clone());
+        Ok(ModelDownloadResult {
+            path: format!("/models/{}/{}", request.model_key, request.file),
+            bytes: 1024,
+            cached: false,
+        })
+    }
+
+    async fn serve_model(&self, request: ModelServe) -> Result<ModelServeResult, RuntimeError> {
+        let name = format!("model-{}", request.model_key.replace(['.', ':'], "-"));
+        lock(&self.models).insert(request.model_key.clone(), request);
+        Ok(ModelServeResult {
+            name,
+            container_id: Some("fake-container".into()),
+            status: "running".into(),
+        })
+    }
+
+    async fn stop_model(&self, model_key: &str) -> Result<(), RuntimeError> {
+        lock(&self.models).remove(model_key);
+        Ok(())
     }
 }

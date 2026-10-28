@@ -2,14 +2,15 @@
 //
 // The screen answers three questions in order: what does this machine have, what
 // does each model need, and where is the gap. Every verdict is the server's; the
-// filters only switch verdicts on and off. Nothing is downloaded yet — the
-// install button creates a job, and the UI says so rather than implying
-// progress that does not exist.
+// filters only switch verdicts on and off. Install reserves memory and starts a
+// server; the install list shows which of the two the node is doing, because a
+// reservation that never becomes an answer is the failure worth seeing.
 
 import { For, Show, createMemo, createSignal, onMount } from 'solid-js';
 import CapacityOverview from '../../components/CapacityOverview.jsx';
 import * as nodeApi from '../../api/nodes.js';
 import ModelFitCell from '../../components/ModelFitCell.jsx';
+import StatusBadge from '../../components/StatusBadge.jsx';
 import { gib } from '../../components/ResourceBars.jsx';
 import * as models from '../../api/models.js';
 
@@ -265,11 +266,17 @@ export default function ModelsPage() {
       </Show>
 
       <Show when={installs().length}>
-        <details class="installs">
-          <summary>{installs().length} installed on {nodeName()}</summary>
+        <details class="installs" open>
+          <summary>
+            {installs().length} on {nodeName()}
+            {' '}
+            <button class="secondary" onClick={() => load(false)} disabled={busy()}>
+              Refresh
+            </button>
+          </summary>
           <table class="model-table">
             <thead>
-              <tr><th>Model</th><th>State</th><th>Reserved</th><th>Provider</th></tr>
+              <tr><th>Model</th><th>State</th><th>Reserved</th><th>Endpoint</th></tr>
             </thead>
             <tbody>
               <For each={installs()}>
@@ -277,13 +284,24 @@ export default function ModelsPage() {
                   <tr>
                     <td>{row.model_name || row.model_key}</td>
                     <td>
-                      {row.state}
+                      <StatusBadge status={row.state} />
                       <Show when={row.state === 'installing'}>
-                        <span class="muted small"> — memory reserved, server not started (phase 2)</span>
+                        <span class="muted small"> — reserved, the job has not started yet</span>
+                      </Show>
+                      <Show when={row.state === 'downloading'}>
+                        <span class="muted small"> — the node is fetching the artefact</span>
+                      </Show>
+                      <Show when={row.state === 'starting'}>
+                        <span class="muted small"> — server up, loading the weights</span>
+                      </Show>
+                      <Show when={row.state === 'failed' && row.error}>
+                        <div class="muted small">{row.error}</div>
                       </Show>
                     </td>
                     <td>{gib(row.reserved_ram_bytes || 0)} RAM</td>
-                    <td class="muted small">{row.provider_profile_id ? 'pending' : '—'}</td>
+                    <td class="muted small">
+                      {row.state === 'installed' ? 'answering on the runtime network' : '—'}
+                    </td>
                   </tr>
                 )}
               </For>

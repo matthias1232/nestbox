@@ -94,7 +94,10 @@ pub async fn create_for_install(
     // become hyphens: `qwen3-1.7b` serves at `model-qwen3-1-7b`.
     let host = install.model_key.replace(['.', ':', '/'], "-").to_lowercase();
     let name = format!("local/{}@{}", install.model_key, node.name);
-    let endpoint = format!("http://model-{host}:8000/v1");
+    // 8080 is the port `model_server_images` starts the server on. The profile
+    // is created before the container exists, so the number lives in two
+    // places; the install probe is what proves they agree.
+    let endpoint = format!("http://model-{host}:8080/v1");
     store::insert_pending_for_install(
         scope,
         &name,
@@ -343,7 +346,7 @@ pub async fn probe(
 /// HTTP answer counts as reachable even when it is a 401: the server is up and
 /// the credential is the problem, which is a different fix from "nothing is
 /// listening".
-async fn measure(ctx: &ServiceContext, profile: &ProviderProfile) -> ProbeResult {
+pub(crate) async fn measure(ctx: &ServiceContext, profile: &ProviderProfile) -> ProbeResult {
     let credential = match profile.secret_ref.as_deref() {
         Some(locator) => match secrets::resolve(locator, &ctx.secret_dir) {
             Ok(value) => Some(value),

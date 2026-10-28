@@ -7,7 +7,10 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::domain::runtime::{BuildRequest, BuildResult, ExecResult, HardwareReport, RuntimeFacts, SandboxSpec};
+use crate::domain::runtime::{
+    BuildRequest, BuildResult, ExecResult, HardwareReport, ModelDownload, ModelDownloadResult,
+    ModelServe, ModelServeResult, RuntimeFacts, SandboxSpec,
+};
 
 /// Fehler aus der Ausführungsschicht.
 #[derive(Debug, Error)]
@@ -70,6 +73,22 @@ pub trait RuntimeAdapter: Send + Sync {
 
     /// Build an image from a generated Dockerfile.
     async fn build(&self, request: BuildRequest) -> Result<BuildResult, RuntimeError>;
+
+    /// Fetch one model artefact onto the node.
+    ///
+    /// The download runs on the node, not here: the control plane has neither
+    /// the disk nor the bandwidth, and a half-written file must not look like a
+    /// finished install on a machine it cannot see.
+    async fn download_model(&self, request: ModelDownload) -> Result<ModelDownloadResult, RuntimeError>;
+
+    /// Start the model server container for an install.
+    async fn serve_model(&self, request: ModelServe) -> Result<ModelServeResult, RuntimeError>;
+
+    /// Stop and remove a model server, if it exists.
+    ///
+    /// Idempotent: removing a server that is already gone is not an error, so an
+    /// uninstall that follows a crashed install still finishes.
+    async fn stop_model(&self, model_key: &str) -> Result<(), RuntimeError>;
 }
 
 pub mod fake;
