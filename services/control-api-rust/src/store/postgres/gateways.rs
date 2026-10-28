@@ -195,6 +195,41 @@ pub async fn insert_supervisor(
     })
 }
 
+/// Point a supervisor at a sandbox.
+///
+/// A supervisor whose sandbox was recreated keeps its identity and loses the
+/// link (the foreign key clears it); the operator re-binds it here rather than
+/// deleting and creating a row with the same name.
+pub async fn set_supervisor_sandbox(
+    scope: &mut TenantScope<'_>,
+    id: Uuid,
+    sandbox_id: Uuid,
+) -> Result<Supervisor, StoreError> {
+    let row = sqlx::query(
+        "UPDATE supervisors SET sandbox_id = $2, last_seen = now()
+          WHERE id = $1
+      RETURNING id, gateway_id, sandbox_id, name, status, version,
+                config_dirtiness, last_policy_applied_at, last_seen",
+    )
+    .bind(id)
+    .bind(sandbox_id)
+    .fetch_optional(scope.connection())
+    .await?
+    .ok_or(StoreError::NotFound)?;
+    let status_raw: String = row.try_get("status")?;
+    Ok(Supervisor {
+        id: row.try_get("id")?,
+        gateway_id: row.try_get("gateway_id")?,
+        sandbox_id: row.try_get("sandbox_id")?,
+        name: row.try_get("name")?,
+        status: SupervisorStatus::parse(&status_raw).unwrap_or(SupervisorStatus::Unknown),
+        version: row.try_get("version")?,
+        config_dirtiness: row.try_get("config_dirtiness")?,
+        last_policy_applied_at: row.try_get("last_policy_applied_at")?,
+        last_seen: row.try_get("last_seen")?,
+    })
+}
+
 /// All supervisors in this environment.
 pub async fn list_supervisors(scope: &mut TenantScope<'_>) -> Result<Vec<Supervisor>, StoreError> {
     let rows = sqlx::query(

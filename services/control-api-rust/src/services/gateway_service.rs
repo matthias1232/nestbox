@@ -299,6 +299,55 @@ pub async fn create_supervisor(
     Ok(supervisor)
 }
 
+/// Bind a registered supervisor to a sandbox.
+///
+/// The sandbox must exist in this environment; the row keeps its name and
+/// gateway, so re-binding after a sandbox is recreated does not create a second
+/// supervisor nobody meant to make.
+pub async fn bind_supervisor(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    id: Uuid,
+    sandbox_id: Uuid,
+) -> Result<Supervisor, ApiError> {
+    require(principal, Permission::GatewayWrite)?;
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+
+    crate::store::postgres::sandboxes::get(&mut scope, sandbox_id)
+        .await
+        .map_err(|error| match error {
+            StoreError::NotFound => ApiError::not_found(
+                ErrorCode::SANDBOX_NOT_FOUND,
+                "No such sandbox in this environment.",
+            ),
+            other => ApiError::from(other),
+        })?;
+
+    let supervisor = store::set_supervisor_sandbox(&mut scope, id, sandbox_id)
+        .await
+        .map_err(ApiError::from)?;
+
+    crate::store::postgres::audit::record(
+        &mut scope,
+        crate::store::postgres::audit::NewAuditEvent {
+            actor_id: Some(principal.user_id),
+            actor_label: &principal.display_name,
+            kind: "supervisor.bind",
+            subject_type: Some("supervisor"),
+            subject_id: Some(supervisor.id),
+            detail: &serde_json::json!({ "sandbox_id": sandbox_id }),
+            request_id: None,
+        },
+    )
+    .await
+    .map_err(ApiError::from)?;
+
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(supervisor)
+}
+
 /// The cluster graph.
 ///
 /// Nodes are gateways and sandboxes, and an edge means "this gateway carries

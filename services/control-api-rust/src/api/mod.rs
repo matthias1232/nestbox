@@ -29,7 +29,7 @@ pub mod topology;
 pub mod traffic;
 
 use axum::Router;
-use axum::routing::{any, delete, get, post, put};
+use axum::routing::{any, delete, get, patch, post, put};
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::TraceLayer;
 
@@ -216,6 +216,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/supervisors",
             get(cluster::supervisors).post(cluster::create_supervisor),
+        )
+        .route(
+            "/api/v1/supervisors/{id}",
+            patch(cluster::bind_supervisor),
         )
         .route("/api/v1/topology", get(topology::topology))
         // Providers

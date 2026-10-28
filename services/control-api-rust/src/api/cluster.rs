@@ -102,6 +102,29 @@ pub async fn create_supervisor(
     Ok((StatusCode::CREATED, Json(supervisor)))
 }
 
+/// The body of a re-bind.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct BindSupervisorRequest {
+    pub sandbox_id: Uuid,
+}
+
+/// Bind a supervisor to a sandbox.
+pub async fn bind_supervisor(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<BindSupervisorRequest>,
+) -> Result<Json<crate::domain::gateway::Supervisor>, ApiError> {
+    let supervisor = gateway_service::bind_supervisor(
+        &state.services,
+        &auth.principal,
+        id,
+        body.sandbox_id,
+    )
+    .await?;
+    Ok(Json(supervisor))
+}
+
 /// List supervisors.
 pub async fn supervisors(
     State(state): State<AppState>,
