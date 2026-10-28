@@ -567,13 +567,8 @@ fn control_frame(text: &str) -> Option<serde_json::Value> {
         return None;
     }
     let value: serde_json::Value = serde_json::from_str(text).ok()?;
-    if value
-        .get("type")
-        .and_then(serde_json::Value::as_str)
-        .is_none()
-    {
-        return None;
-    }
+    // The `?` is the rule: no string `type` means this is typing, not control.
+    value.get("type")?.as_str()?;
     Some(value)
 }
 
@@ -757,8 +752,10 @@ mod tests {
     #[tokio::test]
     async fn a_browser_that_leaves_ends_the_session() {
         let mut terminal = TestTerminal::new();
-        let mut client = TestClient::default();
-        client.gone = true;
+        let mut client = TestClient {
+            gone: true,
+            ..TestClient::default()
+        };
 
         let outcome = pump(&mut terminal, &mut client, DEFAULT_IDLE).await;
 
