@@ -103,6 +103,7 @@ pub const OPERATIONS: &[Operation] = &[
     op("PUT", "/api/v1/gateways/{id}/settings", "Replace gateway configuration", "cluster", "admin", true, StreamKind::None),
     op("POST", "/api/v1/gateways/{id}/sync", "Push configuration and clear drift", "cluster", "admin", true, StreamKind::None),
     op("GET", "/api/v1/supervisors", "List supervisors and their config dirtiness", "cluster", "viewer", false, StreamKind::None),
+    op("POST", "/api/v1/supervisors", "Register a supervisor for a sandbox", "cluster", "operator", true, StreamKind::None),
     op("GET", "/api/v1/topology", "The cluster graph", "cluster", "viewer", false, StreamKind::None),
     op("GET", "/api/v1/providers", "List provider endpoint profiles", "providers", "viewer", false, StreamKind::None),
     op("POST", "/api/v1/providers", "Register a provider profile", "providers", "operator", true, StreamKind::None),

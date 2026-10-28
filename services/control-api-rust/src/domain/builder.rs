@@ -290,7 +290,7 @@ pub fn entrypoint_command(agents: &[AgentLaunch]) -> Vec<String> {
         let home = agent.home_mode.home_path(&agent.instance);
         let quoted = quote(&home);
         script.push_str(&format!(
-            "\n# agent {} in {} ({})\nmkdir -p {quoted}\n(\n  cd {quoted} || exit 1\n  export HOME={quoted}\n",
+            "\necho \"nestbox: starting {0} in {1}\"\n# agent {0} in {1} ({2})\nmkdir -p {quoted}\n(\n  cd {quoted} || exit 1\n  export HOME={quoted}\n",
             agent.instance,
             home,
             if agent.home_mode == HomeMode::Shared {
@@ -317,7 +317,7 @@ pub fn entrypoint_command(agents: &[AgentLaunch]) -> Vec<String> {
     }
 
     script.push_str(
-        "\n# The first agent to stop ends the sandbox: a sandbox with a dead\n\
+        "\necho \"nestbox: supervisor up\"\n\n# The first agent to stop ends the sandbox: a sandbox with a dead\n\
          # agent is not healthy, and restarting is the operator's decision.\n\
          wait -n\n\
          status=$?\n\

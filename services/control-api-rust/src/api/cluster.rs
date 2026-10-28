@@ -1,6 +1,7 @@
 //! Gateway, supervisor, and topology endpoints.
 
 use axum::Json;
+use axum::http::StatusCode;
 use axum::extract::{Path, State};
 use serde::Deserialize;
 use utoipa::ToSchema;
@@ -73,6 +74,32 @@ pub async fn sync(
     Ok(Json(
         gateway_service::sync(&state.services, &auth.principal, id).await?,
     ))
+}
+
+/// The body of a supervisor registration.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct CreateSupervisorRequest {
+    /// A slug, unique per gateway.
+    pub name: String,
+    /// The sandbox this supervisor watches, when it has one.
+    #[serde(default)]
+    pub sandbox_id: Option<Uuid>,
+}
+
+/// Register a supervisor for a sandbox.
+pub async fn create_supervisor(
+    State(state): State<AppState>,
+    auth: Auth,
+    Json(body): Json<CreateSupervisorRequest>,
+) -> Result<(StatusCode, Json<crate::domain::gateway::Supervisor>), ApiError> {
+    let supervisor = gateway_service::create_supervisor(
+        &state.services,
+        &auth.principal,
+        &body.name,
+        body.sandbox_id,
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(supervisor)))
 }
 
 /// List supervisors.

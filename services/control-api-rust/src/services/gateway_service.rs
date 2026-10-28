@@ -7,7 +7,7 @@ use crate::domain::auth::{Permission, Principal};
 use crate::domain::gateway::{Gateway, SettingsApplyMode, Supervisor, SyncOutcome, SyncResult};
 use crate::domain::job::JobKind;
 use crate::domain::telemetry::LiveEvent;
-use crate::error::{ApiError, ErrorCode};
+use crate::error::{ApiError, ErrorCode, StoreError};
 use crate::store::TenantScope;
 use crate::store::postgres::gateways as store;
 
@@ -202,6 +202,101 @@ pub async fn supervisors(
         .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
     Ok(supervisors)
+}
+
+/// Register a supervisor for a sandbox.
+///
+/// A supervisor is how the console answers "who watches this sandbox". The
+/// gateway is the one that accepts placement; the sandbox must exist in this
+/// environment, and the name is a slug so it can be a label on the node as
+/// well.
+pub async fn create_supervisor(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    name: &str,
+    sandbox_id: Option<Uuid>,
+) -> Result<Supervisor, ApiError> {
+    require(principal, Permission::GatewayWrite)?;
+
+    let name = name.trim();
+    let valid = !name.is_empty()
+        && name.len() <= 63
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        && name.as_bytes()[0].is_ascii_lowercase();
+    if !valid {
+        return Err(ApiError::validation(
+            "A supervisor name is a lowercase slug of letters, digits, and hyphens.",
+        ));
+    }
+
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+
+    let gateway = store::list(&mut scope)
+        .await
+        .map_err(ApiError::from)?
+        .into_iter()
+        .find(|gateway| gateway.accepts_placement())
+        .ok_or_else(|| {
+            ApiError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                ErrorCode::GATEWAY_NOT_READY,
+                "No gateway is healthy and in sync; a supervisor cannot be registered.",
+            )
+        })?;
+
+    if let Some(id) = sandbox_id {
+        crate::store::postgres::sandboxes::get(&mut scope, id)
+            .await
+            .map_err(|error| match error {
+                StoreError::NotFound => ApiError::not_found(
+                    ErrorCode::SANDBOX_NOT_FOUND,
+                    "No such sandbox in this environment.",
+                ),
+                other => ApiError::from(other),
+            })?;
+    }
+
+    let supervisor = store::insert_supervisor(
+        &mut scope,
+        gateway.id,
+        sandbox_id,
+        name,
+        "running",
+    )
+    .await
+    .map_err(|error| match error {
+        StoreError::UniqueViolation(_) => ApiError::conflict(
+            ErrorCode::RECIPE_INVALID,
+            format!("A supervisor named '{name}' already exists on this gateway."),
+        ),
+        other => ApiError::from(other),
+    })?;
+
+    crate::store::postgres::audit::record(
+        &mut scope,
+        crate::store::postgres::audit::NewAuditEvent {
+            actor_id: Some(principal.user_id),
+            actor_label: &principal.display_name,
+            kind: "supervisor.create",
+            subject_type: Some("supervisor"),
+            subject_id: Some(supervisor.id),
+            detail: &serde_json::json!({
+                "name": supervisor.name,
+                "gateway": gateway.name,
+                "sandbox_id": sandbox_id,
+            }),
+            request_id: None,
+        },
+    )
+    .await
+    .map_err(ApiError::from)?;
+
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(supervisor)
 }
 
 /// The cluster graph.

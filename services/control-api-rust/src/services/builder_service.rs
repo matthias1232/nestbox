@@ -48,7 +48,7 @@ use crate::store::postgres::{
 /// Bump this when the Dockerfile template changes in a way that must produce a
 /// new image for an unchanged recipe. Without it a code deploy would keep
 /// reusing the previous template's image because no recipe field moved.
-const GENERATOR_VERSION: u32 = 2;
+const GENERATOR_VERSION: u32 = 3;
 
 /// What a create or edit carries.
 ///

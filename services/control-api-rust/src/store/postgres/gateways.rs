@@ -157,6 +157,44 @@ pub async fn drifted(scope: &mut TenantScope<'_>) -> Result<Vec<Gateway>, StoreE
     Ok(out)
 }
 
+/// Record a supervisor for a sandbox on a gateway.
+///
+/// A supervisor is the runtime's name for "this gateway supervises that
+/// sandbox". The row is written by the control plane when an operator registers
+/// one; the runtime later reports its state.
+pub async fn insert_supervisor(
+    scope: &mut TenantScope<'_>,
+    gateway_id: Uuid,
+    sandbox_id: Option<Uuid>,
+    name: &str,
+    status: &str,
+) -> Result<Supervisor, StoreError> {
+    let row = sqlx::query(
+        "INSERT INTO supervisors (gateway_id, sandbox_id, name, status)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id, gateway_id, sandbox_id, name, status, version,
+                   config_dirtiness, last_policy_applied_at, last_seen",
+    )
+    .bind(gateway_id)
+    .bind(sandbox_id)
+    .bind(name)
+    .bind(status)
+    .fetch_one(scope.connection())
+    .await?;
+    let status_raw: String = row.try_get("status")?;
+    Ok(Supervisor {
+        id: row.try_get("id")?,
+        gateway_id: row.try_get("gateway_id")?,
+        sandbox_id: row.try_get("sandbox_id")?,
+        name: row.try_get("name")?,
+        status: SupervisorStatus::parse(&status_raw).unwrap_or(SupervisorStatus::Unknown),
+        version: row.try_get("version")?,
+        config_dirtiness: row.try_get("config_dirtiness")?,
+        last_policy_applied_at: row.try_get("last_policy_applied_at")?,
+        last_seen: row.try_get("last_seen")?,
+    })
+}
+
 /// All supervisors in this environment.
 pub async fn list_supervisors(scope: &mut TenantScope<'_>) -> Result<Vec<Supervisor>, StoreError> {
     let rows = sqlx::query(

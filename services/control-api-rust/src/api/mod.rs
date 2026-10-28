@@ -213,7 +213,10 @@ pub fn router(state: AppState) -> Router {
             put(cluster::update_settings),
         )
         .route("/api/v1/gateways/{id}/sync", post(cluster::sync))
-        .route("/api/v1/supervisors", get(cluster::supervisors))
+        .route(
+            "/api/v1/supervisors",
+            get(cluster::supervisors).post(cluster::create_supervisor),
+        )
         .route("/api/v1/topology", get(topology::topology))
         // Providers
         .route(
