@@ -126,6 +126,11 @@ pub struct Supervisor {
     pub config_dirtiness: i32,
     pub last_policy_applied_at: Option<DateTime<Utc>>,
     pub last_seen: Option<DateTime<Utc>>,
+    /// The last report as the supervisor sent it: its measured checks and the
+    /// facts behind them. `None` until the process has reported once, which is
+    /// what makes "no report" distinguishable from "reported nothing".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reported: Option<serde_json::Value>,
 }
 
 /// One measured best-practice check the supervisor reports.

@@ -38,6 +38,28 @@ export default function ClusterPage() {
     }
   }
 
+  /// The checks the supervisor measured, in the order it reported them.
+  function checksOf(supervisor) {
+    return supervisor?.reported?.checks || [];
+  }
+
+  /// Queue one whitelisted action and say what happened.
+  async function act(supervisor, kind) {
+    if (!supervisor.sandbox_id) {
+      setNotice(`${supervisor.name} is not bound to a sandbox.`);
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    try {
+      const outcome = await cluster.supervisorAction(supervisor.sandbox_id, kind);
+      setNotice(`${kind.replaceAll('_', ' ')} queued for ${supervisor.name} (${outcome.command_id.slice(0, 8)})`);
+      await load();
+    } catch (failure) {
+      setError(failure.message);
+    }
+  }
+
   async function sync(gateway) {
     setNotice(null);
     setError(null);
@@ -144,6 +166,7 @@ export default function ClusterPage() {
                 <tr>
                   <th>Name</th><th>Status</th><th class="narrow">Config dirtiness</th>
                   <th>Last policy apply</th><th>Last seen</th>
+                  <th>Checks</th><th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -158,6 +181,23 @@ export default function ClusterPage() {
                           : <span class="badge ok"><i />0</span>}
                       </td>
                       <td class="mono small">{supervisor.last_policy_applied_at || '—'}</td>
+                      <td class="small">
+                        <For each={checksOf(supervisor)}>
+                          {(check) => (
+                            <div class={`check ${check.state}`} title={check.detail}>
+                              <i class={`dot ${check.state === 'ok' ? 'ok' : check.state === 'warn' ? 'warn' : 'bad'}`} />
+                              {check.key}
+                            </div>
+                          )}
+                        </For>
+                        <Show when={checksOf(supervisor).length === 0}>
+                          <span class="muted">no report yet</span>
+                        </Show>
+                      </td>
+                      <td class="controls">
+                        <button class="tiny" onClick={() => act(supervisor, 'run_check')}>Check</button>
+                        <button class="tiny" onClick={() => act(supervisor, 'restart_agent')}>Restart</button>
+                      </td>
                       <td class="mono small">{supervisor.last_seen || '—'}</td>
                     </tr>
                   )}

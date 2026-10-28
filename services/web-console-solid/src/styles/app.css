@@ -349,3 +349,8 @@ ul.plain { list-style: none; padding: 0; margin: 0; display: flex; flex-directio
   border-radius: var(--radius);
 }
 .pending p { margin: 0; }
+
+/* Supervisor checks: one measured line per key, the dot carries the state. */
+.check { display: flex; align-items: center; gap: 2px; line-height: 1.5; }
+.check.fail { color: var(--bad); }
+.check.warn { color: var(--warn); }

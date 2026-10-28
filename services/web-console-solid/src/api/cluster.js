@@ -28,3 +28,24 @@ export function supervisors() {
 export function topology() {
   return request('topology');
 }
+
+// The settings document of the supervisor that watches one sandbox.
+export function supervisorSettings(sandboxId) {
+  return request(`sandboxes/${sandboxId}/settings`);
+}
+
+// Replace that document. The sandbox receives it when it is running.
+export function setSupervisorSettings(sandboxId, settings) {
+  return request(`sandboxes/${sandboxId}/settings`, {
+    method: 'PUT',
+    body: settings,
+  });
+}
+
+// Queue one whitelisted action for the sandbox's supervisor.
+export function supervisorAction(sandboxId, kind, payload = {}) {
+  return request(`sandboxes/${sandboxId}/supervisor/actions`, {
+    method: 'POST',
+    body: { kind, payload },
+  });
+}

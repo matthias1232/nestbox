@@ -192,6 +192,7 @@ pub async fn insert_supervisor(
         config_dirtiness: row.try_get("config_dirtiness")?,
         last_policy_applied_at: row.try_get("last_policy_applied_at")?,
         last_seen: row.try_get("last_seen")?,
+        reported: row.try_get("reported").unwrap_or(None),
     })
 }
 
@@ -226,6 +227,7 @@ pub async fn insert_supervisor_with_token(
         config_dirtiness: row.try_get("config_dirtiness")?,
         last_policy_applied_at: row.try_get("last_policy_applied_at")?,
         last_seen: row.try_get("last_seen")?,
+        reported: row.try_get("reported").unwrap_or(None),
     })
 }
 
@@ -286,7 +288,7 @@ pub async fn set_supervisor_sandbox(
         "UPDATE supervisors SET sandbox_id = $2, last_seen = now()
           WHERE id = $1
       RETURNING id, gateway_id, sandbox_id, name, status, version,
-                config_dirtiness, last_policy_applied_at, last_seen",
+                config_dirtiness, last_policy_applied_at, last_seen, reported",
     )
     .bind(id)
     .bind(sandbox_id)
@@ -304,6 +306,7 @@ pub async fn set_supervisor_sandbox(
         config_dirtiness: row.try_get("config_dirtiness")?,
         last_policy_applied_at: row.try_get("last_policy_applied_at")?,
         last_seen: row.try_get("last_seen")?,
+        reported: row.try_get("reported").unwrap_or(None),
     })
 }
 
@@ -321,7 +324,7 @@ pub async fn record_report(
                 last_seen = now(), reported = $6
           WHERE id = $1
       RETURNING id, gateway_id, sandbox_id, name, status, version,
-                config_dirtiness, last_policy_applied_at, last_seen",
+                config_dirtiness, last_policy_applied_at, last_seen, reported",
     )
     .bind(supervisor_id)
     .bind(report.status.as_str())
@@ -344,6 +347,7 @@ pub async fn record_report(
         config_dirtiness: row.try_get("config_dirtiness")?,
         last_policy_applied_at: row.try_get("last_policy_applied_at")?,
         last_seen: row.try_get("last_seen")?,
+        reported: row.try_get("reported").unwrap_or(None),
     };
 
     sqlx::query(
@@ -371,7 +375,7 @@ pub async fn record_report(
 pub async fn list_supervisors(scope: &mut TenantScope<'_>) -> Result<Vec<Supervisor>, StoreError> {
     let rows = sqlx::query(
         "SELECT s.id, s.gateway_id, s.sandbox_id, s.name, s.status, s.version,
-                s.config_dirtiness, s.last_policy_applied_at, s.last_seen
+                s.config_dirtiness, s.last_policy_applied_at, s.last_seen, s.reported
            FROM supervisors s
            JOIN gateways g ON g.id = s.gateway_id
            JOIN clusters c ON c.id = g.cluster_id
@@ -395,6 +399,7 @@ pub async fn list_supervisors(scope: &mut TenantScope<'_>) -> Result<Vec<Supervi
             config_dirtiness: row.try_get("config_dirtiness")?,
             last_policy_applied_at: row.try_get("last_policy_applied_at")?,
             last_seen: row.try_get("last_seen")?,
+            reported: row.try_get("reported").unwrap_or(None),
         });
     }
     Ok(out)
@@ -430,7 +435,7 @@ pub async fn topology(scope: &mut TenantScope<'_>) -> Result<serde_json::Value, 
 }
 
 const SUPERVISOR_COLUMNS: &str = "s.id, s.gateway_id, s.sandbox_id, s.name, s.status, s.version, \
-     s.config_dirtiness, s.last_policy_applied_at, s.last_seen";
+     s.config_dirtiness, s.last_policy_applied_at, s.last_seen, s.reported";
 
 fn row_to_supervisor(row: &sqlx::postgres::PgRow) -> Result<Supervisor, StoreError> {
     let status_raw: String = row.try_get("status")?;
@@ -444,6 +449,7 @@ fn row_to_supervisor(row: &sqlx::postgres::PgRow) -> Result<Supervisor, StoreErr
         config_dirtiness: row.try_get("config_dirtiness")?,
         last_policy_applied_at: row.try_get("last_policy_applied_at")?,
         last_seen: row.try_get("last_seen")?,
+        reported: row.try_get("reported").unwrap_or(None),
     })
 }
 
