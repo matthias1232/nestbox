@@ -28,7 +28,7 @@ in-memory store, and no import path. If you need state, it belongs in a table.
 | `docs/brain/` | Project knowledge for agents, in prose. |
 | `docs/architecture/` | Published architecture notes and data flow. |
 | `graphify-out/` | Generated knowledge graph. Do not edit by hand. |
-| `index.html`, `docs/` | The public website. It is the product specification. |
+| `docs/` | `adr/`, `architecture/`, `brain/`, `contracts/`: the project's own documentation. The public website and its generated pages live in the `nestbox-site` repository, not here. |
 
 ## Where do I change what?
 

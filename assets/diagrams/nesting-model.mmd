@@ -1,0 +1,13 @@
+flowchart LR
+  host["Host: /var/lib/nestbox/sandboxes/&lt;id&gt;/workspace"]
+  subgraph nest["Nest (sandbox)"]
+    ws["/sandbox (bind mount)"]
+    proc["unprivileged process"]
+    fs["Landlock: read_only / read_write"]
+    net["network policy blocks"]
+  end
+  host --> ws
+  proc --> fs
+  proc --> net
+  net -->|allow| api["api.anthropic.com:443"]
+  net -->|deny| everything["everything else"]

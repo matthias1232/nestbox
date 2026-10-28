@@ -1,0 +1,7 @@
+flowchart LR
+  a["discover<br/>latest LTS point release"] --> b["verify<br/>SHA256 + GPG"]
+  b --> c["render<br/>autoinstall + NoCloud seed"]
+  c --> d["bake<br/>livefs-editor on ISO copy"]
+  d --> e["first boot<br/>netplan · TLS · gateway · nest"]
+  e --> f["verify<br/>xorriso + QEMU smoke test"]
+  f --> g["publish<br/>SHA256 · SBOM · log"]

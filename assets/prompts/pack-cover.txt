@@ -1,0 +1,9 @@
+Shared style suffix, appended to every pack cover prompt:
+
+Minimal premium technical cover art for an open-source AI infrastructure project. Deep navy
+background #0B1020 with a very subtle grid and soft radial glow. Centered geometric symbol, thin
+luminous 1px cyan #22D3EE linework with a single amber #F59E0B accent element. Flat vector 3D,
+generous negative space, restrained glow, no background scenery. Absolutely no text, no words, no
+letters, no numbers, no logos, no brand marks, no people, no photographic detail.
+
+Size: 1024x1024. Output: assets/packs/<key>.jpg
