@@ -28,11 +28,13 @@ use uuid::Uuid;
 
 use nestbox_control_api::domain::auth::{CredentialSource, Principal, Role};
 use nestbox_control_api::domain::mcp::McpStatus;
+use nestbox_control_api::domain::metrics::{InventoryProbe, ProcessTable};
 use nestbox_control_api::domain::runtime::{
+    ModelDownload, ModelDownloadResult, ModelServe, ModelServeResult,
     BuildRequest, BuildResult, ExecResult, HardwareReport, RuntimeFacts, SandboxSpec,
 };
 use nestbox_control_api::error::ErrorCode;
-use nestbox_control_api::runtime::{RuntimeAdapter, RuntimeError};
+use nestbox_control_api::runtime::{BoxTerminal, RuntimeAdapter, RuntimeError};
 use nestbox_control_api::services::ServiceContext;
 use nestbox_control_api::services::mcp_service::{self, ServerInput};
 use nestbox_control_api::store::TenantScope;
@@ -204,6 +206,36 @@ impl RuntimeAdapter for AnsweringRuntime {
     }
 
     async fn build(&self, _request: BuildRequest) -> Result<BuildResult, RuntimeError> {
+        Err(RuntimeError::Rejected("not used in this suite".into()))
+    }
+
+    // The methods this suite does not exercise. They are named here rather than
+    // defaulted in the trait, so a real adapter that forgets one fails to
+    // compile instead of answering "unsupported" at run time.
+    async fn processes(&self, name: &str) -> Result<ProcessTable, RuntimeError> {
+        Err(RuntimeError::NotFound(name.to_string()))
+    }
+
+    async fn inventory(&self, name: &str) -> Result<InventoryProbe, RuntimeError> {
+        Err(RuntimeError::NotFound(name.to_string()))
+    }
+
+    async fn download_model(
+        &self,
+        _request: ModelDownload,
+    ) -> Result<ModelDownloadResult, RuntimeError> {
+        Err(RuntimeError::Rejected("not used in this suite".into()))
+    }
+
+    async fn serve_model(&self, _request: ModelServe) -> Result<ModelServeResult, RuntimeError> {
+        Err(RuntimeError::Rejected("not used in this suite".into()))
+    }
+
+    async fn stop_model(&self, _model_key: &str) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+
+    async fn open_terminal(&self, _name: &str) -> Result<BoxTerminal, RuntimeError> {
         Err(RuntimeError::Rejected("not used in this suite".into()))
     }
 }

@@ -1,4 +1,4 @@
--- 0025 — row-level security for the sandbox sessions.
+-- 0027 — row-level security for the sandbox sessions.
 --
 -- `sandbox_sessions` arrived in 0024 carrying an `environment_id`, but 0009 runs
 -- only once and its catalogue walk therefore never saw the table. The result was
