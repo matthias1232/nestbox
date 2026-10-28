@@ -38,6 +38,32 @@ the codebase where SQL appears.
 | `persistent_roots.rs` | Persistent roots, mounts, and the agents inside a sandbox |
 | `recipes.rs` | Recipes, the build outcome, and the link from a sandbox to its recipe |
 | `audit.rs` | Append-only audit writes |
+| `traffic.rs` | Traffic rows, window counts, map and live edges, one body read, MCP calls, effective rules, the two hashes behind "deployed" |
+
+## Reading the traffic log
+
+`traffic.rs` reads the proxy's access log out of `telemetry_events.detail` instead
+of a column per field, because the fields are the proxy's and they gain one at a
+time. Three consequences, all deliberate:
+
+1. **A malformed value is a `NULL`, not a failed page.** Every numeric field is
+   guarded by a regex in SQL before its cast, so one bad line cannot blank a
+   list of two hundred.
+2. **Two spellings are accepted for a destination** (`host` from the access log,
+   `destination` from the older telemetry type). A row written by either ingest
+   path appears; a reader that knew only one would show a gap where there is none.
+3. **A row without a decision is not traffic.** `decide` answers in three words,
+   and the first column of the table is that answer; inventing one would make the
+   table an opinion.
+
+Counts and edges are grouped in SQL, never assembled from returned rows: a
+five-minute window at ten thousand events a minute is a number the browser must
+not have to produce. Every statement is bounded by `ts`, `environment_id`,
+`sandbox_id`, and `LIMIT`.
+
+One carve-out: the **body read** lives here rather than in `traffic_bodies.rs`,
+because the body is shown from the traffic row and the read must be scoped by the
+same sandbox. `traffic_bodies.rs` keeps the write side and the retention sweep.
 
 ## Extending this folder
 

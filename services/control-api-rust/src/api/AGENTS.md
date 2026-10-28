@@ -55,6 +55,11 @@ The architecture test enforces the last two.
 | `sandboxes_terminal.rs` | The terminal WebSocket (`feat/terminal`) |
 | `topology.rs` | The cluster graph and its live edges (`feat/live-traffic`) |
 
+The Admin Center's read endpoints (`traffic.rs`, `topology.rs`) take a window and
+return a bounded page. `GET /topology` without `?live=` is the static graph
+unchanged; the parameter only appends edges, so a renderer that knows the static
+kinds keeps working.
+
 `models::hardware_json` is the one shape for a machine: the catalog envelope,
 `GET /models/hardware`, and `POST /nodes/{id}/probe` all use it, so it always
 names the node, its status, and whether containers there can have a GPU next to

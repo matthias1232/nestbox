@@ -68,6 +68,7 @@ shape it:
 | `agent_service.rs` | Agents inside a sandbox: which packs may join, homes and their persistence, the supervisor command |
 | `policy_service.rs` | Validation, diff, scope rules, global override, and the egress decider (`check`: windows, rules, one evidence row; `authenticate_node`; `deployment`) |
 | `telemetry_service.rs` | Ingest, live publish, history queries |
+| `traffic_service.rs` | Traffic rows with window counts, the map, one body, MCP calls, effective rules with the deployment comparison, live edges for the cluster graph (`feat/live-traffic`) |
 | `model_service.rs` | Hardware probing through a node's runner (CPU, RAM, GPU, unified pool), fit against a node's free budget, facets, catalog filters, installs and their reservations |
 | `node_service.rs` | The nodes list, one node with its budget, a node's sandboxes, name-or-id resolution, display rename |
 | `pack_service.rs` | Baselines, agent packs, and tool catalog as data; pack defaults by row, baseline compatibility, package-name resolution |
