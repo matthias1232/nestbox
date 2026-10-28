@@ -50,6 +50,13 @@ use crate::store::postgres::{
 /// reusing the previous template's image because no recipe field moved.
 const GENERATOR_VERSION: u32 = 3;
 
+/// The supervisor program shipped inside every image the builder produces.
+///
+/// It has to be part of the content hash: a fix in this file changes what the
+/// image runs, and an image tag that did not move would keep handing out the
+/// old program to every recipe that did not change.
+const SUPERVISOR_PROGRAM: &str = include_str!("../../../tool-images/supervisor/supervisor.py");
+
 /// What a create or edit carries.
 ///
 /// One struct for both verbs, because a recipe is replaced as a whole: a PATCH
@@ -308,7 +315,12 @@ pub async fn build(
     let recipe = store::get(&mut scope, id).await.map_err(recipe_error)?;
 
     let prepared = prepare(&mut scope, &input_from(&recipe), Some(recipe.node_id)).await?;
-    let hash = content_hash(&prepared.plan, &prepared.resources, &prepared.mounts);
+    let hash = content_hash(
+        &prepared.plan,
+        &prepared.resources,
+        &prepared.mounts,
+        SUPERVISOR_PROGRAM,
+    );
     let tag = image_tag(&prepared.name, &hash);
 
     // A build already in flight is the answer to a second request: queueing a
@@ -511,7 +523,12 @@ pub async fn run_build(
             return record_failure(ctx, environment_id, recipe_id, job_id, &error.message).await;
         }
     };
-    let hash = content_hash(&prepared.plan, &prepared.resources, &prepared.mounts);
+    let hash = content_hash(
+        &prepared.plan,
+        &prepared.resources,
+        &prepared.mounts,
+        SUPERVISOR_PROGRAM,
+    );
     let tag = image_tag(&prepared.name, &hash);
     let request = match render(&prepared.plan, &tag) {
         Ok(request) => request,
@@ -1340,7 +1357,7 @@ pub fn render(plan: &ImagePlan, tag: &str) -> Result<BuildRequest, String> {
             ),
             (
                 "nestbox-agent-supervisor".to_string(),
-                include_str!("../../../tool-images/supervisor/supervisor.py").to_string(),
+                SUPERVISOR_PROGRAM.to_string(),
             ),
         ],
     })
@@ -1564,6 +1581,7 @@ pub fn content_hash(
     plan: &ImagePlan,
     resources: &ResourceLimits,
     mounts: &[ProjectMount],
+    supervisor_program: &str,
 ) -> String {
     let agents: Vec<serde_json::Value> = plan
         .agents
@@ -1599,8 +1617,17 @@ pub fn content_hash(
         })
         .collect();
 
+    let mut program_hasher = Sha256::new();
+    program_hasher.update(supervisor_program.as_bytes());
+    let program_digest: String = program_hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+
     let canonical = serde_json::json!({
         "generator": GENERATOR_VERSION,
+        "supervisor_program": program_digest,
         "name": plan.name,
         "baseline": plan.baseline_key,
         "base_image": plan.base_image,
@@ -2130,26 +2157,39 @@ mod tests {
 
     #[test]
     fn the_content_hash_is_stable_for_the_same_recipe() {
-        let a = content_hash(&plan(PackageManager::Apt, &["vim"]), &resources(), &[]);
-        let b = content_hash(&plan(PackageManager::Apt, &["vim"]), &resources(), &[]);
+        let a = content_hash(&plan(PackageManager::Apt, &["vim"]), &resources(), &[], SUPERVISOR_PROGRAM);
+        let b = content_hash(&plan(PackageManager::Apt, &["vim"]), &resources(), &[], SUPERVISOR_PROGRAM);
         assert_eq!(a, b);
         assert_eq!(a.len(), 64);
         assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
+    /// A fix inside the supervisor program must produce a different image.
+    ///
+    /// The program is embedded in the binary and copied into every image, so a
+    /// change to it is a change to what the sandbox runs — even when the recipe
+    /// itself did not move.
+    #[test]
+    fn a_changed_supervisor_program_changes_the_hash() {
+        let plan = plan(PackageManager::Apt, &["vim"]);
+        let before = content_hash(&plan, &resources(), &[], "print('one')");
+        let after = content_hash(&plan, &resources(), &[], "print('two')");
+        assert_ne!(before, after);
+    }
+
     #[test]
     fn one_changed_field_changes_the_hash() {
-        let base = content_hash(&plan(PackageManager::Apt, &["vim"]), &resources(), &[]);
+        let base = content_hash(&plan(PackageManager::Apt, &["vim"]), &resources(), &[], SUPERVISOR_PROGRAM);
 
         let more_packages =
-            content_hash(&plan(PackageManager::Apt, &["vim", "git"]), &resources(), &[]);
+            content_hash(&plan(PackageManager::Apt, &["vim", "git"]), &resources(), &[], SUPERVISOR_PROGRAM);
         assert_ne!(base, more_packages);
 
         let mut other_resources = resources();
         other_resources.cpu_limit = 3.0;
         assert_ne!(
             base,
-            content_hash(&plan(PackageManager::Apt, &["vim"]), &other_resources, &[])
+            content_hash(&plan(PackageManager::Apt, &["vim"]), &other_resources, &[], SUPERVISOR_PROGRAM)
         );
 
         let mount = ProjectMount {
@@ -2159,17 +2199,17 @@ mod tests {
         };
         assert_ne!(
             base,
-            content_hash(&plan(PackageManager::Apt, &["vim"]), &resources(), &[mount])
+            content_hash(&plan(PackageManager::Apt, &["vim"]), &resources(), &[mount], SUPERVISOR_PROGRAM)
         );
 
         let mut another_agent = plan(PackageManager::Apt, &["vim"]);
         another_agent.agents[0].instance = "other".into();
-        assert_ne!(base, content_hash(&another_agent, &resources(), &[]));
+        assert_ne!(base, content_hash(&another_agent, &resources(), &[], SUPERVISOR_PROGRAM));
     }
 
     #[test]
     fn the_image_tag_carries_the_name_and_the_hash() {
-        let hash = content_hash(&plan(PackageManager::Apt, &["vim"]), &resources(), &[]);
+        let hash = content_hash(&plan(PackageManager::Apt, &["vim"]), &resources(), &[], SUPERVISOR_PROGRAM);
         let tag = image_tag("dev-box", &hash);
         assert!(tag.starts_with("nestbox-recipe/dev-box:"));
         assert_eq!(tag.len(), "nestbox-recipe/dev-box:".len() + 64);

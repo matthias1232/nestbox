@@ -29,7 +29,23 @@ RESULTS = STATE / "results"
 SETTINGS = STATE / "settings.json"
 APPLIED = STATE / "applied.json"
 
-INTERVAL = float(os.getenv("NESTBOX_SUPERVISOR_INTERVAL", "15"))
+def env_float(name: str, default: float) -> float:
+    """A number from an environment variable that may be exported empty.
+
+    The generated supervisor script exports every slot the image declares, so an
+    unset interval arrives as the empty string rather than being absent. `float("")`
+    raises, and a supervisor that dies on its first line reports nothing at all.
+    """
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+INTERVAL = env_float("NESTBOX_SUPERVISOR_INTERVAL", 15.0)
 CONTROL_URL = os.getenv("NESTBOX_CONTROL_URL", "http://control-api:8000").rstrip("/")
 SUPERVISOR_ID = os.getenv("NESTBOX_SUPERVISOR_ID", "")
 TOKEN = os.getenv("NESTBOX_SUPERVISOR_TOKEN", "")
