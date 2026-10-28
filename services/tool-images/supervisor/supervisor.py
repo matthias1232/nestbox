@@ -162,6 +162,15 @@ def policy_drift() -> dict:
     return check("policy_drift", "ok", f"applied hash {desired[:12]}")
 
 
+def last_result() -> dict | None:
+    """The newest result the supervisor wrote, or None before the first one."""
+    try:
+        newest = max(RESULTS.glob("*.json"), key=lambda path: path.stat().st_mtime)
+    except (OSError, ValueError):
+        return None
+    return read_json(newest, None)
+
+
 def report() -> dict:
     checks = [model_reachable(), proxy_set(), tools_present(), agent_running(), memory(), policy_drift()]
     states = {c["state"] for c in checks}
@@ -179,6 +188,9 @@ def report() -> dict:
             "host": os.uname().nodename,
             "agent": os.getenv("HERMES_MODEL", ""),
             "self_healing": bool(desired.get("self_healing", False)),
+            # The last thing an operator asked for, and what came of it. Without
+            # it the console can say "queued" and never learn the outcome.
+            "last_action": last_result(),
         },
     }
 

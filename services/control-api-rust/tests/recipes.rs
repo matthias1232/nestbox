@@ -674,6 +674,47 @@ async fn an_instantiated_sandbox_reports_through_its_supervisor_token() {
         SupervisorStatus::Running.as_str(),
         "the refusal wrote nothing"
     );
+
+    // 4. Settings are stored per supervisor, and a running sandbox receives them.
+    let stored = gateway_service::update_sandbox_settings(
+        &ctx,
+        &who,
+        sandbox.id,
+        &serde_json::json!({ "self_healing": true, "tools": ["python3"] }),
+    )
+    .await
+    .expect("settings are accepted");
+    assert_eq!(stored["settings"]["self_healing"], serde_json::json!(true));
+    assert_eq!(stored["delivered"], serde_json::json!(true));
+
+    let read_back = gateway_service::sandbox_settings(&ctx, &who, sandbox.id)
+        .await
+        .expect("settings are readable");
+    assert_eq!(read_back["self_healing"], serde_json::json!(true));
+
+    // 5. An action is queued through the runtime, and the whitelist is enforced.
+    let queued = gateway_service::queue_supervisor_action(
+        &ctx,
+        &who,
+        sandbox.id,
+        "run_check",
+        &serde_json::json!({}),
+    )
+    .await
+    .expect("an action is queued");
+    assert_eq!(queued["queued"], serde_json::json!(true));
+    assert_eq!(queued["action"], serde_json::json!("run_check"));
+
+    let refused = gateway_service::queue_supervisor_action(
+        &ctx,
+        &who,
+        sandbox.id,
+        "rm -rf /",
+        &serde_json::json!({}),
+    )
+    .await
+    .expect_err("a free command is not on the whitelist");
+    assert_eq!(refused.status, axum::http::StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 /// A recipe write without the write permission is refused before any query.

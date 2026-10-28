@@ -507,3 +507,24 @@ pub async fn supervisor_settings(
             .ok_or(StoreError::NotFound)?;
     Ok(settings.unwrap_or_else(|| serde_json::json!({})))
 }
+
+/// One supervisor by id, within the caller's environment.
+pub async fn get_supervisor(
+    scope: &mut TenantScope<'_>,
+    supervisor_id: Uuid,
+) -> Result<Supervisor, StoreError> {
+    let sql = format!(
+        "SELECT {SUPERVISOR_COLUMNS}
+           FROM supervisors s
+           JOIN gateways g ON g.id = s.gateway_id
+           JOIN clusters c ON c.id = g.cluster_id
+          WHERE c.environment_id = $1 AND s.id = $2"
+    );
+    let row = sqlx::query(&sql)
+        .bind(scope.environment_id())
+        .bind(supervisor_id)
+        .fetch_optional(scope.connection())
+        .await?
+        .ok_or(StoreError::NotFound)?;
+    row_to_supervisor(&row)
+}

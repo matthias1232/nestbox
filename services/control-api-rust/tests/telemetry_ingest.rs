@@ -709,6 +709,13 @@ async fn bodies_older_than_the_retention_window_are_purged() {
             truncated: false,
         },
     ];
+    // The suite's database keeps rows between runs (only the schema is
+    // dropped), so an earlier run's stale body would be purged here as well and
+    // the count would say 2. Clear first, then measure this run's work.
+    traffic_bodies::purge_expired(&pool, now - chrono::Duration::days(1))
+        .await
+        .expect("a clean slate");
+
     let written = traffic_bodies::insert_batch(&pool, environment_id, &bodies)
         .await
         .expect("insert bodies");
@@ -717,7 +724,7 @@ async fn bodies_older_than_the_retention_window_are_purged() {
     let purged = traffic_bodies::purge_expired(&pool, now - chrono::Duration::days(1))
         .await
         .expect("purge");
-    assert_eq!(purged, 1);
+    assert_eq!(purged, 1, "only this run's stale body is purged");
 
     let kept: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM traffic_bodies WHERE event_id = $1",

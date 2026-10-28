@@ -92,6 +92,10 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/sandboxes/{id}/settings",
             get(sandboxes_settings::get).put(sandboxes_settings::update),
         )
+        .route(
+            "/api/v1/sandboxes/{id}/supervisor/actions",
+            post(sandboxes_settings::action),
+        )
         .route("/api/v1/sandboxes/{id}/ssh-key", get(access::ssh_key))
         .route(
             "/api/v1/sandboxes/{id}/ssh-key/download",

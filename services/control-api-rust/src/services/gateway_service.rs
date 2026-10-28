@@ -134,6 +134,9 @@ pub async fn update_sandbox_settings(
     let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
         .await
         .map_err(ApiError::from)?;
+    let sandbox = crate::store::postgres::sandboxes::get(&mut scope, sandbox_id)
+        .await
+        .map_err(ApiError::from)?;
     let supervisor = store::supervisor_for_sandbox(&mut scope, sandbox_id)
         .await
         .map_err(ApiError::from)?;
@@ -157,7 +160,46 @@ pub async fn update_sandbox_settings(
     .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
 
-    Ok(settings.clone())
+    // The row keeps the intent; the process needs the document. A sandbox that
+    // is not running keeps the row and gets it on the next delivery, so an edit
+    // is never lost to a stopped container.
+    let delivered = deliver_settings(ctx, &sandbox, settings).await?;
+
+    Ok(serde_json::json!({
+        "settings": settings,
+        "delivered": delivered,
+    }))
+}
+
+/// Write the settings document into the sandbox the supervisor reads it from.
+///
+/// False when the sandbox is not running: the row is the source of truth and the
+/// next delivery (or the next instance) picks it up.
+async fn deliver_settings(
+    ctx: &ServiceContext,
+    sandbox: &crate::domain::sandbox::Sandbox,
+    settings: &serde_json::Value,
+) -> Result<bool, ApiError> {
+    if sandbox.status != crate::domain::sandbox::SandboxStatus::Running {
+        return Ok(false);
+    }
+    use base64::Engine;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(settings.to_string());
+    let script = format!(
+        "mkdir -p ~/.nestbox-supervisor && printf %s '{encoded}' | base64 -d > ~/.nestbox-supervisor/settings.json",
+    );
+    let outcome = ctx
+        .runtime
+        .exec(&sandbox.name, &["sh".to_string(), "-c".to_string(), script], 15)
+        .await
+        .map_err(|error| {
+            ApiError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                ErrorCode::NODE_RUNTIME_UNAVAILABLE,
+                format!("The settings could not be delivered: {error}"),
+            )
+        })?;
+    Ok(outcome.exit_code == Some(0))
 }
 
 /// Push a gateway's desired configuration and mark it applied.
@@ -601,4 +643,112 @@ pub fn require_healthy(gateways: &[Gateway]) -> Result<&Gateway, ApiError> {
                 "No gateway is healthy and in sync; placement is paused.",
             )
         })
+}
+
+/// Queue one whitelisted action for a sandbox's supervisor.
+///
+/// The control plane does not run the action: it writes one JSON command into
+/// `~/.nestbox-supervisor/commands/`, and the supervisor answers in `results/`
+/// on its next tick. The whitelist stays in the process that executes it, and a
+/// sandbox that is not running is refused instead of being written to.
+pub async fn queue_supervisor_action(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+    kind: &str,
+    payload: &serde_json::Value,
+) -> Result<serde_json::Value, ApiError> {
+    require(principal, Permission::SandboxWrite)?;
+    if !matches!(kind, "apply_policy" | "restart_agent" | "run_check") {
+        return Err(ApiError::validation(
+            "A supervisor action is apply_policy, restart_agent, or run_check.",
+        ));
+    }
+
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let sandbox = crate::store::postgres::sandboxes::get(&mut scope, sandbox_id)
+        .await
+        .map_err(ApiError::from)?;
+    let supervisor = store::supervisor_for_sandbox(&mut scope, sandbox_id)
+        .await
+        .map_err(ApiError::from)?;
+    if sandbox.status != crate::domain::sandbox::SandboxStatus::Running {
+        scope.commit().await.map_err(ApiError::from)?;
+        return Err(ApiError::conflict(
+            ErrorCode::SANDBOX_INVALID_STATE,
+            format!(
+                "A supervisor action needs a running sandbox; this one is '{}'.",
+                sandbox.status.as_str()
+            ),
+        ));
+    }
+
+    let command_id = Uuid::new_v4();
+    let document = serde_json::json!({
+        "id": command_id.to_string(),
+        "type": kind,
+        "payload": payload,
+        "issued_at": chrono::Utc::now(),
+    });
+    // The document goes in base64: the payload is operator JSON, and a shell
+    // that sees quotes in it is a second parser with its own rules.
+    use base64::Engine;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(document.to_string());
+    let script = format!(
+        "mkdir -p ~/.nestbox-supervisor/commands && printf %s '{encoded}' | base64 -d > ~/.nestbox-supervisor/commands/{command_id}.json",
+    );
+    let outcome = ctx
+        .runtime
+        .exec(
+            &sandbox.name,
+            &["sh".to_string(), "-c".to_string(), script],
+            15,
+        )
+        .await
+        .map_err(|error| {
+            ApiError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                ErrorCode::NODE_RUNTIME_UNAVAILABLE,
+                format!("The action could not be delivered: {error}"),
+            )
+        })?;
+    if outcome.exit_code != Some(0) {
+        scope.commit().await.map_err(ApiError::from)?;
+        return Err(ApiError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            ErrorCode::NODE_RUNTIME_UNAVAILABLE,
+            format!(
+                "The action could not be written into the sandbox: {}",
+                outcome.output.trim()
+            ),
+        ));
+    }
+
+    crate::store::postgres::audit::record(
+        &mut scope,
+        crate::store::postgres::audit::NewAuditEvent {
+            actor_id: Some(principal.user_id),
+            actor_label: &principal.display_name,
+            kind: "supervisor.action",
+            subject_type: Some("supervisor"),
+            subject_id: Some(supervisor.id),
+            detail: &serde_json::json!({
+                "sandbox_id": sandbox_id,
+                "action": kind,
+                "command_id": command_id,
+            }),
+            request_id: None,
+        },
+    )
+    .await
+    .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+
+    Ok(serde_json::json!({
+        "command_id": command_id,
+        "action": kind,
+        "queued": true,
+    }))
 }
