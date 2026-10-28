@@ -10,6 +10,7 @@ use uuid::Uuid;
 use crate::api::principal::Auth;
 use crate::domain::pagination::ListParams;
 use crate::error::ApiError;
+use crate::services::access_service;
 use crate::services::node_service;
 use crate::services::sandbox_service::{self, CreateSandbox, LifecycleAction};
 use crate::state::AppState;
@@ -142,6 +143,19 @@ pub async fn create(
         },
     )
     .await?;
+
+    // Give the new sandbox a way in: an Ed25519 key pair and a port per
+    // published service. A failure here leaves a sandbox without SSH rather than
+    // failing a create that already happened, so it is logged and the sandbox is
+    // still returned — the Access tab can then show what is missing.
+    if let Err(error) = access_service::provision(&state.services, &auth.principal, &sandbox).await {
+        tracing::error!(
+            sandbox = %sandbox.name,
+            code = error.code.0,
+            "access provisioning failed; this sandbox has no SSH key or ports"
+        );
+    }
+
     Ok((StatusCode::CREATED, Json(sandbox)))
 }
 
