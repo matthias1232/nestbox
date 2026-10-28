@@ -34,7 +34,7 @@ use uuid::Uuid;
 
 use super::super::TenantScope;
 use crate::domain::egress::{
-    agent_hint, Decision, DecisionReason, OpenWindow, TrafficEdge, TrafficEvent,
+    agent_hint, Decision, DecisionReason, OpenWindow, TrafficChannel, TrafficEdge, TrafficEvent,
 };
 use crate::domain::mcp::McpToolCall;
 use crate::domain::policy::{Enforcement, NetworkRule, RuleAction, RuleProtocol};
@@ -81,7 +81,18 @@ const COLUMNS: &str = r#"
         NULLIF(e.detail->>'mcp_session_id', '') AS mcp_session_id,
         NULLIF(e.detail->>'mcp_method', '') AS mcp_method,
         NULLIF(e.detail->>'mcp_tool', '') AS mcp_tool,
-        COALESCE(e.detail->>'inspected', 'false') = 'true' AS inspected
+        COALESCE(e.detail->>'inspected', 'false') = 'true' AS inspected,
+        -- The channel the ingest decided. A row from a proxy version that did
+        -- not send one is a plain forward-proxy request, which is what every
+        -- row was before the channel existed.
+        COALESCE(NULLIF(e.detail->>'channel', ''), 'proxy') AS channel,
+        NULLIF(e.detail->>'sni', '') AS sni,
+        NULLIF(e.detail->>'listener', '') AS listener,
+        NULLIF(e.detail->>'app_protocol', '') AS app_protocol,
+        -- Where the destination's address is registered, from the registry's own
+        -- RDAP record, looked up once per host and cached in `host_geography`.
+        g.country AS country,
+        g.asn AS asn
 "#;
 
 /// The predicate every traffic read shares.
@@ -114,6 +125,8 @@ fn base_scoped() -> String {
         "WITH base AS (
     SELECT {COLUMNS}
       FROM telemetry_events e
+      LEFT JOIN host_geography g
+             ON g.host = COALESCE(NULLIF(e.detail->>'host', ''), NULLIF(e.detail->>'destination', ''))
      WHERE e.environment_id = $1
        AND e.sandbox_id = $2
        AND {EVIDENCE}
@@ -131,6 +144,8 @@ fn base_environment() -> String {
         "WITH base AS (
     SELECT {COLUMNS}, s.name AS sandbox_name, s.node_id AS node_id
       FROM telemetry_events e
+      LEFT JOIN host_geography g
+             ON g.host = COALESCE(NULLIF(e.detail->>'host', ''), NULLIF(e.detail->>'destination', ''))
       JOIN sandboxes s ON s.id = e.sandbox_id AND s.environment_id = e.environment_id
      WHERE e.environment_id = $1
        AND e.ts >= $2
@@ -297,6 +312,7 @@ fn row_to_event(row: &sqlx::postgres::PgRow) -> Result<Option<TrafficEvent>, Sto
     };
     let reason_raw: String = row.try_get("reason")?;
     let user_agent: Option<String> = row.try_get("user_agent")?;
+    let channel_raw: String = row.try_get("channel")?;
 
     Ok(Some(TrafficEvent {
         id: row.try_get("id")?,
@@ -322,6 +338,12 @@ fn row_to_event(row: &sqlx::postgres::PgRow) -> Result<Option<TrafficEvent>, Sto
         mcp_tool: row.try_get("mcp_tool")?,
         inspected: row.try_get("inspected")?,
         has_body: false,
+        channel: TrafficChannel::parse(&channel_raw).unwrap_or(TrafficChannel::Proxy),
+        listener: row.try_get("listener")?,
+        sni: row.try_get("sni")?,
+        app_protocol: row.try_get("app_protocol")?,
+        country: row.try_get("country")?,
+        asn: row.try_get("asn")?,
     }))
 }
 
@@ -356,7 +378,8 @@ pub async fn rows(
         "{base}
          SELECT id, sandbox_id, ts, host, port, protocol, method, path, status,
                 duration_ms, bytes_in, bytes_out, decision, reason, rule_id,
-                window_id, user_agent, mcp_session_id, mcp_method, mcp_tool, inspected
+                window_id, user_agent, mcp_session_id, mcp_method, mcp_tool, inspected,
+                channel, sni, listener, app_protocol, country, asn
            FROM base
           WHERE {FILTER}
             AND ($6::text IS NULL OR host ILIKE '%' || $6 || '%')

@@ -7,6 +7,7 @@ pub mod auth;
 pub mod egress;
 pub mod environments;
 pub mod gateways;
+pub mod geography;
 pub mod jobs;
 pub mod mcp;
 pub mod metrics;

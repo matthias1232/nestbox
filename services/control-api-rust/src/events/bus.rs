@@ -101,6 +101,10 @@ mod tests {
                 latency_ms: None,
                 correlation_id: None,
                 enforcement: Some("enforced".into()),
+                channel: Some("proxy".into()),
+                sni: None,
+                listener: Some("proxy".into()),
+                app_protocol: None,
             },
         ))
     }

@@ -9,6 +9,7 @@ pub mod builder_service;
 pub mod catalog_sync;
 pub mod environment_service;
 pub mod gateway_service;
+pub mod geography_service;
 pub mod inventory_service;
 pub mod job_service;
 pub mod mcp_service;

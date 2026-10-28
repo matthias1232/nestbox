@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use super::{require, ServiceContext};
 use crate::domain::auth::{Permission, Principal};
+use crate::domain::egress::{channel_of, ChannelFacts, TrafficChannel};
 use crate::domain::mcp::{parse_mcp_frame, McpFrame};
 use crate::domain::telemetry::{
     Decision, Direction, DnsEvent, EventKind, LiveEvent, NetworkEvent, TelemetryEvent,
@@ -70,6 +71,16 @@ pub struct ProxyTrafficEntry {
     pub bytes_out: i64,
     /// The sandbox's address as the proxy saw it.
     pub client: Option<String>,
+    /// The listener that logged the line: `proxy`, `terminated`, `inbound`,
+    /// `vpn`. Absent from a proxy version that does not name it.
+    pub listener: Option<String>,
+    /// Whether the line is a CONNECT, as the proxy wrote it (`true`, `""`).
+    /// A string because Envoy's JSON log writes dynamic metadata as text.
+    pub connect: Option<String>,
+    /// The name a CONNECT asked for. The only destination a tunnel reveals.
+    pub sni: Option<String>,
+    /// What the proxy recognised the application protocol as.
+    pub app_protocol: Option<String>,
     pub user_agent: Option<String>,
     pub request_id: Option<String>,
     /// `allow`, `deny`, or `audit`. Anything else is read as a deny.
@@ -473,13 +484,27 @@ fn prepare_traffic(
     let ts = entry.ts.unwrap_or(now);
     let decision = parse_decision(entry.decision.as_deref());
 
+    // The channel is decided from what the proxy observed, once, here: the read
+    // path then colours a row without re-deriving it from three fields.
+    let channel = channel_of(&ChannelFacts {
+        listener: entry.listener.as_deref(),
+        connect: truthy(entry.connect.as_deref()),
+        sni: entry.sni.as_deref(),
+        client: entry.client.as_deref(),
+    });
+    let direction = if channel == TrafficChannel::Inbound {
+        Direction::Inbound
+    } else {
+        Direction::Outbound
+    };
+
     let event = NetworkEvent {
         id,
         environment_id,
         sandbox_id: entry.sandbox_id,
         gateway_id: None,
         ts,
-        direction: Direction::Outbound,
+        direction,
         protocol: wire_protocol(entry, is_mcp),
         source: entry
             .client
@@ -505,6 +530,25 @@ fn prepare_traffic(
             }
             .to_string(),
         ),
+        channel: Some(channel.as_str().to_string()),
+        sni: entry
+            .sni
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        listener: entry
+            .listener
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        app_protocol: entry
+            .app_protocol
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
     };
 
     let live = TelemetryEvent::Network(event);
@@ -523,7 +567,7 @@ fn prepare_traffic(
         );
         map.insert(
             "inspected".into(),
-            serde_json::json!(entry.path.is_some()),
+            serde_json::json!(channel == TrafficChannel::Inspected || entry.path.is_some()),
         );
         if let Some(reason) = entry.reason.as_deref().filter(|value| !value.is_empty()) {
             map.insert("reason".into(), serde_json::json!(reason));
@@ -754,6 +798,18 @@ fn deterministic_id(key: &str) -> Uuid {
 /// An absent or unrecognised decision is a deny. The alternative — defaulting to
 /// allow — would let a proxy version that stopped sending the field turn every
 /// blocked request into a green row.
+/// Whether a proxy-written boolean is true.
+///
+/// Envoy's JSON access log writes dynamic metadata as text, so a boolean arrives
+/// as `"true"`, `"1"`, or an empty string rather than as a JSON `true`. Anything
+/// unrecognised is false: a field that is not clearly set is not a claim.
+fn truthy(raw: Option<&str>) -> bool {
+    matches!(
+        raw.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        Some("true") | Some("1") | Some("yes") | Some("on")
+    )
+}
+
 fn parse_decision(raw: Option<&str>) -> Decision {
     raw.map(str::trim)
         .and_then(Decision::parse)
@@ -928,6 +984,10 @@ pub fn sample_event(environment_id: Uuid, sandbox_id: Option<Uuid>, index: u64) 
         latency_ms: Some(12 + (index % 40) as i32),
         correlation_id: Some(format!("demo-{index}")),
         enforcement: Some("enforced".to_string()),
+        channel: Some("proxy".to_string()),
+        sni: None,
+        listener: Some("proxy".to_string()),
+        app_protocol: None,
     })
 }
 
@@ -949,6 +1009,10 @@ mod tests {
             bytes_in: 12,
             bytes_out: 34,
             client: Some("10.244.0.2".into()),
+            listener: Some("proxy".into()),
+            connect: None,
+            sni: None,
+            app_protocol: None,
             user_agent: Some("hermes/0.22".into()),
             request_id: Some("req-1".into()),
             decision: Some("allow".into()),

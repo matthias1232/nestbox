@@ -26,6 +26,7 @@
 use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
+use super::geography_service;
 use super::{require, ServiceContext};
 use crate::domain::auth::{Permission, Principal};
 use crate::domain::egress::{Decision, OpenWindow, TrafficEdge, TrafficEvent};
@@ -268,6 +269,16 @@ pub async fn traffic(
         .map_err(ApiError::from)?;
 
     scope.commit().await.map_err(ApiError::from)?;
+
+    // A country is filled in the background, never in this request: a registry
+    // answers in hundreds of milliseconds on a good day, and the page has rows
+    // to draw now. The next refresh shows what the registry said.
+    let unresolved: Vec<String> = items
+        .iter()
+        .filter(|item| item.country.is_none())
+        .map(|item| item.host.clone())
+        .collect();
+    geography_service::spawn_fill(ctx.pool.clone(), unresolved);
 
     Ok(TrafficPage {
         sandbox_id,
@@ -869,6 +880,12 @@ mod tests {
             mcp_tool: None,
             inspected: true,
             has_body: false,
+            channel: crate::domain::egress::TrafficChannel::Inspected,
+            listener: Some("terminated".into()),
+            sni: None,
+            app_protocol: None,
+            country: None,
+            asn: None,
         };
         let now = Utc::now();
         assert!(next_cursor(&[event(now)], 2).is_none());

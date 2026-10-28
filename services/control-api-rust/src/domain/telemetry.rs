@@ -124,6 +124,18 @@ pub struct NetworkEvent {
     pub correlation_id: Option<String>,
     /// `enforced` or `audit`, so an audit-mode deny is not mistaken for a wall.
     pub enforcement: Option<String>,
+    /// The path the request took. Written by the ingest so the read path does
+    /// not have to re-derive it from three proxy fields per row.
+    pub channel: Option<String>,
+    /// The name the client asked for. The only destination a tunnel reveals.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sni: Option<String>,
+    /// The listener that logged the line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listener: Option<String>,
+    /// What the proxy recognised the application protocol as.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_protocol: Option<String>,
 }
 
 /// A name lookup observed at the gateway.

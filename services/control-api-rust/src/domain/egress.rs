@@ -352,6 +352,141 @@ pub struct TrafficEvent {
     /// TLS tunnel.
     pub inspected: bool,
     pub has_body: bool,
+    /// The path this request took, for the badge and the colour.
+    pub channel: TrafficChannel,
+    /// The listener that logged it, kept as the proxy wrote it.
+    pub listener: Option<String>,
+    /// The name the client asked for; the only destination a tunnel reveals.
+    pub sni: Option<String>,
+    /// What Envoy recognised the application protocol as (`http/1.1`, `h2`).
+    pub app_protocol: Option<String>,
+    /// ISO 3166-1 alpha-2 from the destination's registry record, when known.
+    pub country: Option<String>,
+    /// The autonomous system the destination's address belongs to, when the
+    /// registry record names it.
+    pub asn: Option<i64>,
+}
+
+/// The path one outbound request took, as the console colours it.
+///
+/// One value per row, because a row is one request and a request took one path.
+/// The words are the proxy's (`listener`, `connect`, `sni`), translated once
+/// here so the table, the filter, and the badge cannot disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TrafficChannel {
+    /// A plain forward-proxy request: the method and the path are visible.
+    Proxy,
+    /// A CONNECT the proxy did not terminate: only the SNI is visible.
+    Tunnel,
+    /// A CONNECT the proxy terminated and decrypted.
+    Inspected,
+    /// A connection into the sandbox, not out of it.
+    Inbound,
+    /// The caller arrived over a tunnel interface (WireGuard, `tun0`).
+    Vpn,
+}
+
+impl TrafficChannel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Proxy => "proxy",
+            Self::Tunnel => "tunnel",
+            Self::Inspected => "inspected",
+            Self::Inbound => "inbound",
+            Self::Vpn => "vpn",
+        }
+    }
+
+    /// The word the console shows on the badge.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Proxy => "Proxy",
+            Self::Tunnel => "Tunnel",
+            Self::Inspected => "Inspected",
+            Self::Inbound => "Inbound",
+            Self::Vpn => "VPN",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "proxy" => Self::Proxy,
+            "tunnel" => Self::Tunnel,
+            "inspected" => Self::Inspected,
+            "inbound" => Self::Inbound,
+            "vpn" => Self::Vpn,
+            _ => return None,
+        })
+    }
+
+    /// All channels, in the order the legend shows them.
+    pub fn all() -> [Self; 5] {
+        [
+            Self::Proxy,
+            Self::Tunnel,
+            Self::Inspected,
+            Self::Inbound,
+            Self::Vpn,
+        ]
+    }
+}
+
+/// What the proxy's access log says about the path a request took.
+///
+/// Kept as one struct so the derivation is a pure function of what was observed,
+/// and a test can state every combination without a proxy.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ChannelFacts<'a> {
+    /// The listener that logged the line: `proxy`, `terminated`, `inbound`, `vpn`.
+    pub listener: Option<&'a str>,
+    /// The line is a CONNECT, not a plain request.
+    pub connect: bool,
+    /// The name the client asked for. Present on a CONNECT and on a terminated
+    /// request; absent from a plain HTTP/1.1 request, which carries a Host header.
+    pub sni: Option<&'a str>,
+    /// The caller as the proxy saw it: an address, or the interface name.
+    pub client: Option<&'a str>,
+}
+
+/// Which channel a request took.
+///
+/// The order is the rule: a connection into the sandbox is inbound whatever else
+/// it looks like; a tunnel caller is a VPN caller even when the request behind it
+/// was decrypted; a terminated CONNECT is inspected; a CONNECT that was not
+/// terminated is a tunnel; everything else is a plain proxy request.
+pub fn channel_of(facts: &ChannelFacts<'_>) -> TrafficChannel {
+    let listener = facts.listener.unwrap_or_default().trim().to_ascii_lowercase();
+    if listener == "inbound" || listener == "ingress" {
+        return TrafficChannel::Inbound;
+    }
+    if listener == "vpn" || client_is_tunnel(facts.client) {
+        return TrafficChannel::Vpn;
+    }
+    if listener == "terminated" || listener == "inspected" {
+        return TrafficChannel::Inspected;
+    }
+    if facts.connect {
+        return TrafficChannel::Tunnel;
+    }
+    // A request with an SNI but no CONNECT is a TLS request the proxy accepted
+    // directly; it did not have to be decrypted, because it never got a tunnel.
+    TrafficChannel::Proxy
+}
+
+/// Whether the caller address names a tunnel interface.
+///
+/// The proxy reports an address, and the tunnel interfaces on a node are named
+/// `wg0`, `tun0`, `vpn0`. Only those prefixes are accepted: guessing "not a
+/// private address" would label a LAN caller a VPN caller.
+fn client_is_tunnel(client: Option<&str>) -> bool {
+    let Some(client) = client else {
+        return false;
+    };
+    let name = client.trim().to_ascii_lowercase();
+    ["wg", "tun", "vpn", "tailscale"]
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
 }
 
 /// An edge in the live map: one sandbox to one destination over a window.

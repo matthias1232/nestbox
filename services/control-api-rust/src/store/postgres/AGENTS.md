@@ -45,6 +45,7 @@ the codebase where SQL appears.
 | `recipes.rs` | Recipes, the build outcome, and the link from a sandbox to its recipe |
 | `audit.rs` | Append-only audit writes |
 | `traffic.rs` | Traffic rows, window counts, map and live edges, one body read, MCP calls, effective rules, the two hashes behind "deployed" |
+| `geography.rs` | `host_geography`: the cached country and AS per destination host (global table, pool not scope) |
 | `terminal_sessions.rs` | Terminal sessions in `sandbox_sessions`: open, count for the limits, close. Never content (ADR 0023) |
 
 ## Reading the traffic log

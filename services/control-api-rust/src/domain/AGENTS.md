@@ -58,6 +58,7 @@ microseconds is that it has none.
 | `metrics.rs` | `docker stats` sample, node ingest batch, one-minute bucket, window with its point budget, process table, inventory probe |
 | `access.rs` | SSH key record (locator, never material), published port, inventory, session |
 | `egress.rs` | The pure `decide` function, compiled rule set, traffic event, map edge |
+| `geography.rs` | Reading a country, an AS number, and an owner out of an RDAP record; pure |
 | `mcp.rs` | MCP server definition, sandbox attachment, tool call, JSON-RPC recognition |
 
 ## Extending this module

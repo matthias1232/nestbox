@@ -10,6 +10,7 @@ pub mod builder;
 pub mod egress;
 pub mod environment;
 pub mod gateway;
+pub mod geography;
 pub mod job;
 pub mod mcp;
 pub mod metrics;
