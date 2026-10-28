@@ -65,6 +65,11 @@ configured the runner refuses every terminal, which is the honest failure: the
 runner also sits on the sandbox network, so an unauthenticated endpoint there
 would let one container open a shell in another.
 
+It is read **when a terminal opens**, not cached at start (ADR 0016): rotating
+the file applies to the next session without restarting the API. One consequence
+is worth knowing: the value must be a single header token — hex, not base64,
+whose `+`, `/` and `=` the handshake parser rejects with a bare 400.
+
 A text frame from the runner is output, except a JSON object with
 `"type":"close"`, which is the reason the session ended. `close_control_frame`
 is that rule, and it is unit-tested here rather than trusted.

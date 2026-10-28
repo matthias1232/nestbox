@@ -27,8 +27,8 @@ services:
         #
         # Generated here rather than required from the operator: a missing file
         # would otherwise fail `up`, and a terminal without a token must not be
-        # an option. Idempotent — an existing token is never replaced, because a
-        # replacement cuts every open terminal.
+        # an option. Idempotent: an existing token is left alone, so a restart
+        # cannot silently invalidate the file an operator is holding.
         #
         # Hex on purpose: the token travels as the second entry of
         # `Sec-WebSocket-Protocol`, and base64's `+`, `/`, `=` are not valid in

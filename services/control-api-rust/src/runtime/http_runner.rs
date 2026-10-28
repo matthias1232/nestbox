@@ -71,33 +71,13 @@ pub struct HttpRunner {
     base_url: String,
     network: String,
     client: reqwest::Client,
-    /// The node token the runner's terminal endpoint demands, when the node has
-    /// one.
-    ///
-    /// Read here rather than passed in from `Config` because the terminal is the
-    /// only caller: a token that the whole process can see is a token that ends
-    /// up in a log line or a debug dump of the configuration. Unset means the
-    /// runner refuses the upgrade, which is its own refusal and not ours to
-    /// paper over.
-    node_token: Option<String>,
 }
 
 impl HttpRunner {
     pub fn new(base_url: impl Into<String>, network: impl Into<String>) -> Self {
-        Self::with_token(base_url, network, read_node_token())
-    }
-
-    /// Build an adapter with an explicit node token, for tests and for a caller
-    /// that resolves the secret itself.
-    pub fn with_token(
-        base_url: impl Into<String>,
-        network: impl Into<String>,
-        node_token: Option<String>,
-    ) -> Self {
         Self {
             base_url: base_url.into(),
             network: network.into(),
-            node_token,
             // A hung runner must not hold an API worker forever. Docker's own
             // stop grace period is 10 s and an exec may run for minutes, so the
             // bound is generous but finite.
@@ -296,7 +276,12 @@ impl RuntimeAdapter for HttpRunner {
         // access logs and in every error message that quotes the request. The
         // subprotocol the runner answers with stays first, so the negotiation
         // still selects it.
-        let protocol = match &self.node_token {
+        // Resolved per terminal, not cached at start (ADR 0016): rotating the
+        // file takes effect for the next session instead of requiring a restart
+        // of the API, and a token never sits in the process longer than the
+        // handshake that needs it.
+        let token = read_node_token();
+        let protocol = match &token {
             Some(token) => format!("{TERMINAL_SUBPROTOCOL}, {token}"),
             None => TERMINAL_SUBPROTOCOL.to_string(),
         };

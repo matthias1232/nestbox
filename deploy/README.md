@@ -43,9 +43,9 @@ chmod 0600 secrets/* secrets/node/*
 The browser terminal is a WebSocket from the console to a PTY in the sandbox. It
 is refused unless both services hold the same node token, which is the point:
 the runner also sits on the sandbox network, so an unauthenticated endpoint there
-would be a shell in every neighbour. Replacing `secrets/node/token` while a
-session is open ends that session — which is the correct behaviour for a rotated
-credential.
+would be a shell in every neighbour. The API reads the file when a terminal
+opens, so a rotated token applies to the next session; terminals already open
+keep running until they end.
 
 The API reads `DATABASE_URL_FILE` rather than `DATABASE_URL`, so the connection
 string never becomes a process argument.
