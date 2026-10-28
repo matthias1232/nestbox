@@ -20,7 +20,20 @@ services:
       - sh
       - -c
       - |
-        mkdir -p /data/gateway /secrets
+        mkdir -p /data/gateway /secrets /secrets/node
+        # The node token authenticates the control API to the runner's terminal
+        # endpoint. It lives in its own directory because the runner mounts that
+        # directory and must not see the database URLs next to it.
+        #
+        # Generated here rather than required from the operator: a missing file
+        # would otherwise fail `up`, and a terminal without a token must not be
+        # an option. Idempotent: an existing token is left alone, so a restart
+        # cannot silently invalidate the file an operator is holding.
+        #
+        # Hex on purpose: the token travels as the second entry of
+        # `Sec-WebSocket-Protocol`, and base64's `+`, `/`, `=` are not valid in
+        # a protocol token — the handshake would fail with a bare 400.
+        [ -s /secrets/node/token ] || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > /secrets/node/token
         chown -R 10001:10001 /data /secrets
         chmod 0700 /secrets
         find /secrets -type f -exec chmod 0600 {} + 2>/dev/null || true
@@ -99,12 +112,20 @@ services:
       NESTBOX_RUNTIME_NETWORK: ${COMPOSE_PROJECT_NAME:-nestbox}_runtime
       NESTBOX_SECRET_DIR: /secrets
       NESTBOX_SESSION_COOKIE_SECURE: "false"
+      # The same token the runner demands on the terminal upgrade. It comes from
+      # the node directory rather than from a compose secret, because compose
+      # checks a secret file when it creates the container — before `init-data`
+      # can generate one — and a fresh appliance would fail to start. It is not
+      # mounted under `/run/secrets`: that directory belongs to the compose
+      # secrets and is mounted read-only, so a second mount below it fails.
+      NESTBOX_NODE_TOKEN_FILE: /run/node/token
       RUST_LOG: info,tower_http=warn
     secrets:
       - database_url
     volumes:
       - ./data/gateway:/data/gateway:ro
       - ./secrets:/secrets:ro
+      - ./secrets/node:/run/node:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -165,6 +186,11 @@ services:
       NESTBOX_MODEL_IMAGES: ghcr.io/ggml-org/llama.cpp@sha256:8ee4ec7ce58a921313d07390c6699af13aa5ec083f3cdf67e5f4155767047373
       # A single download may not exceed this, whatever the API asks for.
       NESTBOX_MODEL_MAX_BYTES: "34359738368"
+      # The terminal upgrade is refused without this token, and the runner also
+      # sits on the sandbox network: an open endpoint there would be a shell into
+      # every neighbour. It mounts the node directory, not `secrets/`: the
+      # runner has the Docker socket and no business reading database URLs.
+      NESTBOX_NODE_TOKEN_FILE: /run/node/token
     volumes:
       # The only component that talks to the Docker socket. It is separate from
       # the API on purpose: a compromise of the API does not yield the host.
@@ -174,6 +200,7 @@ services:
       - /var/lib/nestbox/persistent:/var/lib/nestbox/persistent
       - /var/lib/nestbox/models:/var/lib/nestbox/models
       - /proc:/host/proc:ro
+      - ./secrets/node:/run/node:ro
     expose:
       - "9000"
     networks:

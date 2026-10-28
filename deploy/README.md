@@ -26,8 +26,26 @@ PGPW="$(cat secrets/postgres_password)"
 printf '%s' "postgres://nestbox_app:${PGPW}@postgres:5432/nestbox" > secrets/database_url
 # Migrations need the schema owner. This file is mounted only into `migrate`.
 printf '%s' "postgres://nestbox:${PGPW}@postgres:5432/nestbox" > secrets/database_url_admin
-chmod 0600 secrets/*
+
+# The node token authenticates the control API to the runner's terminal
+# endpoint. It is the only file in `secrets/node/` on purpose: the runner mounts
+# that directory and must not be able to read the database URLs beside it.
+# `init-data` generates it on first start, so this is only needed if you want it
+# before the first `up`.
+# Hex, not base64: the token is sent as a `Sec-WebSocket-Protocol` entry, and
+# base64's `+`, `/` and `=` are not valid there.
+install -d -m 0755 secrets/node
+head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > secrets/node/token
+
+chmod 0600 secrets/* secrets/node/*
 ```
+
+The browser terminal is a WebSocket from the console to a PTY in the sandbox. It
+is refused unless both services hold the same node token, which is the point:
+the runner also sits on the sandbox network, so an unauthenticated endpoint there
+would be a shell in every neighbour. The API reads the file when a terminal
+opens, so a rotated token applies to the next session; terminals already open
+keep running until they end.
 
 The API reads `DATABASE_URL_FILE` rather than `DATABASE_URL`, so the connection
 string never becomes a process argument.

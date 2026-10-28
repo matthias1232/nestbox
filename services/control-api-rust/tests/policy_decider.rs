@@ -97,6 +97,7 @@ fn config(secret_dir: PathBuf) -> Config {
         bootstrap_admin: false,
         body_limit_bytes: 1_048_576,
         rate_limit_per_minute: 600,
+        terminal_idle_seconds: 30 * 60,
     }
 }
 

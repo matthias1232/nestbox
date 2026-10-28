@@ -5,16 +5,17 @@
 //! [`RuntimeAdapter`]-Vertrag und dessen HTTP-Endpunkten.
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use reqwest::StatusCode;
 use serde::Deserialize;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
+use chrono::{DateTime, Utc};
 use crate::domain::metrics::{InventoryProbe, ProcessTable};
 use crate::domain::runtime::{
     BuildRequest, BuildResult, ExecResult, HardwareReport, ModelDownload, ModelDownloadResult,
     ModelServe, ModelServeResult, NetworkInterface, RuntimeFacts, RuntimeResources, SandboxSpec,
 };
-use crate::runtime::{RuntimeAdapter, RuntimeError};
+use crate::runtime::{BoxTerminal, RunnerTerminal, RuntimeAdapter, RuntimeError};
 
 /// Antwort des Runners für eine Sandbox.
 #[derive(Debug, Deserialize)]
@@ -87,6 +88,17 @@ impl HttpRunner {
                 .connect_timeout(std::time::Duration::from_secs(5))
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
+        }
+    }
+
+    /// The same host and port, with the WebSocket scheme.
+    fn ws_base_url(&self) -> String {
+        if let Some(rest) = self.base_url.strip_prefix("https://") {
+            format!("wss://{rest}")
+        } else if let Some(rest) = self.base_url.strip_prefix("http://") {
+            format!("ws://{rest}")
+        } else {
+            format!("ws://{}", self.base_url)
         }
     }
 
@@ -249,6 +261,13 @@ impl RuntimeAdapter for HttpRunner {
         self.send(reqwest::Method::GET, "/v1/hardware", None).await
     }
 
+    async fn build(&self, request: BuildRequest) -> Result<BuildResult, RuntimeError> {
+        let payload = serde_json::to_value(&request)
+            .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        self.send(reqwest::Method::POST, "/v1/builds", Some(&payload))
+            .await
+    }
+
     async fn processes(&self, name: &str) -> Result<ProcessTable, RuntimeError> {
         self.send(
             reqwest::Method::GET,
@@ -284,21 +303,12 @@ impl RuntimeAdapter for HttpRunner {
         })
     }
 
-    async fn build(&self, request: BuildRequest) -> Result<BuildResult, RuntimeError> {
-        let payload = serde_json::to_value(&request)
-            .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
-        self.send(reqwest::Method::POST, "/v1/builds", Some(&payload))
-            .await
-    }
-
     async fn download_model(
         &self,
         request: ModelDownload,
     ) -> Result<ModelDownloadResult, RuntimeError> {
         let payload = serde_json::to_value(&request)
             .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
-        // A download can run for minutes on a slow line, and the default client
-        // timeout is set for exec, not for a multi-gigabyte file.
         self.send(reqwest::Method::POST, "/v1/models/download", Some(&payload))
             .await
     }
@@ -326,6 +336,94 @@ impl RuntimeAdapter for HttpRunner {
             Err(error) => Err(error),
         }
     }
+
+    async fn open_terminal(&self, name: &str) -> Result<BoxTerminal, RuntimeError> {
+        let url = format!("{}/v1/sandboxes/{}/terminal", self.ws_base_url(), name);
+        let mut request = url
+            .as_str()
+            .into_client_request()
+            .map_err(|error| RuntimeError::Rejected(format!("invalid terminal URL: {error}")))?;
+        // The token travels in a header, not in a query string: a URL ends up in
+        // access logs and in every error message that quotes the request. The
+        // subprotocol the runner answers with stays first, so the negotiation
+        // still selects it.
+        // Resolved per terminal, not cached at start (ADR 0016): rotating the
+        // file takes effect for the next session instead of requiring a restart
+        // of the API, and a token never sits in the process longer than the
+        // handshake that needs it.
+        let token = read_node_token();
+        let protocol = match &token {
+            Some(token) => format!("{TERMINAL_SUBPROTOCOL}, {token}"),
+            None => TERMINAL_SUBPROTOCOL.to_string(),
+        };
+        request.headers_mut().insert(
+            "sec-websocket-protocol",
+            reqwest::header::HeaderValue::from_str(&protocol).map_err(|_| {
+                RuntimeError::Rejected("the node token is not a valid header value".to_string())
+            })?,
+        );
+        let upgrade = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            tokio_tungstenite::connect_async(request),
+        )
+        .await
+        .map_err(|_| RuntimeError::Unavailable("the runner did not answer the upgrade".into()))?
+        .map_err(|error| match error {
+            tokio_tungstenite::tungstenite::Error::Http(response) => {
+                let status = response.status().as_u16();
+                match status {
+                    404 => RuntimeError::NotFound(name.to_string()),
+                    // The runner demands the node token, and the message names
+                    // the variable: a terminal that silently refuses to open is
+                    // the kind of failure that costs an afternoon.
+                    401 | 403 => RuntimeError::Rejected(
+                        "the runner refused the node token; NESTBOX_NODE_TOKEN must be the \
+                         same on the control API and on the sandbox runner"
+                            .to_string(),
+                    ),
+                    // The runner's handshake parser refuses a malformed
+                    // `Sec-WebSocket-Protocol` before the endpoint sees it, so a
+                    // token with `+`, `/` or `=` arrives here as a bare 400.
+                    400 => RuntimeError::Rejected(
+                        "the runner rejected the terminal handshake (400); a node token must \
+                         be a single token of letters and digits — hex, not base64"
+                            .to_string(),
+                    ),
+                    _ => RuntimeError::Rejected(format!(
+                        "the runner refused the terminal ({status})"
+                    )),
+                }
+            }
+            other => RuntimeError::Unavailable(other.to_string()),
+        })?;
+        Ok(Box::new(RunnerTerminal::new(upgrade.0)))
+    }
+}
+
+/// The subprotocol the terminal speaks. Named so both ends agree, and so a
+/// proxy that inspects the upgrade sees a protocol rather than a bare socket.
+const TERMINAL_SUBPROTOCOL: &str = "nestbox-terminal";
+
+/// The node token, from a file when one is configured and from the environment
+/// otherwise.
+///
+/// The file wins because an environment variable is visible in `docker inspect`
+/// and in a crash dump (ADR 0005), and this token is the only thing between a
+/// compromised sandbox and a shell in its neighbour.
+fn read_node_token() -> Option<String> {
+    if let Ok(path) = std::env::var("NESTBOX_NODE_TOKEN_FILE") {
+        return match std::fs::read_to_string(&path) {
+            Ok(value) => Some(value.trim().to_string()).filter(|token| !token.is_empty()),
+            Err(error) => {
+                tracing::warn!(path = %path, error = %error, "cannot read the node token file");
+                None
+            }
+        };
+    }
+    std::env::var("NESTBOX_NODE_TOKEN")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|token| !token.is_empty())
 }
 
 impl HttpRunner {
@@ -339,5 +437,4 @@ impl HttpRunner {
             .await?;
         Ok(facts.into())
     }
-
 }

@@ -19,6 +19,7 @@ pub mod providers;
 pub mod recipes;
 pub mod sandboxes;
 pub mod telemetry;
+pub mod terminal_sessions;
 pub mod traffic;
 pub mod traffic_bodies;
 
