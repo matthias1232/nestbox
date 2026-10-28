@@ -333,6 +333,12 @@ pub struct InstallView {
     pub reserved_vram_bytes: i64,
     /// Whether the server runs; off frees the reservation.
     pub enabled: bool,
+    /// The least RAM the model needs to load at all; the slider's floor.
+    pub min_ram_bytes: i64,
+    /// What the catalogue recommends, for the slider's marker.
+    pub recommended_ram_bytes: Option<i64>,
+    /// The most this install could hold: the node's free RAM plus its own share.
+    pub max_ram_bytes: i64,
     pub provider_profile_id: Option<Uuid>,
     pub job_id: Option<Uuid>,
     pub error: Option<String>,
@@ -362,7 +368,23 @@ pub async fn installs(
         .await
         .map_err(ApiError::from)?;
     let nodes = nodes::list(&mut scope).await.map_err(ApiError::from)?;
+    let mut free_ram: std::collections::HashMap<Uuid, i64> = std::collections::HashMap::new();
+    for install in &installs {
+        if !free_ram.contains_key(&install.node_id) {
+            let budget = super::node_service::free_budget(&mut scope, install.node_id).await?;
+            free_ram.insert(install.node_id, budget.ram_free_bytes);
+        }
+    }
     scope.commit().await.map_err(ApiError::from)?;
+    let ram_floor: std::collections::HashMap<&str, (i64, Option<i64>)> = models
+        .iter()
+        .map(|model| {
+            (
+                model.key.as_str(),
+                (model.min_ram_bytes.unwrap_or(MIN_RESERVED_RAM), model.recommended_ram_bytes),
+            )
+        })
+        .collect();
 
     let model_names: std::collections::HashMap<&str, &str> = models
         .iter()
@@ -375,7 +397,10 @@ pub async fn installs(
 
     Ok(installs
         .into_iter()
-        .map(|install| InstallView {
+        .map(|install| {
+            let floor = ram_floor.get(install.model_key.as_str()).copied();
+            let free = free_ram.get(&install.node_id).copied().unwrap_or(0);
+            InstallView {
             model_name: model_names
                 .get(install.model_key.as_str())
                 .map(|name| (*name).to_string())
@@ -392,11 +417,15 @@ pub async fn installs(
             reserved_ram_bytes: install.reserved_ram_bytes,
             reserved_vram_bytes: install.reserved_vram_bytes,
             enabled: install.enabled,
+            min_ram_bytes: floor.map_or(MIN_RESERVED_RAM, |(min, _)| min),
+            recommended_ram_bytes: floor.and_then(|(_, recommended)| recommended),
+            max_ram_bytes: free + if install.enabled { install.reserved_ram_bytes } else { 0 },
             provider_profile_id: install.provider_profile_id,
             job_id: install.job_id,
             error: install.error,
             created_at: install.created_at,
             updated_at: install.updated_at,
+            }
         })
         .collect())
 }
@@ -770,6 +799,9 @@ pub async fn uninstall(
     }))
 }
 
+/// The least reservation any model server gets, when the catalogue names no minimum.
+const MIN_RESERVED_RAM: i64 = 64 * 1024 * 1024;
+
 /// What an operator may change on an installed model.
 ///
 /// Every field is optional: a request that only flips `enabled` keeps the
@@ -802,8 +834,7 @@ pub async fn update_install(
 ) -> Result<serde_json::Value, ApiError> {
     require(principal, Permission::ModelInstall)?;
 
-    const MIN_RAM: i64 = 64 * 1024 * 1024;
-    if change.reserved_ram_bytes.is_some_and(|ram| ram < MIN_RAM) {
+    if change.reserved_ram_bytes.is_some_and(|ram| ram < MIN_RESERVED_RAM) {
         return Err(ApiError::validation("Reserved RAM must be at least 64 MiB."));
     }
     if change.reserved_vram_bytes.is_some_and(|vram| vram < 0) {
@@ -845,6 +876,19 @@ pub async fn update_install(
     }
 
     let ram = change.reserved_ram_bytes.unwrap_or(install.reserved_ram_bytes);
+    // The catalogue's minimum is what the model needs to load at all, so it is
+    // a floor and not a warning: a server given less would be killed at start.
+    let model = store::get_by_key(&mut scope, &install.model_key)
+        .await
+        .map_err(ApiError::from)?;
+    if let Some(min) = model.min_ram_bytes.filter(|min| ram < *min) {
+        return Err(ApiError::validation(format!(
+            "{} needs at least {:.1} GiB of RAM to load; {:.1} GiB was asked for.",
+            model.name,
+            min as f64 / 1_073_741_824.0,
+            ram as f64 / 1_073_741_824.0,
+        )));
+    }
     let vram = change.reserved_vram_bytes.unwrap_or(install.reserved_vram_bytes);
     let enabled = change.enabled.unwrap_or(install.enabled);
     let figures_changed =
@@ -1045,7 +1089,6 @@ pub async fn update_install(
         }
     });
 
-    let below_minimum = model.min_ram_bytes.is_some_and(|min| ram < min);
     Ok(serde_json::json!({
         "model_key": model.key,
         "node": node.name,
@@ -1054,11 +1097,6 @@ pub async fn update_install(
         "reserved_ram_bytes": ram,
         "reserved_vram_bytes": vram,
         "job_id": job.id,
-        "warning": if below_minimum {
-            serde_json::json!("The figure is below the catalogue's minimum for this model; it may fail to load or run slowly.")
-        } else {
-            serde_json::Value::Null
-        },
         "note": "The server is starting with the new figures; the state moves to installed once it answers.",
     }))
 }

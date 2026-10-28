@@ -17,7 +17,6 @@ use nestbox_control_api::services::ServiceContext;
 use nestbox_control_api::services::model_service::{self, InstallChange};
 
 const ENVIRONMENT: &str = "00000000-0000-0000-0000-000000000002";
-const CLUSTER: &str = "00000000-0000-0000-0000-000000000004";
 const LOCAL_NODE: &str = "00000000-0000-0000-0000-000000000003";
 
 fn environment_id() -> Uuid {
@@ -209,5 +208,37 @@ async fn an_unknown_install_is_a_404() {
     .await
     .expect_err("missing");
     assert_eq!(refused.status.as_u16(), 404);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn the_catalogue_minimum_is_a_floor_not_a_warning() {
+    let Some(pool) = connect().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+    let dir = secret_dir();
+    let ctx = context(&pool, &dir);
+    let p = principal(user(&pool).await);
+    let id = installed(&pool, "edit-model-c", 4 * GIB).await;
+    sqlx::query("UPDATE models SET min_ram_bytes = $2 WHERE key = $1")
+        .bind("edit-model-c")
+        .bind(3 * GIB)
+        .execute(&pool)
+        .await
+        .expect("set minimum");
+
+    let refused = model_service::update_install(
+        &ctx, &p, "edit-model-c", None,
+        InstallChange { reserved_ram_bytes: Some(2 * GIB), ..Default::default() },
+    )
+    .await
+    .expect_err("below the minimum");
+    assert_eq!(refused.status.as_u16(), 422);
+    assert_eq!(row(&pool, id).await.1, 4 * GIB);
+
+    let view = model_service::installs(&ctx, &p, None).await.expect("list");
+    let mine = view.iter().find(|i| i.model_key == "edit-model-c").expect("listed");
+    assert_eq!(mine.min_ram_bytes, 3 * GIB);
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -25,6 +25,14 @@ export class ApiError extends Error {
   }
 }
 
+// Called when the server says the CSRF token is missing. The token lives in
+// memory only, so a reload loses it; the session then asks for a fresh sign-in
+// instead of showing a raw 403 on every action.
+let onCsrfMissing = null;
+export function setCsrfMissingHandler(handler) {
+  onCsrfMissing = handler;
+}
+
 export function setCsrfToken(token) {
   csrfToken = token;
 }
@@ -63,6 +71,7 @@ export async function request(path, options = {}) {
 
   if (!response.ok) {
     const error = payload?.error || {};
+    if (error.code === 'auth.csrf_required' && onCsrfMissing) onCsrfMissing();
     throw new ApiError(
       error.code || 'request.failed',
       error.message || `Request failed with ${response.status}`,

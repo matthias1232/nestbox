@@ -354,3 +354,7 @@ ul.plain { list-style: none; padding: 0; margin: 0; display: flex; flex-directio
 .check { display: flex; align-items: center; gap: 2px; line-height: 1.5; }
 .check.fail { color: var(--bad); }
 .check.warn { color: var(--warn); }
+
+/* Reserved-RAM slider on the models page. */
+.ram-slider { display: grid; gap: 0.25rem; min-width: 16rem; }
+.ram-slider input[type="range"] { width: 100%; }

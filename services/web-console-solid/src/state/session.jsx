@@ -5,7 +5,7 @@
 
 import { createContext, createSignal, useContext } from 'solid-js';
 import * as auth from '../api/auth.js';
-import { setCsrfToken, setEnvironment } from '../api/client.js';
+import { setCsrfMissingHandler, setCsrfToken, setEnvironment } from '../api/client.js';
 
 const SessionContext = createContext();
 
@@ -15,6 +15,14 @@ export function SessionProvider(props) {
   const [activeEnvironment, setActiveEnvironment] = createSignal(null);
   const [error, setError] = createSignal(null);
   const [busy, setBusy] = createSignal(false);
+
+  // After a reload the security token is gone; go back to the sign-in form
+  // with the reason instead of failing every action with a 403.
+  setCsrfMissingHandler(() => {
+    setIdentity(null);
+    setCsrfToken(null);
+    setError('Please sign in again: a page reload ends the security token that changes need.');
+  });
 
   async function signIn(email, password) {
     setBusy(true);

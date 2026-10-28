@@ -328,18 +328,36 @@ export default function ModelsPage() {
                     </td>
                     <td>
                       <Show when={row.state === 'installed'} fallback={<>{gib(row.reserved_ram_bytes || 0)}</>}>
-                        <input
-                          class="ram-input"
-                          type="number" min="0.1" step="0.5"
-                          value={ramDraft()[row.model_key] ?? (row.reserved_ram_bytes / 1073741824).toFixed(1)}
-                          onInput={(event) =>
-                            setRamDraft({ ...ramDraft(), [row.model_key]: event.currentTarget.value })}
-                        />{' '}GiB{' '}
-                        <button class="secondary"
-                                disabled={ramDraft()[row.model_key] === undefined}
-                                onClick={() => saveRam(row)}>
-                          Save
-                        </button>
+                        {(() => {
+                          const GIB = 1073741824;
+                          const min = Math.max(0.1, row.min_ram_bytes / GIB);
+                          const max = Math.max(min, row.max_ram_bytes / GIB);
+                          const value = () => Number(
+                            ramDraft()[row.model_key] ?? (row.reserved_ram_bytes / GIB));
+                          return (
+                            <div class="ram-slider">
+                              <input
+                                type="range" min={min} max={max} step="0.1"
+                                value={Math.min(max, Math.max(min, value()))}
+                                onInput={(event) =>
+                                  setRamDraft({ ...ramDraft(), [row.model_key]: event.currentTarget.value })}
+                              />
+                              <div class="muted small">
+                                <b>{value().toFixed(1)} GiB</b>
+                                {' '}· min {min.toFixed(1)} (needed to load)
+                                <Show when={row.recommended_ram_bytes}>
+                                  {' '}· recommended {(row.recommended_ram_bytes / GIB).toFixed(1)}
+                                </Show>
+                                {' '}· max {max.toFixed(1)}
+                              </div>
+                              <button class="secondary"
+                                      disabled={ramDraft()[row.model_key] === undefined}
+                                      onClick={() => saveRam(row)}>
+                                Apply
+                              </button>
+                            </div>
+                          );
+                        })()}
                         <Show when={!row.enabled}>
                           <div class="muted small">off: counts once switched on</div>
                         </Show>
