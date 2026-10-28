@@ -52,7 +52,7 @@ Verified on the appliance VM200 (`192.168.55.50`), branch `feat/m1-rebuild`,
 | The budget is measurement minus reservations | Done | Installing `qwen3-1.7b` reserved 5.00 GiB: free fell 7.76 → 2.76 GiB. A second model needing 12 GiB answered `422 node.insufficient_resources`: "5.0 GiB of this node's 7.8 GiB are reserved by qwen3-1.7b. 2.8 GiB are free, short by 9.2 GiB." |
 | Uninstall releases the reservation | Done | `released_ram_bytes: 5368709120`; free returned to 7.76 GiB. |
 | A sandbox is refused when it cannot fit | Done | `32Gi` on the 7.8 GiB node → `422 node.insufficient_resources`, "The node has 7.8 GiB of RAM free; the request needs 32.0 GiB." `512Mi` → `201`, `node_name: local`. |
-| An install creates a provider profile | Done | `local/qwen3-1.7b@local`, status `pending`, endpoint `http://model-qwen3-1-7b:8000/v1`. The inference environment filters on `reachable`. |
+| An install creates a provider profile | Done | `local/qwen3-1.7b@local`, status `pending`, endpoint `http://model-qwen3-1-7b:8080/v1`. The inference environment filters on `reachable`. |
 | The catalog is built from the repositories | Done | `POST /models/sync` and the daily `catalog-sync` schedule both run it: Hugging Face +27, Ollama +16, NGC +24 → 152 rows. A second run reports 0 added, 67 updated; the 85 curated rows are untouched (all `pinned`). |
 | Baselines, packs, and tools are data | Done | 3 baselines (Ubuntu recommended), 9 packs, 23 tools with apt/rpm names; `pack_defaults` reads the table. |
 | Agents inside a sandbox | Done (API) | Adding `hermes` answered the agent row and the generated supervisor; removing with `keep_persistent=false` answered `204`. The console tab exists. |

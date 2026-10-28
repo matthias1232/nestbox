@@ -834,11 +834,18 @@ pub async fn run_install(
     )
     .await?;
 
+    // The catalogue's `weights_bytes` is the figure the fit gate uses, and a
+    // quantised file can be larger than it (Q8_0 of a 1.7B model is about
+    // 1.8 GiB). The bound is therefore generous on purpose, with a floor: it
+    // exists to stop a mistyped repository from filling the disk, not to
+    // second-guess the row.
+    const GIB: i64 = 1024 * 1024 * 1024;
     let expected = model
         .weights_bytes
         .filter(|bytes| *bytes > 0)
-        .map(|bytes| bytes + bytes / 5 + 64 * 1024 * 1024)
-        .unwrap_or(8 * 1024 * 1024 * 1024);
+        .map(|bytes| bytes.saturating_mul(2).saturating_add(GIB / 4))
+        .unwrap_or(8 * GIB)
+        .max(4 * GIB);
     let download = ctx
         .runtime
         .download_model(ModelDownload {
