@@ -106,6 +106,33 @@ export function useSandboxes() {
     }
   }
 
+  // One action on every member of a stack. Like `bulk`, a failure does not stop
+  // the rest, and the count says how it went.
+  async function actAll(ids, action) {
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        await api.act(id, action);
+      } catch {
+        failed += 1;
+      }
+    }
+    await load();
+    if (failed > 0) setError(`${ids.length - failed} succeeded, ${failed} failed.`);
+  }
+
+  // Move a sandbox into a stack or out of it. The server enforces the rules
+  // (one level, a real lead); its sentence is what the operator reads.
+  async function setStack(id, parentId) {
+    setError(null);
+    try {
+      await api.setStack(id, parentId || null);
+      await load({ cursor: null });
+    } catch (failure) {
+      setError(failure.message);
+    }
+  }
+
   async function destroy(id) {
     setError(null);
     try {
@@ -125,7 +152,7 @@ export function useSandboxes() {
   return {
     items, facets, facetsStatus: statusFacet, facetsPack: packFacet,
     total, loading, error, selected, status, search, nextCursor,
-    load, filterByStatus, updateSearch, toggle, toggleAll, act, bulk, destroy,
+    load, filterByStatus, updateSearch, toggle, toggleAll, act, actAll, bulk, destroy, setStack,
     canStart, canStop, setError,
   };
 }

@@ -91,6 +91,9 @@ pub async fn get(
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateRequest {
+    /// The lead of the stack this sandbox joins; absent for a standalone one.
+    #[serde(default)]
+    pub parent_id: Option<Uuid>,
     pub name: String,
     pub pack_key: String,
     /// Optional: empty means the pack's default image.
@@ -140,6 +143,7 @@ pub async fn create(
             cpu_limit: body.cpu_limit,
             pids_limit: body.pids_limit,
             node: body.node,
+            parent_id: body.parent_id,
         },
     )
     .await?;
@@ -252,4 +256,23 @@ pub async fn exec(
     )
     .await?;
     Ok(Json(result))
+}
+
+/// The body of a stack change.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct StackRequest {
+    /// The lead to join, or `null` to leave the stack.
+    pub parent_id: Option<Uuid>,
+}
+
+/// Put a sandbox into a stack, or take it out.
+pub async fn put_stack(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<StackRequest>,
+) -> Result<Json<crate::domain::sandbox::Sandbox>, ApiError> {
+    let sandbox =
+        sandbox_service::set_stack(&state.services, &auth.principal, id, body.parent_id).await?;
+    Ok(Json(sandbox))
 }

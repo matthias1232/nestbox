@@ -24,11 +24,14 @@ const blank = {
   memory_gib: '2',
   cpu: '1',
   pids: '512',
+  parent_id: '',
 };
 
 export function useCreateSandbox() {
   const [nodes, setNodes] = createSignal([]);
   const [packs, setPacks] = createSignal([]);
+  // Sandboxes a new one may join: those that are not members themselves.
+  const [leads, setLeads] = createSignal([]);
   const [form, setForm] = createSignal({ ...blank });
   const [loading, setLoading] = createSignal(true);
   const [busy, setBusy] = createSignal(false);
@@ -39,9 +42,10 @@ export function useCreateSandbox() {
   async function load() {
     setLoading(true);
     setError(null);
-    const [nodeAnswer, packAnswer] = await Promise.allSettled([
+    const [nodeAnswer, packAnswer, leadAnswer] = await Promise.allSettled([
       nodesApi.list(),
       packsApi.agentPacks(),
+      sandboxes.list({ limit: 200 }),
     ]);
     const problems = [];
 
@@ -65,6 +69,12 @@ export function useCreateSandbox() {
       if (!form().pack_key && items.length > 0) setForm({ ...form(), pack_key: items[0].key });
     } else {
       problems.push(`The agent packs could not be read (${packAnswer.reason.message}).`);
+    }
+
+    // A missing lead list only removes an optional field; it is not an error
+    // worth blocking a create for.
+    if (leadAnswer.status === 'fulfilled') {
+      setLeads((leadAnswer.value.items || []).filter((item) => !item.parent_id));
     }
 
     setError(problems.length > 0 ? problems.join(' ') : null);
@@ -146,6 +156,7 @@ export function useCreateSandbox() {
         cpu_limit: cpuCores(),
         pids_limit: pids(),
         ...(current.node ? { node: current.node } : {}),
+        ...(current.parent_id ? { parent_id: current.parent_id } : {}),
       });
       return created;
     } catch (failure) {
@@ -169,7 +180,7 @@ export function useCreateSandbox() {
   }
 
   return {
-    nodes, packs, form, loading, busy, error,
+    nodes, packs, leads, form, loading, busy, error,
     setField, submit,
     selectedNode, measured, budget, memoryBytes, cpuCores, problems, blocked, load,
   };

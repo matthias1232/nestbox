@@ -71,6 +71,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/sandboxes/{id}/exec", post(sandboxes::exec))
         .route("/api/v1/sandboxes/{id}/inference", get(telemetry::sandbox_inference))
         .route("/api/v1/sandboxes/{id}/rules", get(policies::sandbox_rules))
+        // Which sandboxes belong together.
+        .route("/api/v1/sandboxes/{id}/stack", put(sandboxes::put_stack))
         // Admin Center: resource history, processes, inventory
         .route(
             "/api/v1/internal/metrics/ingest",
@@ -284,6 +286,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/models/sync", post(models::sync))
         .route("/api/v1/models/{key}/install", post(models::install))
         .route("/api/v1/models/{key}/uninstall", post(models::uninstall))
+        .route("/api/v1/models/{key}/install", patch(models::update_install))
         // Nodes
         .route("/api/v1/nodes", get(nodes::list))
         .route("/api/v1/nodes/{id}", get(nodes::get))

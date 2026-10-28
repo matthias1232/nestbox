@@ -175,6 +175,7 @@ async fn sandbox(pool: &PgPool, environment: Uuid, runtime: &FakeRuntime) -> San
             image: "nestbox/tool-hermes@sha256:0123456789abcdef",
             image_digest: Some("sha256:0123456789abcdef"),
             spec: &serde_json::json!({}),
+            parent_id: None,
         },
     )
     .await

@@ -32,6 +32,7 @@ Grouped by tab, all under the frozen `/api/v1/` prefix (ADR 0015):
 
 | Area | Endpoints |
 |---|---|
+| Stacks | `PUT /sandboxes/{id}/stack` (a member joins a lead or leaves; one level deep) |
 | Dashboard | `GET /sandboxes/{id}/metrics`, `GET /sandboxes/{id}/processes`, `GET /sandboxes/{id}/policies/effective` |
 | Traffic | `GET /sandboxes/{id}/traffic`, `GET /sandboxes/{id}/traffic/{event_id}/body`, SSE on `/telemetry/stream` |
 | MCP | `GET/POST /mcp/servers`, `GET/PUT/DELETE /mcp/servers/{key}`, `GET/POST /sandboxes/{id}/mcp/servers`, `DELETE /sandboxes/{id}/mcp/servers/{key}`, `POST /sandboxes/{id}/mcp/servers/{key}/discover`, `GET /sandboxes/{id}/mcp/calls` |

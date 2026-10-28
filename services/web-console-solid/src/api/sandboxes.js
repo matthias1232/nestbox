@@ -18,6 +18,11 @@ export function act(id, action) {
   return request(`sandboxes/${id}/actions`, { method: 'POST', body: { action } });
 }
 
+// Put a sandbox into a stack (parentId = its lead) or take it out (null).
+export function setStack(id, parentId) {
+  return request(`sandboxes/${id}/stack`, { method: 'PUT', body: { parent_id: parentId } });
+}
+
 export function remove(id) {
   return request(`sandboxes/${id}`, { method: 'DELETE' });
 }

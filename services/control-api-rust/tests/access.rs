@@ -159,6 +159,7 @@ async fn sandbox(ctx: &ServiceContext, environment_id: Uuid, pack_key: &str) -> 
             image: "nestbox/base@sha256:0000000000000000000000000000000000000000000000000000000000000000",
             image_digest: None,
             spec: &serde_json::json!({ "pack_key": pack_key }),
+            parent_id: None,
         },
     )
     .await

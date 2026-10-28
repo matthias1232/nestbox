@@ -23,7 +23,7 @@ use crate::domain::sandbox::{
     Sandbox, SandboxDetail, SandboxHealth, SandboxName, SandboxStatus, SandboxSummary,
 };
 use crate::domain::telemetry::LiveEvent;
-use crate::error::{ApiError, ErrorCode};
+use crate::error::{ApiError, ErrorCode, StoreError};
 use crate::store::TenantScope;
 use crate::store::postgres::environments as env_store;
 use crate::store::postgres::sandboxes as store;
@@ -168,6 +168,67 @@ pub struct CreateSandbox {
     pub pids_limit: i64,
     /// The node to place the sandbox on, by name. Empty means the local node.
     pub node: Option<String>,
+    /// The lead of the stack this sandbox joins. Absent means standalone (or a
+    /// lead, when others later point at it).
+    pub parent_id: Option<Uuid>,
+}
+
+/// Whether `lead` may lead a stack that `member` joins.
+///
+/// Three rules, each of which keeps the list readable: the lead is a sandbox of
+/// this environment, it is not itself a member of another stack (a stack is one
+/// level deep), and a sandbox that leads members cannot become a member. `member`
+/// is `None` while the sandbox is still being created.
+async fn check_stack_lead(
+    scope: &mut TenantScope<'_>,
+    member: Option<Uuid>,
+    lead: Option<Uuid>,
+) -> Result<(), ApiError> {
+    let Some(lead_id) = lead else {
+        return Ok(());
+    };
+    if Some(lead_id) == member {
+        return Err(ApiError::validation("A sandbox cannot be part of its own stack."));
+    }
+    let lead = store::get(scope, lead_id).await.map_err(|error| match error {
+        StoreError::NotFound => ApiError::validation("The stack's lead sandbox does not exist."),
+        other => ApiError::from(other),
+    })?;
+    if lead.parent_id.is_some() {
+        return Err(ApiError::validation(
+            "That sandbox is itself a member of a stack. A stack has one lead and its members, nothing deeper.",
+        ));
+    }
+    if let Some(member_id) = member {
+        if store::member_count(scope, member_id).await.map_err(ApiError::from)? > 0 {
+            return Err(ApiError::validation(
+                "This sandbox leads a stack of its own. Move its members first.",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Put a sandbox into a stack, or take it out with `None`.
+pub async fn set_stack(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    id: Uuid,
+    parent_id: Option<Uuid>,
+) -> Result<Sandbox, ApiError> {
+    require(principal, Permission::SandboxWrite)?;
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    // Read first: a sandbox that is not here is a 404 before any rule is argued.
+    store::get(&mut scope, id).await.map_err(ApiError::from)?;
+    check_stack_lead(&mut scope, Some(id), parent_id).await?;
+    store::set_parent(&mut scope, id, parent_id)
+        .await
+        .map_err(ApiError::from)?;
+    let updated = store::get(&mut scope, id).await.map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(updated)
 }
 
 /// Settle a row stuck in a transitional state when the runtime has moved on.
@@ -501,6 +562,8 @@ pub async fn create(
         "egress_proxy": &egress_proxy,
     });
 
+    check_stack_lead(&mut scope, None, request.parent_id).await?;
+
     let sandbox = store::insert(
         &mut scope,
         store::NewSandbox {
@@ -512,6 +575,7 @@ pub async fn create(
             image: &image,
             image_digest: request.image_digest.as_deref(),
             spec: &spec,
+            parent_id: request.parent_id,
         },
     )
     .await
@@ -1059,6 +1123,7 @@ mod tests {
             gateway_name: None,
             supervisor_id: None,
             workspace_id: None,
+            parent_id: None,
             node_id: Uuid::nil(),
             node_name: Some("local".into()),
             name: "x".into(),

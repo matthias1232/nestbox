@@ -108,6 +108,11 @@ pub struct Sandbox {
     pub gateway_name: Option<String>,
     pub supervisor_id: Option<Uuid>,
     pub workspace_id: Option<Uuid>,
+    /// The lead of the stack this sandbox belongs to, when it is a member.
+    /// A lead and a standalone sandbox both have `None`; the lead is the one
+    /// other sandboxes point at.
+    #[serde(default)]
+    pub parent_id: Option<Uuid>,
     /// The node this sandbox runs on. Every sandbox has one; Phase 1 has one node.
     pub node_id: Uuid,
     /// The node's name, joined for the list view.
@@ -265,6 +270,7 @@ mod tests {
             gateway_name: None,
             supervisor_id: None,
             workspace_id: None,
+            parent_id: None,
             name: "x".into(),
             pack_key: "ubuntu-dev".into(),
             image: "img@sha256:abc".into(),

@@ -37,12 +37,18 @@ on it.
 - Removing an agent decides what happens to its persistent home. The "keep its
   data" checkbox is that decision, it defaults to true, and `keep_persistent`
   carries it on the same DELETE.
+- Sandboxes that belong together are one stack: a lead and its members, one level
+  deep, drawn together in the list. Stacks are open by default, because a folded
+  stack would hide a failing member; the collapsed lead shows the worst member
+  status. The server decides what is a legal stack and its sentence is shown.
+
 ## Files
 
 | File | Responsibility |
 |---|---|
 | `useSandboxes.js` | Paging, filters, selection, actions; no JSX |
-| `SandboxListPage.jsx` | Table, facets, bulk bar, the New sandbox drawer |
+| `SandboxListPage.jsx` | Table with stacks (a lead and its members drawn together), facets, bulk bar, the New sandbox drawer |
+| `stacks.js` | Grouping the flat page into stacks; a member whose lead is on another page stays a row of its own and names its lead. Test: `node --test stacks.test.js` |
 | `CreateSandboxForm.jsx` | Name, pack, node, memory, CPU, PIDs; the node's free numbers beside them (`feat/ui-sandbox-resources`) |
 | `useCreateSandbox.js` | Nodes, packs, the draft, and the pre-check; no JSX (`feat/ui-sandbox-resources`) |
 | `SandboxDetail.jsx` | Drawer with overview, agents, logs, shell, rules, inference |

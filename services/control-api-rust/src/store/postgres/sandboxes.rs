@@ -31,6 +31,7 @@ fn row_to_sandbox(row: &sqlx::postgres::PgRow) -> Result<Sandbox, StoreError> {
         gateway_name: row.try_get("gateway_name")?,
         supervisor_id: row.try_get("supervisor_id")?,
         workspace_id: row.try_get("workspace_id")?,
+        parent_id: row.try_get("parent_id")?,
         node_id: row.try_get("node_id")?,
         node_name: row.try_get("node_name")?,
         name: row.try_get("name")?,
@@ -51,7 +52,7 @@ fn row_to_sandbox(row: &sqlx::postgres::PgRow) -> Result<Sandbox, StoreError> {
 /// breaks loudly in the mapping rather than silently mis-aligning a field.
 const SANDBOX_COLUMNS: &str = "
     s.id, s.environment_id, s.cluster_id, s.gateway_id, s.supervisor_id,
-    s.workspace_id, s.node_id, s.name, s.pack_key, s.image, s.image_digest, s.spec,
+    s.workspace_id, s.parent_id, s.node_id, s.name, s.pack_key, s.image, s.image_digest, s.spec,
     s.status, s.health, s.version, s.created_at, s.updated_at,
     g.name AS gateway_name, n.name AS node_name
 ";
@@ -281,6 +282,8 @@ pub struct NewSandbox<'a> {
     pub image: &'a str,
     pub image_digest: Option<&'a str>,
     pub spec: &'a serde_json::Value,
+    /// The lead of the stack this sandbox joins, already checked by the service.
+    pub parent_id: Option<Uuid>,
 }
 
 /// Insert a sandbox and return it.
@@ -293,8 +296,8 @@ pub async fn insert(
         "WITH inserted AS (
             INSERT INTO sandboxes
                 (environment_id, cluster_id, gateway_id, node_id, name, pack_key,
-                 image, image_digest, spec, status, health)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', 'unknown')
+                 image, image_digest, spec, status, health, parent_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', 'unknown', $10)
             RETURNING *
          )
          SELECT {SANDBOX_COLUMNS}
@@ -313,10 +316,53 @@ pub async fn insert(
         .bind(new.image)
         .bind(new.image_digest)
         .bind(new.spec)
+        .bind(new.parent_id)
         .fetch_one(scope.connection())
         .await?;
 
     row_to_sandbox(&row)
+}
+
+/// Put a sandbox into a stack, or take it out with `None`.
+///
+/// The rules (one level, no self, same environment) are the service's; this
+/// only writes. The environment filter still applies, so a foreign id updates
+/// nothing and reads as not found.
+pub async fn set_parent(
+    scope: &mut TenantScope<'_>,
+    id: Uuid,
+    parent_id: Option<Uuid>,
+) -> Result<(), StoreError> {
+    let affected = sqlx::query(
+        "UPDATE sandboxes SET parent_id = $3, updated_at = now()
+          WHERE environment_id = $1 AND id = $2",
+    )
+    .bind(scope.environment_id())
+    .bind(id)
+    .bind(parent_id)
+    .execute(scope.connection())
+    .await?
+    .rows_affected();
+    if affected == 0 {
+        Err(StoreError::NotFound)
+    } else {
+        Ok(())
+    }
+}
+
+/// How many sandboxes point at this one.
+pub async fn member_count(
+    scope: &mut TenantScope<'_>,
+    id: Uuid,
+) -> Result<i64, StoreError> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sandboxes WHERE environment_id = $1 AND parent_id = $2",
+    )
+    .bind(scope.environment_id())
+    .bind(id)
+    .fetch_one(scope.connection())
+    .await?;
+    Ok(count)
 }
 
 /// Change a sandbox's status, guarded by the expected version.

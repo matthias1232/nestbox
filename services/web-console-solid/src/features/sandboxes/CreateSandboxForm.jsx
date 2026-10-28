@@ -78,6 +78,23 @@ export default function CreateSandboxForm(props) {
             </select>
             <small class="muted">The sandbox runs on this machine.</small>
           </label>
+
+          <label class="field">
+            <span>Part of stack</span>
+            <select
+              value={state.form().parent_id}
+              onChange={(e) => state.setField('parent_id', e.currentTarget.value)}
+            >
+              <option value="">None — a sandbox of its own</option>
+              <For each={state.leads()}>
+                {(lead) => <option value={lead.id}>{lead.name}</option>}
+              </For>
+            </select>
+            <small class="muted">
+              Choose the sandbox this one is needed by, such as the agent it supports. The list
+              then shows them together.
+            </small>
+          </label>
         </div>
 
         <Show when={state.selectedNode()}>

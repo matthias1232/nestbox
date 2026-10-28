@@ -34,7 +34,7 @@ The architecture test enforces the last two.
 | `principal.rs` | The `Auth` extractor: session, token, CSRF |
 | `auth.rs` | Login, logout, identity |
 | `system.rs` | Health, readiness, runtime, OpenAPI, environments, audit |
-| `sandboxes.rs` | Sandbox list, detail, create, actions, logs, exec |
+| `sandboxes.rs` | Sandbox list, detail, create, actions, logs, exec, stack membership (`PUT /sandboxes/{id}/stack`) |
 | `sandboxes_settings.rs` | A sandbox's supervisor settings: read the thresholds, write them back |
 | `policies.rs` | Policies, rules, drafts, traffic windows, and the node-token egress check (`feat/policy-decider`) |
 | `telemetry.rs` | History, facets, ingest, and the node-token batch from an egress proxy |

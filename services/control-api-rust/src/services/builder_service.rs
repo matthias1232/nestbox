@@ -790,6 +790,7 @@ pub async fn instantiate(
             // recorded in `spec.image_content_hash` for the audit trail.
             image_digest: None,
             spec: &spec,
+            parent_id: None,
         },
     )
     .await

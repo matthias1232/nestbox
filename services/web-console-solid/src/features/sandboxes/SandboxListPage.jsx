@@ -10,7 +10,9 @@ import Drawer from '../../components/Drawer.jsx';
 import { useSandboxes } from './useSandboxes.js';
 import SandboxDetail from './SandboxDetail.jsx';
 import CreateSandboxForm from './CreateSandboxForm.jsx';
-import { createSignal } from 'solid-js';
+import { createMemo, createSignal } from 'solid-js';
+import { groupStacks, possibleLeads, worstStatus } from './stacks.js';
+import '../../styles/stacks.css';
 
 export default function SandboxListPage(props) {
   const state = useSandboxes();
@@ -20,8 +22,26 @@ export default function SandboxListPage(props) {
 
   onMount(() => state.load({ cursor: null }));
 
+  // Which stacks are folded shut. Open is the default: a stack that hides its
+  // members by default would hide a failing one.
+  const [folded, setFolded] = createSignal(new Set());
+  const rows = createMemo(() => groupStacks(state.items()));
+
+  function toggleFold(id) {
+    const next = new Set(folded());
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setFolded(next);
+  }
+
+  const leadName = (id) => state.items().find((item) => item.id === id)?.name;
+
   function confirmDestroy(sandbox) {
-    if (window.confirm(`Delete sandbox "${sandbox.name}"? Its container and its state are removed.`)) {
+    const members = state.items().filter((item) => item.parent_id === sandbox.id).length;
+    const note = members > 0
+      ? ` Its ${members} member${members === 1 ? '' : 's'} stay${members === 1 ? 's' : ''} as sandboxes of their own.`
+      : '';
+    if (window.confirm(`Delete sandbox "${sandbox.name}"? Its container and its state are removed.${note}`)) {
       state.destroy(sandbox.id);
     }
   }
@@ -33,6 +53,119 @@ export default function SandboxListPage(props) {
     );
     await state.load({ cursor: null });
   }
+
+
+  // One table row. `row` says what the sandbox is in the list: a lead with
+  // members, a member under its lead, or a sandbox on its own.
+  const rowClass = (sandbox, row) =>
+    [
+      openId() === sandbox.id ? 'selected' : '',
+      row.role === 'lead' ? 'stack-lead' : '',
+      row.role === 'member' ? 'stack-member' : '',
+    ].join(' ').trim();
+
+  const sandboxRow = (sandbox, row) => (
+                  <tr class={rowClass(sandbox, row)}>
+                    <td class="narrow stack-gutter">
+                      <Show when={row.role === 'lead'}>
+                        <button
+                          class="fold"
+                          aria-label={folded().has(sandbox.id) ? 'Show members' : 'Hide members'}
+                          aria-expanded={!folded().has(sandbox.id)}
+                          onClick={() => toggleFold(sandbox.id)}
+                        >
+                          {folded().has(sandbox.id) ? '▸' : '▾'}
+                        </button>
+                      </Show>
+                      <input
+                        type="checkbox"
+                        checked={state.selected().has(sandbox.id)}
+                        onChange={() => state.toggle(sandbox.id)}
+                        aria-label={`Select ${sandbox.name}`}
+                      />
+                    </td>
+                    <td>
+                      {/* The name opens the Admin Center, because that is
+                          where the questions about a sandbox are answered. The
+                          drawer stays one click away for a quick look. */}
+                      <button
+                        class="link"
+                        onClick={() =>
+                          props.onOpenAdmin ? props.onOpenAdmin(sandbox.id) : setOpenId(sandbox.id)
+                        }
+                      >
+                        {sandbox.name}
+                      </button>
+                      <Show when={row.role === 'lead'}>
+                        <span class="stack-summary">
+                          <b>Stack</b> · {row.members.length} member{row.members.length === 1 ? '' : 's'}
+                          {' · '}
+                          <StatusBadge status={worstStatus(row.members.map((m) => m.status))} />
+                        </span>
+                      </Show>
+                      <Show when={row.orphanOf}>
+                        <span class="stack-summary">
+                          part of {leadName(row.orphanOf) || 'a sandbox on another page'}
+                        </span>
+                      </Show>
+                    </td>
+                    <td><StatusBadge status={sandbox.status} /></td>
+                    <td><StatusBadge status={sandbox.health} /></td>
+                    <td class="mono small">{sandbox.pack_key}</td>
+                    <td class="mono small">
+                      {/* The machine the container actually runs on. This page
+                          does not know the route to the nodes screen, so the
+                          integrator passes `onOpenNode`; without it the name is
+                          shown, just not clickable. */}
+                      <Show when={sandbox.node_name} fallback={<span class="muted">—</span>}>
+                        <Show when={props.onOpenNode} fallback={<span>{sandbox.node_name}</span>}>
+                          <button
+                            class="link"
+                            title="Show this node"
+                            onClick={() => props.onOpenNode(sandbox.node_id)}
+                          >
+                            {sandbox.node_name}
+                          </button>
+                        </Show>
+                      </Show>
+                    </td>
+                    <td class="mono small">{sandbox.address || '—'}</td>
+                    <td class="narrow mono small">{shortUptime(sandbox)}</td>
+                    <td class="actions">
+                      <button class="tiny" onClick={() => setOpenId(sandbox.id)}>Details</button>
+                      <button class="tiny" disabled={!state.canStart(sandbox)}
+                              onClick={() => state.act(sandbox.id, 'start')}>Start</button>
+                      <button class="tiny" disabled={!state.canStop(sandbox)}
+                              onClick={() => state.act(sandbox.id, 'stop')}>Stop</button>
+                      <button class="tiny" disabled={!sandbox.status.includes('running')}
+                              onClick={() => state.act(sandbox.id, 'restart')}>Restart</button>
+                      <Show when={row.role === 'lead'}>
+                        <button class="tiny" title="Start every member and the lead"
+                                onClick={() => state.actAll([sandbox, ...row.members].filter(state.canStart).map((s) => s.id), 'start')}>
+                          Start all
+                        </button>
+                        <button class="tiny" title="Stop every member and the lead"
+                                onClick={() => state.actAll([sandbox, ...row.members].filter(state.canStop).map((s) => s.id), 'stop')}>
+                          Stop all
+                        </button>
+                      </Show>
+                      <select
+                        class="tiny stack-select"
+                        aria-label={`Stack of ${sandbox.name}`}
+                        title="Which stack this sandbox belongs to"
+                        disabled={row.role === 'lead'}
+                        value={sandbox.parent_id || ''}
+                        onChange={(event) => state.setStack(sandbox.id, event.currentTarget.value)}
+                      >
+                        <option value="">{row.role === 'lead' ? 'Leads a stack' : 'No stack'}</option>
+                        <For each={possibleLeads(state.items(), sandbox)}>
+                          {(lead) => <option value={lead.id}>Part of {lead.name}</option>}
+                        </For>
+                      </select>
+                      <button class="tiny danger" onClick={() => confirmDestroy(sandbox)}>Delete</button>
+                    </td>
+                  </tr>
+  );
 
   return (
     <section class="page">
@@ -123,63 +256,16 @@ export default function SandboxListPage(props) {
               </tr>
             </thead>
             <tbody>
-              <For each={state.items()}>
-                {(sandbox) => (
-                  <tr class={openId() === sandbox.id ? 'selected' : ''}>
-                    <td class="narrow">
-                      <input
-                        type="checkbox"
-                        checked={state.selected().has(sandbox.id)}
-                        onChange={() => state.toggle(sandbox.id)}
-                        aria-label={`Select ${sandbox.name}`}
-                      />
-                    </td>
-                    <td>
-                      {/* The name opens the Admin Center, because that is
-                          where the questions about a sandbox are answered. The
-                          drawer stays one click away for a quick look. */}
-                      <button
-                        class="link"
-                        onClick={() =>
-                          props.onOpenAdmin ? props.onOpenAdmin(sandbox.id) : setOpenId(sandbox.id)
-                        }
-                      >
-                        {sandbox.name}
-                      </button>
-                    </td>
-                    <td><StatusBadge status={sandbox.status} /></td>
-                    <td><StatusBadge status={sandbox.health} /></td>
-                    <td class="mono small">{sandbox.pack_key}</td>
-                    <td class="mono small">
-                      {/* The machine the container actually runs on. This page
-                          does not know the route to the nodes screen, so the
-                          integrator passes `onOpenNode`; without it the name is
-                          shown, just not clickable. */}
-                      <Show when={sandbox.node_name} fallback={<span class="muted">—</span>}>
-                        <Show when={props.onOpenNode} fallback={<span>{sandbox.node_name}</span>}>
-                          <button
-                            class="link"
-                            title="Show this node"
-                            onClick={() => props.onOpenNode(sandbox.node_id)}
-                          >
-                            {sandbox.node_name}
-                          </button>
-                        </Show>
-                      </Show>
-                    </td>
-                    <td class="mono small">{sandbox.address || '—'}</td>
-                    <td class="narrow mono small">{shortUptime(sandbox)}</td>
-                    <td class="actions">
-                      <button class="tiny" onClick={() => setOpenId(sandbox.id)}>Details</button>
-                      <button class="tiny" disabled={!state.canStart(sandbox)}
-                              onClick={() => state.act(sandbox.id, 'start')}>Start</button>
-                      <button class="tiny" disabled={!state.canStop(sandbox)}
-                              onClick={() => state.act(sandbox.id, 'stop')}>Stop</button>
-                      <button class="tiny" disabled={!sandbox.status.includes('running')}
-                              onClick={() => state.act(sandbox.id, 'restart')}>Restart</button>
-                      <button class="tiny danger" onClick={() => confirmDestroy(sandbox)}>Delete</button>
-                    </td>
-                  </tr>
+              <For each={rows()}>
+                {(row) => (
+                  <>
+                    {sandboxRow(row.sandbox, row)}
+                    <Show when={row.role === 'lead' && !folded().has(row.sandbox.id)}>
+                      <For each={row.members}>
+                        {(member) => sandboxRow(member, { role: 'member', lead: row.sandbox })}
+                      </For>
+                    </Show>
+                  </>
                 )}
               </For>
             </tbody>

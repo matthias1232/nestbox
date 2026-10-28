@@ -572,6 +572,7 @@ mod tests {
                 image: "nestbox-ubuntu-dev:local",
                 image_digest: None,
                 spec: &serde_json::json!({}),
+                parent_id: None,
             },
         )
         .await
