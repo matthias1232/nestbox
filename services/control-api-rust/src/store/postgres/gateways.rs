@@ -428,3 +428,82 @@ pub async fn topology(scope: &mut TenantScope<'_>) -> Result<serde_json::Value, 
 
     Ok(serde_json::json!({ "nodes": nodes }))
 }
+
+const SUPERVISOR_COLUMNS: &str = "s.id, s.gateway_id, s.sandbox_id, s.name, s.status, s.version, \
+     s.config_dirtiness, s.last_policy_applied_at, s.last_seen";
+
+fn row_to_supervisor(row: &sqlx::postgres::PgRow) -> Result<Supervisor, StoreError> {
+    let status_raw: String = row.try_get("status")?;
+    Ok(Supervisor {
+        id: row.try_get("id")?,
+        gateway_id: row.try_get("gateway_id")?,
+        sandbox_id: row.try_get("sandbox_id")?,
+        name: row.try_get("name")?,
+        status: SupervisorStatus::parse(&status_raw).unwrap_or(SupervisorStatus::Unknown),
+        version: row.try_get("version")?,
+        config_dirtiness: row.try_get("config_dirtiness")?,
+        last_policy_applied_at: row.try_get("last_policy_applied_at")?,
+        last_seen: row.try_get("last_seen")?,
+    })
+}
+
+/// The supervisor that watches one sandbox, if it has one.
+///
+/// A sandbox is given its supervisor at creation (`create_for_sandbox`), so the
+/// row is the console's way from a sandbox to the settings it may change. The
+/// newest row wins when history left more than one, because that is the one the
+/// running process is reporting through.
+pub async fn supervisor_for_sandbox(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+) -> Result<Supervisor, StoreError> {
+    let sql = format!(
+        "SELECT {SUPERVISOR_COLUMNS}
+           FROM supervisors s
+          WHERE s.sandbox_id = $1
+          ORDER BY s.last_seen DESC NULLS LAST
+          LIMIT 1"
+    );
+    let row = sqlx::query(&sql)
+        .bind(sandbox_id)
+        .fetch_optional(scope.connection())
+        .await?
+        .ok_or(StoreError::NotFound)?;
+    row_to_supervisor(&row)
+}
+
+/// Store a supervisor's operator settings as the desired configuration.
+///
+/// The row keeps what the operator asked for; the process in the sandbox reads
+/// the same document from its own disk. Writing here first means the console can
+/// show the intent even when delivery failed, and a retry has something to send.
+pub async fn set_supervisor_settings(
+    scope: &mut TenantScope<'_>,
+    supervisor_id: Uuid,
+    settings: &serde_json::Value,
+) -> Result<(), StoreError> {
+    let affected = sqlx::query("UPDATE supervisors SET settings = $2 WHERE id = $1")
+        .bind(supervisor_id)
+        .bind(settings)
+        .execute(scope.connection())
+        .await?
+        .rows_affected();
+    if affected == 0 {
+        return Err(StoreError::NotFound);
+    }
+    Ok(())
+}
+
+/// A supervisor's stored operator settings, or an empty document.
+pub async fn supervisor_settings(
+    scope: &mut TenantScope<'_>,
+    supervisor_id: Uuid,
+) -> Result<serde_json::Value, StoreError> {
+    let settings: Option<serde_json::Value> =
+        sqlx::query_scalar("SELECT settings FROM supervisors WHERE id = $1")
+            .bind(supervisor_id)
+            .fetch_optional(scope.connection())
+            .await?
+            .ok_or(StoreError::NotFound)?;
+    Ok(settings.unwrap_or_else(|| serde_json::json!({})))
+}

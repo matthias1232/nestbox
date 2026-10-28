@@ -88,6 +88,78 @@ pub async fn update_settings(
     Ok(gateway)
 }
 
+/// Read the operator settings stored for a sandbox's supervisor.
+///
+/// The console edits these as a document, so the shape belongs to the supervisor
+/// and not to this API. Reading is allowed to anyone who may read the gateway,
+/// and a sandbox without a supervisor reads as an empty document rather than an
+/// error, because "nothing set yet" is a valid answer to "what is set?".
+pub async fn sandbox_settings(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+) -> Result<serde_json::Value, ApiError> {
+    require(principal, Permission::GatewayRead)?;
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let supervisor = store::supervisor_for_sandbox(&mut scope, sandbox_id).await;
+    let settings = match supervisor {
+        Ok(supervisor) => store::supervisor_settings(&mut scope, supervisor.id).await,
+        Err(StoreError::NotFound) => Ok(serde_json::json!({})),
+        Err(err) => Err(err),
+    }
+    .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(settings)
+}
+
+/// Store new operator settings for a sandbox's supervisor.
+///
+/// This writes the desired document and records who changed it. Delivery to the
+/// sandbox's supervisor is a separate step: the row keeps the intent even when
+/// the sandbox is not running, so the console never loses an edit.
+pub async fn update_sandbox_settings(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+    settings: &serde_json::Value,
+) -> Result<serde_json::Value, ApiError> {
+    require(principal, Permission::GatewayWrite)?;
+
+    if !settings.is_object() {
+        return Err(ApiError::validation("Supervisor settings must be an object."));
+    }
+
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let supervisor = store::supervisor_for_sandbox(&mut scope, sandbox_id)
+        .await
+        .map_err(ApiError::from)?;
+    store::set_supervisor_settings(&mut scope, supervisor.id, settings)
+        .await
+        .map_err(ApiError::from)?;
+
+    crate::store::postgres::audit::record(
+        &mut scope,
+        crate::store::postgres::audit::NewAuditEvent {
+            actor_id: Some(principal.user_id),
+            actor_label: &principal.display_name,
+            kind: "supervisor.settings_update",
+            subject_type: Some("supervisor"),
+            subject_id: Some(supervisor.id),
+            detail: &serde_json::json!({ "sandbox_id": sandbox_id }),
+            request_id: None,
+        },
+    )
+    .await
+    .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+
+    Ok(settings.clone())
+}
+
 /// Push a gateway's desired configuration and mark it applied.
 ///
 /// Idempotent: syncing a gateway that is already in sync reports

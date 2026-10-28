@@ -22,6 +22,7 @@ pub mod providers;
 pub mod recipes;
 pub mod sandbox_agents;
 pub mod sandboxes;
+pub mod sandboxes_settings;
 pub mod sandboxes_terminal;
 pub mod system;
 pub mod telemetry;
@@ -86,6 +87,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/sandboxes/{id}/terminal",
             get(sandboxes_terminal::terminal),
+        )
+        .route(
+            "/api/v1/sandboxes/{id}/settings",
+            get(sandboxes_settings::get).put(sandboxes_settings::update),
         )
         .route("/api/v1/sandboxes/{id}/ssh-key", get(access::ssh_key))
         .route(
