@@ -475,6 +475,7 @@ pub async fn run_build(
     job_store::start(&mut scope, job_id)
         .await
         .map_err(ApiError::from)?;
+    tracing::info!(job = %job_id, "build: job started");
     let recipe = match store::get(&mut scope, recipe_id).await {
         Ok(recipe) => recipe,
         Err(error) => {
@@ -502,6 +503,7 @@ pub async fn run_build(
     let mut scope = TenantScope::begin(&ctx.pool, environment_id)
         .await
         .map_err(ApiError::from)?;
+    tracing::info!(job = %job_id, "build: preparing");
     let prepared = match prepare(&mut scope, &input_from(&recipe), Some(recipe.node_id)).await {
         Ok(prepared) => prepared,
         Err(error) => {
@@ -519,8 +521,10 @@ pub async fn run_build(
         }
     };
     scope.commit().await.map_err(ApiError::from)?;
+    tracing::info!(job = %job_id, tag = %tag, "build: calling the runner");
 
     let outcome = ctx.runtime.build(request).await;
+    tracing::info!(job = %job_id, "build: runner answered");
     match outcome {
         Ok(result) if result.success => {
             record_success(ctx, environment_id, recipe_id, job_id, &tag, &hash, &result.log).await
