@@ -55,6 +55,8 @@ impl ErrorCode {
     pub const MODEL_NOT_SERVABLE: Self = Self("model.not_servable");
     /// The node said no while fetching or starting the server.
     pub const MODEL_SERVE_FAILED: Self = Self("model.serve_failed");
+    /// The install is between the reservation and the answer; wait or let it fail.
+    pub const MODEL_INSTALL_IN_PROGRESS: Self = Self("model.install_in_progress");
 
     pub const NODE_NOT_FOUND: Self = Self("node.not_found");
     pub const NODE_RUNTIME_UNAVAILABLE: Self = Self("node.runtime_unavailable");

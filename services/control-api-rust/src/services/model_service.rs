@@ -669,6 +669,25 @@ pub async fn uninstall(
             )
         })?;
 
+    // An install that is still fetching or starting owns a container and a
+    // row the pipeline is writing to. Removing the row underneath it would make
+    // the worker fail on a missing row and could leave a server running, so the
+    // request is refused with the state it is waiting for.
+    if matches!(
+        install.state,
+        InstallState::Installing | InstallState::Downloading | InstallState::Starting
+    ) {
+        return Err(ApiError::conflict(
+            ErrorCode::MODEL_INSTALL_IN_PROGRESS,
+            format!(
+                "'{}' is {} on node '{}'. Wait for it to finish or fail, then uninstall.",
+                install.model_key,
+                install.state.as_str(),
+                node.name
+            ),
+        ));
+    }
+
     if let Some(profile_id) = install.provider_profile_id {
         let sandboxes = install_store::sandboxes_using_profile(&mut scope, profile_id)
             .await
@@ -997,6 +1016,23 @@ pub async fn settle_serving(ctx: &ServiceContext, environment_id: Uuid) -> Resul
         .await
         .map_err(ApiError::from)?;
     let message = "The control plane restarted before the install finished. Install the model again.";
+    // The profile goes first: once the install rows are `failed`, the set of
+    // profiles this boot is responsible for is no longer readable from them,
+    // and an old failure would be flipped on every restart.
+    sqlx::query(
+        "UPDATE provider_profiles
+            SET status = 'unreachable', updated_at = now()
+          WHERE environment_id = $1
+            AND id IN (SELECT provider_profile_id FROM model_installs
+                        WHERE environment_id = $1
+                          AND state IN ('downloading', 'starting')
+                          AND provider_profile_id IS NOT NULL)",
+    )
+    .bind(environment_id)
+    .execute(scope.connection())
+    .await
+    .map_err(|error| ApiError::from(StoreError::Database(error)))?;
+
     let settled = sqlx::query(
         "UPDATE model_installs
             SET state = 'failed', error = $2, updated_at = now()
@@ -1016,19 +1052,6 @@ pub async fn settle_serving(ctx: &ServiceContext, environment_id: Uuid) -> Resul
     )
     .bind(environment_id)
     .bind(message)
-    .execute(scope.connection())
-    .await
-    .map_err(|error| ApiError::from(StoreError::Database(error)))?;
-
-    sqlx::query(
-        "UPDATE provider_profiles
-            SET status = 'unreachable', updated_at = now()
-          WHERE environment_id = $1
-            AND id IN (SELECT provider_profile_id FROM model_installs
-                        WHERE environment_id = $1 AND state = 'failed'
-                          AND provider_profile_id IS NOT NULL)",
-    )
-    .bind(environment_id)
     .execute(scope.connection())
     .await
     .map_err(|error| ApiError::from(StoreError::Database(error)))?;
