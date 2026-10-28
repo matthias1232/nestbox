@@ -1,9 +1,10 @@
 """Nestbox MCP hub — the sandbox's files and shell as MCP tools over HTTP.
 
-Skeleton with real tools. The transport is JSON-RPC 2.0 over HTTP POST to `/mcp`,
-which is what Hermes and every HTTP MCP client speak; the streaming variant
-(server-sent events for server-initiated messages) is not implemented, and a
-client that requires it gets a clear 400 rather than a half-open stream.
+The transport is JSON-RPC 2.0 over HTTP POST to `/mcp` (Streamable HTTP without
+the optional server-to-client stream). That choice is the whole point: an HTTP
+MCP server is reached through the egress proxy, so every `tools/call` appears in
+the traffic log with a tool name, its (redacted) arguments, and a duration. A
+stdio server would be invisible by construction (ADR 0026).
 
 Three tools, three rules:
 
@@ -16,14 +17,24 @@ Three tools, three rules:
 * the caller must present `NESTBOX_MCP_TOKEN`. Unset means refuse everything: a
   missing secret must never mean "no check".
 
-Package `feat/mcp-registry` owns this file and replaces the transport with a
-complete MCP implementation; the tool behaviour and its tests are worth keeping.
+Sessions: `initialize` assigns an `Mcp-Session-Id` and returns it in the response
+header; a client that echoes it on later requests is honoured, and a client that
+does not is still served. The header is what lets the proxy log a session id on
+every call in the traffic view, so it is issued even though this server keeps no
+state between requests.
+
+The streaming half (`GET /mcp`, server-initiated messages) is deliberately not
+implemented: a client that needs it gets `405` with `Allow: POST, DELETE` rather
+than a half-open stream that never delivers. ``DELETE /mcp`` accepts a session
+termination with `204`.
 """
 from __future__ import annotations
 
+import hmac
 import json
 import os
 import subprocess
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -31,7 +42,10 @@ HOME = os.path.realpath(os.getenv("NESTBOX_HOME", "/home/nestbox"))
 TOKEN = os.getenv("NESTBOX_MCP_TOKEN", "")
 PORT = int(os.getenv("NESTBOX_MCP_PORT", "8080"))
 MAX_BYTES = 256 * 1024
+MAX_REQUEST_BYTES = 1024 * 1024
 COMMAND_TIMEOUT = 60
+PROTOCOL_VERSION = "2025-06-18"
+SUPPORTED_PROTOCOLS = {"2025-06-18", "2025-03-26", "2024-11-05"}
 
 TOOLS = [
     {
@@ -65,6 +79,14 @@ TOOLS = [
         },
     },
 ]
+
+# Methods that are a notification by definition: no id, no response body.
+NOTIFICATIONS = {
+    "notifications/initialized",
+    "notifications/cancelled",
+    "notifications/progress",
+    "notifications/roots/list_changed",
+}
 
 
 class Refused(Exception):
@@ -128,40 +150,66 @@ HANDLERS = {
 }
 
 
-def handle_rpc(request: dict[str, Any]) -> dict[str, Any]:
-    """One JSON-RPC request to one response. Never raises."""
+def handle_rpc(request: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    """One JSON-RPC request to (response, new session id). Never raises."""
     method = request.get("method")
     identifier = request.get("id")
     params = request.get("params") or {}
+    if not isinstance(params, dict):
+        params = {}
+
+    if method in NOTIFICATIONS:
+        return None, None
 
     if method == "initialize":
-        result: Any = {
-            "protocolVersion": "2025-06-18",
+        requested = params.get("protocolVersion")
+        version = requested if requested in SUPPORTED_PROTOCOLS else PROTOCOL_VERSION
+        answer = {
+            "protocolVersion": version,
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "nestbox-hub", "version": "0.1.0"},
+            "serverInfo": {"name": "nestbox-hub", "version": "0.2.0"},
         }
-    elif method == "tools/list":
-        result = {"tools": TOOLS}
-    elif method == "tools/call":
+        return ok(identifier, answer), uuid.uuid4().hex
+
+    if method == "ping":
+        return ok(identifier, {}), None
+
+    if method == "tools/list":
+        return ok(identifier, {"tools": TOOLS}), None
+
+    if method == "tools/call":
         name = params.get("name")
         handler = HANDLERS.get(str(name))
         if handler is None:
-            return error(identifier, -32602, f"unknown tool: {name}")
+            return error(identifier, -32602, f"unknown tool: {name}"), None
+        arguments = params.get("arguments")
+        if not isinstance(arguments, dict):
+            arguments = {}
         try:
-            text = handler(params.get("arguments") or {})
-            result = {"content": [{"type": "text", "text": text}], "isError": False}
+            text = handler(arguments)
+            return ok(
+                identifier, {"content": [{"type": "text", "text": text}], "isError": False}
+            ), None
         except Refused as exc:
-            result = {"content": [{"type": "text", "text": str(exc)}], "isError": True}
+            return tool_error(identifier, str(exc)), None
         except subprocess.TimeoutExpired:
-            result = {"content": [{"type": "text", "text": "command timed out"}], "isError": True}
+            return tool_error(identifier, "command timed out"), None
         except OSError as exc:
-            result = {"content": [{"type": "text", "text": f"failed: {exc}"}], "isError": True}
-    elif method in ("notifications/initialized", "ping"):
-        return {}
-    else:
-        return error(identifier, -32601, f"method not found: {method}")
+            return tool_error(identifier, f"failed: {exc}"), None
 
+    # `resources/*` and `prompts/*` are not advertised in `capabilities`, so a
+    # client that asks for them gets the standard "method not found" instead of
+    # an empty list that would look like a server without content.
+    return error(identifier, -32601, f"method not found: {method}"), None
+
+
+def ok(identifier: Any, result: Any) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": identifier, "result": result}
+
+
+def tool_error(identifier: Any, message: str) -> dict[str, Any]:
+    """A tool that ran and failed: an MCP result with `isError`, not a protocol error."""
+    return ok(identifier, {"content": [{"type": "text", "text": message}], "isError": True})
 
 
 def error(identifier: Any, code: int, message: str) -> dict[str, Any]:
@@ -169,7 +217,7 @@ def error(identifier: Any, code: int, message: str) -> dict[str, Any]:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "nestbox-mcp-hub/0.1"
+    server_version = "nestbox-mcp-hub/0.2"
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 - signature fixed by stdlib
         # One line per request, no bodies: the proxy logs the bodies, and a
@@ -181,23 +229,54 @@ class Handler(BaseHTTPRequestHandler):
         if not TOKEN:
             return False
         header = self.headers.get("authorization", "")
-        return header == f"Bearer {TOKEN}"
+        prefix = "Bearer "
+        if not header.startswith(prefix):
+            return False
+        return hmac.compare_digest(header[len(prefix):], TOKEN)
 
-    def _reply(self, status: int, payload: dict[str, Any] | None) -> None:
+    def _reply(
+        self,
+        status: int,
+        payload: dict[str, Any] | None,
+        session_id: str | None = None,
+    ) -> None:
         body = json.dumps(payload).encode() if payload is not None else b""
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        if session_id:
+            self.send_header("Mcp-Session-Id", session_id)
         self.end_headers()
         if body:
             self.wfile.write(body)
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib naming
         if self.path == "/healthz":
-            self._reply(200, {"status": "ok", "home": HOME, "tools": len(TOOLS)})
+            self._reply(200, {"status": "ok", "tools": len(TOOLS)})
             return
-        # A streaming GET is the one part of the transport that is not here yet.
-        self._reply(400, {"error": "use POST /mcp; this server does not stream yet"})
+        if self.path == "/mcp":
+            # The server-to-client stream is not offered. A 405 with the allowed
+            # methods is the honest answer; a stream that never delivers would
+            # look like a healthy server with a broken tool list.
+            self.send_response(405)
+            self.send_header("Allow", "POST, DELETE")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self._reply(404, {"error": "not found"})
+
+    def do_DELETE(self) -> None:  # noqa: N802 - stdlib naming
+        if self.path != "/mcp":
+            self._reply(404, {"error": "not found"})
+            return
+        if not self._authorised():
+            self._reply(401, {"error": "bearer token required"})
+            return
+        # Sessions hold no state, so terminating one is a no-op with the
+        # status the specification asks for.
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib naming
         if self.path != "/mcp":
@@ -206,9 +285,13 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authorised():
             self._reply(401, {"error": "bearer token required"})
             return
-        length = int(self.headers.get("content-length") or 0)
-        if length <= 0 or length > 1024 * 1024:
-            self._reply(413, {"error": "body must be between 1 byte and 1 MiB"})
+        try:
+            length = int(self.headers.get("content-length") or 0)
+        except ValueError:
+            self._reply(400, error(None, -32700, "invalid content-length"))
+            return
+        if length <= 0 or length > MAX_REQUEST_BYTES:
+            self._reply(413, {"error": f"body must be between 1 byte and {MAX_REQUEST_BYTES}"})
             return
         try:
             request = json.loads(self.rfile.read(length))
@@ -218,12 +301,14 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(request, dict):
             self._reply(400, error(None, -32600, "expected one JSON-RPC request"))
             return
-        answer = handle_rpc(request)
-        if not answer:
-            # A notification has no response.
-            self._reply(202, None)
+        answer, session_id = handle_rpc(request)
+        if answer is None:
+            # A notification has no response body.
+            self.send_response(202)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
             return
-        self._reply(200, answer)
+        self._reply(200, answer, session_id)
 
 
 def main() -> None:

@@ -17,5 +17,12 @@ COPY server.py /app/server.py
 
 USER mcp
 EXPOSE 8080
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Liveness without a shell client: the slim image has no curl, and adding one to
+# answer "are you alive" would be a package for a one-line request.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD ["python3", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).status == 200 else 1)"]
+
 CMD ["python3", "/app/server.py"]

@@ -88,3 +88,10 @@ Add the query in the file of the aggregate it belongs to. Take a
 `&mut TenantScope`, not a `&PgPool`: that is the compile-time reminder that the
 tenant is set. Name the columns. Map into a domain type rather than returning a
 tuple, so the service layer never sees a row shape.
+
+The one deliberate exception is `mcp::insert_call`: an MCP call is reported by
+the proxy, which speaks for many environments at once, so its writer takes the
+pool and trusts the event's own `environment_id` — exactly like
+`telemetry::insert`. It still redacts the arguments and bounds the result before
+the row exists, because a write path that relies on its caller is a write path
+that will be called without the check.

@@ -24,6 +24,24 @@ secret must never mean "no check".
 | `write_file` | Write a UTF-8 file inside `NESTBOX_HOME` |
 | `run_command` | Run an argument vector inside `NESTBOX_HOME` |
 
+Methods: `initialize`, `ping`, `tools/list`, `tools/call`, and the
+`notifications/*` family (answered `202` with no body). Anything else is
+`-32601`, including `resources/*` and `prompts/*`, which are not advertised in
+`capabilities`.
+
+## Transport decisions
+
+- **Sessions are issued, not kept.** `initialize` returns an `Mcp-Session-Id`
+  header (a random id) and accepts it echoed on later requests. The hub holds no
+  session state; the header exists so the proxy can log a session id next to
+  every call in the traffic view.
+- **No server-to-client stream.** `GET /mcp` answers `405` with
+  `Allow: POST, DELETE`. A half-open SSE stream that never delivers a message
+  would look like a healthy server with a broken tool list, which is worse than
+  an explicit refusal. `DELETE /mcp` accepts a session termination with `204`.
+- **One request per call.** Batching is not supported; a client that sends an
+  array gets `-32600` and can retry one message at a time.
+
 ## Security rules
 
 1. Paths are resolved with `realpath` and then compared to the home, so `..` and
@@ -33,13 +51,28 @@ secret must never mean "no check".
    the proxy's buffer or hold a session open.
 4. Bodies are not logged here. The proxy logs them, once, through the redactor; a
    second copy in this container's stdout is a leak waiting to happen.
-5. The container runs as a non-root user with no capabilities.
+5. The token is compared with `hmac.compare_digest`, and the container runs as a
+   non-root user with no capabilities.
+6. A tool-level refusal (bad path, bad arguments, timeout) is a JSON-RPC **result**
+   with `isError: true`, not a protocol error: the call happened and failed,
+   which is what the agent has to see.
 
-## Open work (package `feat/mcp-registry`)
+## Tests
 
-- The streaming half of the MCP transport (server-sent events for
-  server-initiated messages); today a `GET /mcp` is a clear 400.
-- `resources/*` and `prompts/*`, and the `initialize` capability negotiation
-  beyond tools.
-- Tool discovery results written into `sandbox_mcp_servers.tools`, and the
-  `Nestbox hub` entry in the compose stack.
+`test_server.py` starts the real server on an ephemeral port against a temporary
+home:
+
+```bash
+cd services/tool-images/mcp-hub && python3 -m unittest test_server -v
+```
+
+It covers the handshake and session header, every tool, both escape routes, the
+`shell=False` behaviour, the auth refusal (including an unset token), and the
+transport refusals (`405`, `413`, `-32700`).
+
+## Open work
+
+- Server-sent events for server-initiated messages, if a client ever needs them.
+  `hermes` does not: it opens the stream only when the server advertises it.
+- `resources/*` and `prompts/*`. They would need a capability entry and a
+  content model, not just a handler.
