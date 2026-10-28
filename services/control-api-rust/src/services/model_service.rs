@@ -428,6 +428,17 @@ pub async fn install(
         .await
         .map_err(ApiError::from)?;
 
+    // One install at a time per node. Two requests that read the same free
+    // budget and both insert would reserve the memory twice, and the node would
+    // be oversubscribed by exactly the second model. The row lock serialises
+    // them; the second transaction then sees the first reservation and is
+    // refused with the numbers instead of quietly stealing the space.
+    sqlx::query("SELECT id FROM nodes WHERE id = $1 FOR UPDATE")
+        .bind(node.id)
+        .execute(scope.connection())
+        .await
+        .map_err(|error| ApiError::from(StoreError::Database(error)))?;
+
     if let Some(existing) = install_store::get(&mut scope, key, node.id)
         .await
         .map_err(ApiError::from)?
