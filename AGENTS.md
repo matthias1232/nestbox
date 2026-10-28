@@ -54,6 +54,10 @@ in-memory store, and no import path. If you need state, it belongs in a table.
 cd services/control-api-rust
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
+# `--all-targets` is not optional: src/main.rs is a separate crate root, so a
+# `crate::` path that only makes sense in the library compiles under
+# `cargo test --lib` and fails the release build the image needs.
+cargo check --all-targets
 cargo test
 
 # Frontend
