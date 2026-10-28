@@ -47,3 +47,8 @@ export function updateDisplay(id, displayName, description) {
     body: { display_name: displayName, description: description || null },
   });
 }
+
+/** Set the address and hostname clients dial on a node; empty clears a field. */
+export function setEndpoint(id, body) {
+  return request(`nodes/${id}/endpoint`, { method: 'PUT', body });
+}

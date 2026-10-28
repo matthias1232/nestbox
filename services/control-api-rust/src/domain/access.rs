@@ -98,6 +98,151 @@ impl PublishedPort {
     }
 }
 
+/// The user the SSH key logs in as. The same user the agents run as, so a login
+/// lands in the home the agent works in.
+pub const SSH_USER: &str = "nestbox";
+
+/// One way in: a published port with what to type to use it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ConnectPort {
+    pub forward_id: Uuid,
+    pub label: Option<String>,
+    pub purpose: ForwardPurpose,
+    /// The port inside the sandbox.
+    pub target_port: i32,
+    /// The port on the node, the one a client dials.
+    pub public_port: i32,
+    /// pending | active | stopped | failed
+    pub state: String,
+    /// `host:port`, or `None` while the node has nothing to dial.
+    pub dial: Option<String>,
+    /// A ready `ssh` line, for the SSH port only.
+    pub command: Option<String>,
+}
+
+/// Where the SSH key stands, without the key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ConnectKey {
+    pub fingerprint: String,
+    /// The private half has not been downloaded yet. It can be once.
+    pub downloadable: bool,
+}
+
+/// Everything an operator needs to reach one sandbox from their own machine.
+///
+/// `host` is what to dial: the node's hostname when it has one, its address
+/// otherwise. It is the node's, not the container's — a container address on the
+/// runtime network is not reachable from outside and is deliberately absent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ConnectInfo {
+    pub sandbox_id: Uuid,
+    pub sandbox_name: String,
+    pub node_id: Uuid,
+    pub node_name: String,
+    pub address: Option<String>,
+    pub hostname: Option<String>,
+    pub host: Option<String>,
+    pub ssh_user: String,
+    pub key: Option<ConnectKey>,
+    pub ports: Vec<ConnectPort>,
+    /// A block for `~/.ssh/config`, once there is a host and an SSH port.
+    pub ssh_config: Option<String>,
+    /// Why the connection cannot work yet, in a sentence, or `None`.
+    pub hint: Option<String>,
+}
+
+/// What `build_connect` needs; a struct so the call site names each fact.
+pub struct ConnectInput<'a> {
+    pub sandbox_id: Uuid,
+    pub sandbox_name: &'a str,
+    pub node_id: Uuid,
+    pub node_name: &'a str,
+    pub address: Option<&'a str>,
+    pub hostname: Option<&'a str>,
+    pub ports: &'a [PublishedPort],
+    pub key: Option<ConnectKey>,
+}
+
+/// Assemble the connection facts. Pure, so the sentences and the commands are
+/// tested without a database.
+pub fn build_connect(input: ConnectInput<'_>) -> ConnectInfo {
+    let clean = |value: Option<&str>| {
+        value
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+    };
+    let address = clean(input.address);
+    let hostname = clean(input.hostname);
+    let host = hostname.clone().or_else(|| address.clone());
+    let identity = format!("~/.ssh/nestbox-{}", input.sandbox_name);
+
+    let ports: Vec<ConnectPort> = input
+        .ports
+        .iter()
+        .map(|port| {
+            let dial = host.as_ref().map(|host| format!("{host}:{}", port.public_port));
+            let command = match (&host, port.purpose) {
+                (Some(host), ForwardPurpose::Ssh) => Some(format!(
+                    "ssh -i {identity} -p {} {SSH_USER}@{host}",
+                    port.public_port
+                )),
+                _ => None,
+            };
+            ConnectPort {
+                forward_id: port.forward_id,
+                label: port.label.clone(),
+                purpose: port.purpose,
+                target_port: port.target_port,
+                public_port: port.public_port,
+                state: port.state.clone(),
+                dial,
+                command,
+            }
+        })
+        .collect();
+
+    let ssh_config = host.as_ref().and_then(|host| {
+        input
+            .ports
+            .iter()
+            .find(|port| port.purpose == ForwardPurpose::Ssh)
+            .map(|port| {
+                format!(
+                    "Host {name}\n  HostName {host}\n  Port {port}\n  User {SSH_USER}\n  IdentityFile {identity}\n  IdentitiesOnly yes\n",
+                    name = input.sandbox_name,
+                    port = port.public_port,
+                )
+            })
+    });
+
+    let hint = if host.is_none() {
+        Some(
+            "This node has no address clients can dial. Published ports are bound to 127.0.0.1 on the node until an address is set."
+                .to_string(),
+        )
+    } else if input.ports.is_empty() {
+        Some("No port is published for this sandbox yet.".to_string())
+    } else {
+        None
+    };
+
+    ConnectInfo {
+        sandbox_id: input.sandbox_id,
+        sandbox_name: input.sandbox_name.to_string(),
+        node_id: input.node_id,
+        node_name: input.node_name.to_string(),
+        address,
+        hostname,
+        host,
+        ssh_user: SSH_USER.to_string(),
+        key: input.key,
+        ports,
+        ssh_config,
+        hint,
+    }
+}
+
 /// What the fixed inventory script found inside the container.
 ///
 /// `env_keys` is names only. The script that fills this never prints a value,
@@ -207,6 +352,75 @@ impl AccessLimits {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn forward(purpose: ForwardPurpose, public_port: i32, target_port: i32) -> PublishedPort {
+        PublishedPort {
+            forward_id: Uuid::new_v4(),
+            sandbox_id: Uuid::nil(),
+            node_id: Uuid::nil(),
+            public_address: None,
+            public_port,
+            target_port,
+            purpose,
+            label: None,
+            state: "active".into(),
+        }
+    }
+
+    fn connect(address: Option<&str>, hostname: Option<&str>, ports: &[PublishedPort]) -> ConnectInfo {
+        build_connect(ConnectInput {
+            sandbox_id: Uuid::nil(),
+            sandbox_name: "hermes",
+            node_id: Uuid::nil(),
+            node_name: "vm200",
+            address,
+            hostname,
+            ports,
+            key: None,
+        })
+    }
+
+    #[test]
+    fn the_hostname_is_dialled_before_the_address() {
+        let ports = [forward(ForwardPurpose::Ssh, 22101, 22)];
+        let info = connect(Some("10.0.0.5"), Some("box.example.net"), &ports);
+        assert_eq!(info.host.as_deref(), Some("box.example.net"));
+        assert_eq!(info.ports[0].dial.as_deref(), Some("box.example.net:22101"));
+        let without = connect(Some("10.0.0.5"), None, &ports);
+        assert_eq!(without.host.as_deref(), Some("10.0.0.5"));
+    }
+
+    #[test]
+    fn only_the_ssh_port_gets_an_ssh_line_and_the_config_names_it() {
+        let ports = [
+            forward(ForwardPurpose::Ssh, 22101, 22),
+            forward(ForwardPurpose::Agent, 22102, 8080),
+        ];
+        let info = connect(Some("10.0.0.5"), None, &ports);
+        assert_eq!(
+            info.ports[0].command.as_deref(),
+            Some("ssh -i ~/.ssh/nestbox-hermes -p 22101 nestbox@10.0.0.5")
+        );
+        assert!(info.ports[1].command.is_none());
+        let config = info.ssh_config.expect("config");
+        assert!(config.contains("Host hermes") && config.contains("Port 22101"));
+        assert!(info.hint.is_none());
+    }
+
+    #[test]
+    fn a_node_without_an_address_says_why_nothing_can_be_dialled() {
+        let ports = [forward(ForwardPurpose::Ssh, 22101, 22)];
+        let info = connect(None, Some("  "), &ports);
+        assert!(info.host.is_none());
+        assert!(info.ports[0].dial.is_none() && info.ssh_config.is_none());
+        assert!(info.hint.expect("hint").contains("127.0.0.1"));
+    }
+
+    #[test]
+    fn no_published_port_is_said_rather_than_shown_as_an_empty_table() {
+        let info = connect(Some("10.0.0.5"), None, &[]);
+        assert_eq!(info.hint.as_deref(), Some("No port is published for this sandbox yet."));
+    }
     use chrono::Utc;
 
     #[test]

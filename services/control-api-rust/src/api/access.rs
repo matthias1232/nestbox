@@ -107,3 +107,42 @@ pub async fn sessions(
     let sessions = access_service::sessions(&state.services, &auth.principal, id).await?;
     Ok(Json(sessions))
 }
+
+/// How to reach this sandbox: the node's address and hostname, every published
+/// port with its dial address, and the SSH key's state.
+pub async fn connect(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<crate::domain::access::ConnectInfo>, ApiError> {
+    Ok(Json(
+        access_service::connect(&state.services, &auth.principal, id).await?,
+    ))
+}
+
+/// The body of an endpoint change. `null` or empty clears a field.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct NodeEndpointRequest {
+    #[serde(default)]
+    pub public_address: Option<String>,
+    #[serde(default)]
+    pub public_hostname: Option<String>,
+}
+
+/// Set the address and hostname clients dial on a node.
+pub async fn put_node_endpoint(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<NodeEndpointRequest>,
+) -> Result<StatusCode, ApiError> {
+    access_service::set_node_endpoint(
+        &state.services,
+        &auth.principal,
+        id,
+        body.public_address.as_deref(),
+        body.public_hostname.as_deref(),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}

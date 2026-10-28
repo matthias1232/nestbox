@@ -37,6 +37,8 @@ supersedes the old one and note the supersession in both files.
 | [0027](0027-bodies-are-logged-fully-and-the-redactor-is-the-boundary.md) | Bodies are logged fully, and the redactor is the boundary | Accepted |
 | [0028](0028-model-serving.md) | An install serves one artefact from one pinned image | Accepted |
 | [0029](0029-a-node-is-a-row-plus-an-adapter.md) | A node is a row plus an adapter; multi-node is not a rename | Accepted |
+| [0030](0030-sandboxes-that-belong-together-are-linked-explicitly.md) | Sandboxes that belong together are linked explicitly, one level deep | Accepted |
+| [0031](0031-a-sandbox-is-reached-through-its-nodes-address.md) | A sandbox is reached through its node's address, never the container's | Accepted |
 
 ## Writing a new ADR
 

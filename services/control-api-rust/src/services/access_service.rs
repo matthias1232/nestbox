@@ -693,6 +693,102 @@ pub async fn ports(
     Ok(ports)
 }
 
+/// Everything needed to reach one sandbox from outside: the node's address and
+/// hostname, every published port, and the SSH key's state.
+///
+/// One read instead of three on the client, so the panel cannot show ports from
+/// one moment and an address from another.
+pub async fn connect(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+) -> Result<crate::domain::access::ConnectInfo, ApiError> {
+    require(principal, Permission::SandboxRead)?;
+    let sandbox = load_sandbox(ctx, principal, sandbox_id).await?;
+
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let endpoint = store::node_endpoint(&mut scope, sandbox.node_id)
+        .await
+        .map_err(ApiError::from)?;
+    let ports = store::list_forwards(&mut scope, sandbox.id)
+        .await
+        .map_err(ApiError::from)?;
+    let key = match store::get_key(&mut scope, sandbox.id).await {
+        Ok(key) => Some(crate::domain::access::ConnectKey {
+            downloadable: key.downloadable(),
+            fingerprint: key.fingerprint,
+        }),
+        Err(StoreError::NotFound) => None,
+        Err(error) => return Err(ApiError::from(error)),
+    };
+    scope.commit().await.map_err(ApiError::from)?;
+
+    Ok(crate::domain::access::build_connect(
+        crate::domain::access::ConnectInput {
+            sandbox_id: sandbox.id,
+            sandbox_name: &sandbox.name,
+            node_id: sandbox.node_id,
+            node_name: &endpoint.name,
+            address: endpoint.address.as_deref(),
+            hostname: endpoint.hostname.as_deref(),
+            ports: &ports,
+            key,
+        },
+    ))
+}
+
+/// Set the address and hostname clients use for a node.
+///
+/// The address is where ports are bound, so it must be an IP literal; the
+/// hostname is a label and must look like a DNS name. Ports already published
+/// keep the binding they were made with: changing this does not move them.
+pub async fn set_node_endpoint(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    node_id: Uuid,
+    address: Option<&str>,
+    hostname: Option<&str>,
+) -> Result<(), ApiError> {
+    require(principal, Permission::NodeManage)?;
+    let address = address.map(str::trim).filter(|text| !text.is_empty());
+    let hostname = hostname
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_ascii_lowercase);
+    if let Some(address) = address {
+        if address.parse::<std::net::IpAddr>().is_err() {
+            return Err(ApiError::validation(
+                "The address is an IP address such as 192.168.1.20.",
+            ));
+        }
+    }
+    if let Some(name) = hostname.as_deref() {
+        let label_ok = |label: &str| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        };
+        if name.len() > 253 || !name.split('.').all(label_ok) {
+            return Err(ApiError::validation(
+                "The hostname is a DNS name such as box.example.net.",
+            ));
+        }
+    }
+
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    store::set_node_endpoint(&mut scope, node_id, address, hostname.as_deref())
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(())
+}
+
 /// Publish one more container port from the node's pool.
 pub async fn publish_port(
     ctx: &ServiceContext,

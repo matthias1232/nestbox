@@ -189,6 +189,55 @@ pub async fn delete_key(
 // ---------------------------------------------------------------------------
 
 /// The publication range and public address of one node.
+/// The name and the two ways a client can address a node.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeEndpoint {
+    pub name: String,
+    pub address: Option<String>,
+    pub hostname: Option<String>,
+}
+
+/// What a client may dial on one node.
+pub async fn node_endpoint(
+    scope: &mut TenantScope<'_>,
+    node_id: Uuid,
+) -> Result<NodeEndpoint, StoreError> {
+    let row = sqlx::query("SELECT name, public_address, public_hostname FROM nodes WHERE id = $1")
+        .bind(node_id)
+        .fetch_optional(scope.connection())
+        .await?
+        .ok_or(StoreError::NotFound)?;
+    Ok(NodeEndpoint {
+        name: row.try_get("name")?,
+        address: row.try_get("public_address")?,
+        hostname: row.try_get("public_hostname")?,
+    })
+}
+
+/// Set the address and the hostname of a node. `None` clears one.
+pub async fn set_node_endpoint(
+    scope: &mut TenantScope<'_>,
+    node_id: Uuid,
+    address: Option<&str>,
+    hostname: Option<&str>,
+) -> Result<(), StoreError> {
+    let affected = sqlx::query(
+        "UPDATE nodes SET public_address = $2, public_hostname = $3, updated_at = now()
+          WHERE id = $1",
+    )
+    .bind(node_id)
+    .bind(address)
+    .bind(hostname)
+    .execute(scope.connection())
+    .await?
+    .rows_affected();
+    if affected == 0 {
+        Err(StoreError::NotFound)
+    } else {
+        Ok(())
+    }
+}
+
 pub async fn port_pool(
     scope: &mut TenantScope<'_>,
     node_id: Uuid,

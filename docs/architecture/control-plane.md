@@ -32,6 +32,7 @@ Grouped by tab, all under the frozen `/api/v1/` prefix (ADR 0015):
 
 | Area | Endpoints |
 |---|---|
+| Connect | `GET /sandboxes/{id}/connect` (node address, hostname, ports, SSH), `PUT /nodes/{id}/endpoint` |
 | Stacks | `PUT /sandboxes/{id}/stack` (a member joins a lead or leaves; one level deep) |
 | Dashboard | `GET /sandboxes/{id}/metrics`, `GET /sandboxes/{id}/processes`, `GET /sandboxes/{id}/policies/effective` |
 | Traffic | `GET /sandboxes/{id}/traffic`, `GET /sandboxes/{id}/traffic/{event_id}/body`, SSE on `/telemetry/stream` |

@@ -10,6 +10,7 @@ import Drawer from '../../components/Drawer.jsx';
 import { useSandboxes } from './useSandboxes.js';
 import SandboxDetail from './SandboxDetail.jsx';
 import CreateSandboxForm from './CreateSandboxForm.jsx';
+import ConnectPanel from './ConnectPanel.jsx';
 import { createMemo, createSignal } from 'solid-js';
 import { groupStacks, possibleLeads, worstStatus } from './stacks.js';
 import '../../styles/stacks.css';
@@ -18,6 +19,8 @@ export default function SandboxListPage(props) {
   const state = useSandboxes();
   const [openId, setOpenId] = createSignal(null);
   const [creating, setCreating] = createSignal(false);
+  // The sandbox whose connection details are open; `null` closes the drawer.
+  const [connecting, setConnecting] = createSignal(null);
   const [created, setCreated] = createSignal(null);
 
   onMount(() => state.load({ cursor: null }));
@@ -132,6 +135,8 @@ export default function SandboxListPage(props) {
                     <td class="mono small">{sandbox.address || '—'}</td>
                     <td class="narrow mono small">{shortUptime(sandbox)}</td>
                     <td class="actions">
+                      <button class="tiny" title="How to reach this sandbox: host, ports, SSH"
+                              onClick={() => setConnecting(sandbox)}>Connect</button>
                       <button class="tiny" onClick={() => setOpenId(sandbox.id)}>Details</button>
                       <button class="tiny" disabled={!state.canStart(sandbox)}
                               onClick={() => state.act(sandbox.id, 'start')}>Start</button>
@@ -288,6 +293,17 @@ export default function SandboxListPage(props) {
         onClose={() => setOpenId(null)}
         onChanged={() => state.load({ cursor: null })}
       />
+
+      <Drawer
+        open={!!connecting()}
+        title={`Connect to ${connecting()?.name || ''}`}
+        subtitle="The address and ports to use from your own machine."
+        onClose={() => setConnecting(null)}
+      >
+        <Show when={connecting()}>
+          <ConnectPanel sandboxId={connecting().id} />
+        </Show>
+      </Drawer>
 
       {/* The form is mounted only while the drawer is open, so every open reads
           the node budgets again instead of showing the ones from last time. */}

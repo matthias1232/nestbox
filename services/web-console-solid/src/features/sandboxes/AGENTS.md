@@ -48,6 +48,7 @@ on it.
 |---|---|
 | `useSandboxes.js` | Paging, filters, selection, actions; no JSX |
 | `SandboxListPage.jsx` | Table with stacks (a lead and its members drawn together), facets, bulk bar, the New sandbox drawer |
+| `ConnectPanel.jsx`, `AccessTab.jsx` | How to reach a sandbox: the node's address and hostname (never the container's), every published port with its dial address, the `ssh` line, an SSH config block, the one-time key. One component, used by the Access tab and the list's Connect drawer |
 | `stacks.js` | Grouping the flat page into stacks; a member whose lead is on another page stays a row of its own and names its lead. Test: `node --test stacks.test.js` |
 | `CreateSandboxForm.jsx` | Name, pack, node, memory, CPU, PIDs; the node's free numbers beside them (`feat/ui-sandbox-resources`) |
 | `useCreateSandbox.js` | Nodes, packs, the draft, and the pre-check; no JSX (`feat/ui-sandbox-resources`) |

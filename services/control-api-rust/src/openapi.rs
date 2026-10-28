@@ -75,6 +75,8 @@ pub const OPERATIONS: &[Operation] = &[
     op("GET", "/api/v1/sandboxes/{id}/logs", "Recent log lines of a sandbox", "sandboxes", "viewer", false, StreamKind::None),
     op("POST", "/api/v1/sandboxes/{id}/exec", "Run one command inside a sandbox", "sandboxes", "operator", true, StreamKind::None),
     op("GET", "/api/v1/sandboxes/{id}/inference", "Model requests made by a sandbox", "telemetry", "viewer", false, StreamKind::None),
+    op("GET", "/api/v1/sandboxes/{id}/connect", "How to reach a sandbox: node address, hostname, ports, SSH", "sandboxes", "viewer", false, StreamKind::None),
+    op("PUT", "/api/v1/nodes/{id}/endpoint", "Set the address and hostname clients dial on a node", "nodes", "admin", true, StreamKind::None),
     op("PUT", "/api/v1/sandboxes/{id}/stack", "Put a sandbox into a stack or take it out", "sandboxes", "operator", true, StreamKind::None),
     op("GET", "/api/v1/sandboxes/{id}/rules", "Network rules attached to a sandbox", "policies", "viewer", false, StreamKind::None),
     op("GET", "/api/v1/policies", "List policies and the global override", "policies", "viewer", false, StreamKind::None),

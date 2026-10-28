@@ -68,3 +68,18 @@ export function exec(id, command, timeoutSeconds = 60) {
     body: { command, timeout_seconds: timeoutSeconds },
   });
 }
+
+// How to reach a sandbox from outside: the node's address and hostname, every
+// published port with its dial address, the SSH key state, ready-made commands.
+export function connect(id) {
+  return request(`sandboxes/${id}/connect`);
+}
+
+// The private key, once. A second call answers 410 until the key is rotated.
+export function downloadSshKey(id) {
+  return request(`sandboxes/${id}/ssh-key/download`);
+}
+
+export function rotateSshKey(id) {
+  return request(`sandboxes/${id}/ssh-key/rotate`, { method: 'POST' });
+}

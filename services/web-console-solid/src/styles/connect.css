@@ -1,0 +1,9 @@
+.connect { display: flex; flex-direction: column; gap: 14px; }
+.connect h3 { margin: 0 0 4px; font-size: 13px; color: var(--fg-muted); }
+.connect-host { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 12px; background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); }
+.connect-host .label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--fg-faint); width: 100%; }
+.connect-host .big { font-size: 18px; }
+.connect-host small { width: 100%; }
+.connect-block pre { margin: 4px 0 6px; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); overflow-x: auto; white-space: pre; }
+.connect-endpoint { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin-top: 8px; }
+.connect .notice.warn { border-color: var(--warn, #b8860b); }
