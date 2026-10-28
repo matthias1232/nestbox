@@ -16,6 +16,12 @@ the codebase where SQL appears.
    same policy a 409 instead of a lost update.
 4. The audit table accepts inserts only. There is no update or delete statement
    for it here, and the application role's grants refuse one anyway.
+5. An ingest write sets the tenant scope in the repository, not only in the
+   service. `telemetry_events` and `inference_requests` carry row-level
+   policies, the API connects as the non-owner `nestbox_app` role, and the
+   ingest path is a write that legitimately names its own tenant — so
+   `telemetry.rs` opens the scope itself. A test that connects as the owner
+   would pass without it and prove nothing.
 
 ## Files
 
@@ -26,7 +32,7 @@ the codebase where SQL appears.
 | `auth.rs` | Users, sessions, API tokens, scopes |
 | `policies.rs` | Policy documents, versions, network rules, drafts, the compiled rule-set hash |
 | `egress.rs` | Compilation hash record, decisions, open windows, node token locator, deployment comparison |
-| `telemetry.rs` | Event insert, query, partition maintenance |
+| `telemetry.rs` | Event insert, query, batch insert, ingest's node lookup, MCP tool calls, partition maintenance |
 | `gateways.rs` | Gateways, supervisors, sync state |
 | `models.rs` | Model catalog, hardware profiles, inference rows, the catalog-sync upsert |
 | `model_installs.rs` | One model on one node: reservation, state, provider link, its job |
@@ -39,6 +45,7 @@ the codebase where SQL appears.
 | `recipes.rs` | Recipes, the build outcome, and the link from a sandbox to its recipe |
 | `audit.rs` | Append-only audit writes |
 | `traffic.rs` | Traffic rows, window counts, map and live edges, one body read, MCP calls, effective rules, the two hashes behind "deployed" |
+| `terminal_sessions.rs` | Terminal sessions in `sandbox_sessions`: open, count for the limits, close. Never content (ADR 0023) |
 
 ## Reading the traffic log
 
@@ -65,7 +72,6 @@ One carve-out: the **body read** lives here rather than in `traffic_bodies.rs`,
 because the body is shown from the traffic row and the read must be scoped by the
 same sandbox. `traffic_bodies.rs` keeps the write side and the retention sweep.
 
-| `terminal_sessions.rs` | Terminal sessions in `sandbox_sessions`: open, count for the limits, close. Never content (ADR 0023) |
 
 ## Extending this folder
 
@@ -74,22 +80,16 @@ the columns. Map to a domain type. If the query needs a new index, add it in a
 migration in the same change, and say in the migration comment which query it
 serves.
 
-## Counting a limit from rows
+## Two rows that live with `telemetry.rs` for a reason
 
-The terminal limits are counted from `sandbox_sessions`, not from a counter in
-memory, so they hold across a restart and across API replicas. Two consequences
-are deliberate:
-
-* `lock_user` takes a transaction-scoped advisory lock before the count, because
-  "count, then insert" is only one decision if nothing else can insert for that
-  user in between;
-* an unclosed row is ignored once it is older than a session can live, so a
-  process that died mid-session cannot consume the quota forever;
-* `open` therefore calls `close_stale` first: the ghost is closed (reason
-  `error`, `closed_at` = the moment it was noticed) instead of being skipped
-  silently, which keeps the audit row honest about the fact that it ended.
-
-`sandbox_sessions` gets its tenant policy in `0025`, not in `0009`: 0009 runs
-once and could not see a table that arrived in 0024. Any table added later with
-an `environment_id` needs its own `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`
-plus the `tenant_isolation` policy; the catalogue walk in 0009 will not repeat.
+- **The node lookup** (`node_identity`) reads `nodes`, whose aggregate file is
+  `nodes.rs`. It lives in `telemetry.rs` because it exists only for the ingest
+  path's authentication, and moving it would make the ingest dependency look like
+  a general one. `nodes` has no environment column and no policy; the query is
+  deliberately unscoped and takes the admin pool.
+- **The MCP tool-call insert** (`insert_tool_calls`) writes `mcp_tool_calls`,
+  whose aggregate file is `mcp.rs`. It lives here because it is the same wire
+  observation as the traffic row it hangs off — same event id, same tenant, same
+  transaction boundary — while `mcp.rs` owns the server catalogue and what
+  discovery found. If the two ever need one transaction, this is the place to
+  join them.

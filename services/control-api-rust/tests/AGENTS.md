@@ -32,4 +32,5 @@ Two different jobs:
 | `recipes.rs` | The builder against a database: drafts, revisions, build outcome, instantiate, capacity |
 | `policy_decider.rs` | The egress check end to end: allow/deny/audit, windows, the compiled hash, the deployment comparison, the node token, and the scoped lookup under the application role (skips without `TEST_DATABASE_URL`) |
 | `metrics.rs` | Sample ingest, the hour/day/week reads, rollup idempotency, partition retention, the process table and the inventory snapshot against a database |
+| `telemetry_ingest.rs` | The proxy batch against a database: node token fail-closed, network/dns rows, redacted bodies, MCP calls, the batch cap, tenant scope (`feat/proxy-telemetry`) |
 | `traffic.rs` | The traffic log: rows, aggregates, the map, and the scoped reads |

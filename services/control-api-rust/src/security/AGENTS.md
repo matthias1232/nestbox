@@ -48,6 +48,12 @@ not another.
   error, and it never panics on input.
 - The list of sensitive key names is one constant. Adding a credential type
   means adding it there, once.
+- Redaction over free text runs three passes: key/value pairs, prefixed token
+  shapes (`sk-`, `ghp_`, `Bearer `, `-----BEGIN`, and a JWT from `eyJ`), and long
+  opaque runs (40+ characters with two character classes). The last is a
+  heuristic and stays above the UUID length on purpose: a 36-character id must
+  remain readable. It is the only defence for a secret pasted into a body with no
+  key name, which is what a prompt looks like.
 
 ## Files
 
@@ -57,7 +63,7 @@ not another.
 | `session.rs` | Session and CSRF token generation, hashing, comparison |
 | `node_token.rs` | A node's bearer token: read through `secrets`, compared in constant time, fail-closed |
 | `secrets.rs` | Resolve a `file://` locator to a value, with path and permission guards |
-| `redaction.rs` | Masking secrets in strings and JSON values |
+| `redaction.rs` | Masking secrets in strings and JSON values, including the free-text token scan for bodies |
 | `headers.rs` | CSP, HSTS, frame options, CORS policy |
 
 ## Extending this module

@@ -8,6 +8,14 @@
 //! shapes. A determined secret in an unexpected place will not be caught, which
 //! is why the primary control is that secrets never enter these structures at
 //! all (ADR 0005). Redaction is the backstop.
+//!
+//! Bodies are the place where the backstop has to work hardest: a request body
+//! has a shape nobody knows in advance, and a token pasted into a prompt has no
+//! key name at all. So `redact` runs three passes over free text — key/value
+//! pairs, prefixed token shapes (`sk-`, `ghp_`, `Bearer `, `-----BEGIN`, `eyJ`
+//! for a JWT), and finally long opaque runs that look like a base64 or hex
+//! credential. The last pass is a heuristic and says so; it is the reason a
+//! `sk-`-free body is still not stored verbatim.
 
 /// Key names whose values are always masked.
 ///
@@ -66,7 +74,13 @@ pub fn redact(input: &str) -> String {
     }
 
     // Pass 2: token shapes that carry their own prefix.
+    out = mask_jwts(&out);
     out = mask_prefixed_tokens(&out);
+
+    // Pass 3: an unlabelled blob — base64 or hex — that is long enough to be a
+    // credential. This is the pass that catches a secret with no key and no
+    // prefix, which is exactly what a prompt or a tool argument looks like.
+    out = mask_opaque_runs(&out);
 
     out
 }
@@ -223,6 +237,97 @@ fn mask_prefixed_tokens(input: &str) -> String {
     }
 }
 
+/// Mask a JWT.
+///
+/// A JWT header always starts with `eyJ` (the base64url of `{"`), and the whole
+/// token is one run with `.` separators. It is handled separately from the
+/// prefix list because the marker is three characters and could otherwise match
+/// inside a word such as `theyJust`; here the marker must start the token.
+fn mask_jwts(input: &str) -> String {
+    const MARKER: &str = "eyJ";
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+
+    loop {
+        let Some(index) = rest.find(MARKER) else {
+            out.push_str(rest);
+            return out;
+        };
+
+        let at_boundary = index == 0 || !rest.as_bytes()[index - 1].is_ascii_alphanumeric();
+        if !at_boundary {
+            // Part of a longer word, so not a JWT marker. Keep it and move on.
+            out.push_str(&rest[..index + MARKER.len()]);
+            rest = &rest[index + MARKER.len()..];
+            continue;
+        }
+
+        out.push_str(&rest[..index]);
+        let token = &rest[index..];
+        let length = token
+            .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ',' || c == '}')
+            .unwrap_or(token.len());
+        if length <= MARKER.len() {
+            // Nothing after the marker: not a token, and masking it would only
+            // hide the word itself.
+            out.push_str(token);
+            return out;
+        }
+        out.push_str(MASK);
+        rest = &token[length..];
+    }
+}
+
+/// Mask a long, unlabelled run that looks like a credential.
+///
+/// This is the pass for a secret with no key name and no prefix: a 256-bit key
+/// in base64 is 44 characters, a SHA-1 hex digest is 40, a SHA-256 is 64, and a
+/// session secret looks the same. The heuristic is 40 characters or more with at
+/// least two character classes (lowercase, uppercase, digit) — a UUID (36), a
+/// hostname segment, and an ordinary word all stay readable, because a redactor
+/// that hides everything is a redactor an operator turns off.
+fn mask_opaque_runs(input: &str) -> String {
+    fn is_run_char(c: char) -> bool {
+        c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '=' | '-' | '_')
+    }
+
+    fn looks_like_a_credential(run: &str) -> bool {
+        if run.chars().count() < 40 {
+            return false;
+        }
+        let classes = [
+            run.chars().any(|c| c.is_ascii_lowercase()),
+            run.chars().any(|c| c.is_ascii_uppercase()),
+            run.chars().any(|c| c.is_ascii_digit()),
+        ];
+        classes.iter().filter(|present| **present).count() >= 2
+    }
+
+    let chars: Vec<char> = input.chars().collect();
+    let mut out = String::with_capacity(input.len());
+    let mut index = 0usize;
+
+    while index < chars.len() {
+        if !is_run_char(chars[index]) {
+            out.push(chars[index]);
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < chars.len() && is_run_char(chars[index]) {
+            index += 1;
+        }
+        let run: String = chars[start..index].iter().collect();
+        if looks_like_a_credential(&run) {
+            out.push_str(MASK);
+        } else {
+            out.push_str(&run);
+        }
+    }
+
+    out
+}
+
 /// Mask sensitive values in a JSON document, recursively.
 ///
 /// Used for telemetry detail, audit detail, and any error context that might
@@ -308,5 +413,72 @@ mod tests {
         assert!(is_sensitive_key("API_KEY"));
         assert!(is_sensitive_key("NvidiaApiKey"));
         assert!(!is_sensitive_key("sandbox_name"));
+    }
+
+    #[test]
+    fn a_token_prefix_inside_a_sentence_is_masked() {
+        // The acceptance case: a secret pasted into a prompt, with no key name
+        // anywhere near it.
+        let prompt = "please summarise this with sk-proj-4f9a8b7c6d5e4f3a2b1c please";
+        let out = redact(prompt);
+        assert!(!out.contains("4f9a8b7c6d5e4f3a2b1c"), "{out}");
+        assert!(out.contains("[redacted]"), "{out}");
+        assert!(out.starts_with("please summarise this with"), "{out}");
+    }
+
+    #[test]
+    fn a_github_token_is_masked_without_a_key_name() {
+        let out = redact("clone with ghp_16C7e42F292c6912E7710c838347Ae178B4a now");
+        assert!(!out.contains("16C7e42F292c6912E7710c838347Ae178B4a"), "{out}");
+    }
+
+    #[test]
+    fn a_private_key_block_is_masked_to_the_end() {
+        let out = redact("-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXk\n-----END");
+        assert!(out.ends_with(MASK), "{out}");
+        assert!(!out.contains("b3BlbnNzaC1rZXk"), "{out}");
+        // The part before the block stays readable, so the log line still says
+        // what happened.
+        assert_eq!(out.matches(MASK).count(), 1);
+    }
+
+    #[test]
+    fn a_jwt_is_masked_as_one_token() {
+        let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NSJ9.c2lnbmF0dXJlLXZhbHVl";
+        let out = redact(&format!("Authorization: {jwt}"));
+        assert!(!out.contains("eyJhbGciOiJIUzI1NiJ9"), "{out}");
+        assert!(!out.contains("c2lnbmF0dXJl"), "{out}");
+    }
+
+    #[test]
+    fn a_long_opaque_blob_is_masked() {
+        // 44 characters of base64 is a 256-bit key.
+        let key = "dGhpcy1pcy1hLXNlY3JldC1rZXktZm9yLXRlc3RpbmctMTIzNDU2";
+        let out = redact(&format!("value {key} end"));
+        assert!(!out.contains(key), "{out}");
+        assert_eq!(out, format!("value {MASK} end"));
+    }
+
+    #[test]
+    fn a_hex_digest_is_masked() {
+        let digest = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+        let out = redact(digest);
+        assert_eq!(out, MASK);
+    }
+
+    #[test]
+    fn an_id_is_not_mistaken_for_a_secret() {
+        // 36 characters: below the threshold, and masking it would make every
+        // event id in a detail unreadable.
+        let id = "550e8400-e29b-41d4-a716-446655440000";
+        assert_eq!(redact(id), id);
+        let sandbox = "hermes-01-6f9d2c4b";
+        assert_eq!(redact(sandbox), sandbox);
+    }
+
+    #[test]
+    fn a_word_that_merely_contains_the_jwt_marker_is_left_alone() {
+        let text = "theyJustDoIt and thisKeyIsFine";
+        assert_eq!(redact(text), text);
     }
 }

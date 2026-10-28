@@ -1,14 +1,116 @@
 //! Telemetry ingest, live publish, and history.
+//!
+//! Two entry points write telemetry: `ingest` for one event from a gateway or a
+//! probe, and `ingest_batch` for the access-log batch a node's egress proxy
+//! ships. The batch path is the one that carries bodies, MCP frames, and DNS
+//! answers, so it is also the one where the limits live.
 
-use chrono::{Duration, Utc};
+use base64::Engine;
+use chrono::{DateTime, Duration, Utc};
+use serde::Deserialize;
 use uuid::Uuid;
 
 use super::{require, ServiceContext};
 use crate::domain::auth::{Permission, Principal};
-use crate::domain::telemetry::{Decision, EventKind, LiveEvent, TelemetryEvent};
-use crate::error::ApiError;
-use crate::store::TenantScope;
+use crate::domain::mcp::{parse_mcp_frame, McpFrame};
+use crate::domain::telemetry::{
+    Decision, Direction, DnsEvent, EventKind, LiveEvent, NetworkEvent, TelemetryEvent,
+};
+use crate::error::{ApiError, ErrorCode};
+use crate::security::{secrets, session};
 use crate::store::postgres::telemetry as store;
+use crate::store::postgres::traffic_bodies;
+use crate::store::TenantScope;
+
+/// How many events one batch may carry.
+///
+/// The proxy batches for latency; it does not get to decide how many rows a
+/// single request writes. 500 is a few seconds of a busy node, and a proxy that
+/// exceeds it is either misconfigured or trying to flood the table — both worth
+/// a refused request rather than a slow insert.
+pub const MAX_EVENTS_PER_BATCH: usize = 500;
+
+/// How much decoded body text one batch may carry in total.
+///
+/// Each side is already capped at 64 KiB by the proxy and by
+/// `traffic_bodies::MAX_BODY_BYTES`; this is the second guard, so 500 bodies
+/// cannot turn one request into 32 MiB of text.
+pub const MAX_BATCH_BODY_BYTES: usize = 4 * 1024 * 1024;
+
+/// One access-log batch from a node's egress proxy.
+///
+/// The shape is deliberately flat and tolerant: a proxy version that does not
+/// know a field yet simply omits it. The environment is named explicitly
+/// because a node serves more than one, and every event in the batch belongs to
+/// it until a sandbox says otherwise — which the service checks.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProxyBatch {
+    pub environment_id: Uuid,
+    #[serde(default)]
+    pub traffic: Vec<ProxyTrafficEntry>,
+    #[serde(default)]
+    pub dns: Vec<ProxyDnsEntry>,
+}
+
+/// One access-log line, as Envoy writes it, plus the captured bodies.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProxyTrafficEntry {
+    pub ts: Option<DateTime<Utc>>,
+    pub sandbox_id: Option<Uuid>,
+    pub host: String,
+    pub port: Option<i32>,
+    pub protocol: Option<String>,
+    pub method: Option<String>,
+    pub path: Option<String>,
+    pub status: Option<i32>,
+    pub duration_ms: Option<i64>,
+    #[serde(default)]
+    pub bytes_in: i64,
+    #[serde(default)]
+    pub bytes_out: i64,
+    /// The sandbox's address as the proxy saw it.
+    pub client: Option<String>,
+    pub user_agent: Option<String>,
+    pub request_id: Option<String>,
+    /// `allow`, `deny`, or `audit`. Anything else is read as a deny.
+    pub decision: Option<String>,
+    pub reason: Option<String>,
+    pub rule_id: Option<Uuid>,
+    pub mcp_session_id: Option<String>,
+    pub mcp_method: Option<String>,
+    pub mcp_tool: Option<String>,
+    /// The registry key of the MCP server, when the proxy knows it.
+    pub mcp_server: Option<String>,
+    /// Base64, as Envoy's JSON access-log field carries it.
+    pub request_body: Option<String>,
+    pub response_body: Option<String>,
+}
+
+/// One DNS answer, from the node's resolver.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProxyDnsEntry {
+    pub ts: Option<DateTime<Utc>>,
+    pub sandbox_id: Option<Uuid>,
+    pub hostname: String,
+    /// `A`, `AAAA`, `CNAME`, `TXT`, … as the resolver recorded it.
+    pub qtype: Option<String>,
+    pub answer: Option<String>,
+    pub ttl: Option<i32>,
+    pub decision: Option<String>,
+    pub resolver: Option<String>,
+    pub request_id: Option<String>,
+}
+
+/// What a batch produced, for the proxy's log line.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct BatchOutcome {
+    /// Events the batch carried.
+    pub accepted: usize,
+    /// Rows actually written (a retried batch writes fewer).
+    pub stored: u64,
+    pub bodies: u64,
+    pub mcp_calls: u64,
+}
 
 /// Accept one event from a gateway or the runtime.
 ///
@@ -58,6 +160,672 @@ pub async fn ingest(ctx: &ServiceContext, event: TelemetryEvent) -> Result<Uuid,
 
     ctx.bus.publish(LiveEvent::Telemetry(event));
     Ok(id)
+}
+
+/// Ingest one batch of access-log lines from a node's egress proxy.
+///
+/// The order is the security story:
+///
+/// 1. **Authenticate the node.** A batch names an environment; only a node with
+///    a resolvable token may speak for one. Every failure is the same 401, so a
+///    probe cannot tell "unknown node" from "wrong token".
+/// 2. **Refuse an oversized batch** before a single row is written.
+/// 3. **Check the tenant.** The environment must exist and every named sandbox
+///    must belong to it, or the batch is refused as a whole. A partial write
+///    would leave one tenant's timeline with another tenant's traffic.
+/// 4. **Parse, then store, then publish.** Parsing happens first so a malformed
+///    body is a 422 rather than a stored half-event. The live publish follows
+///    the store attempt, because a console that shows nothing while a node is
+///    reporting is the failure this stream exists to prevent.
+pub async fn ingest_batch(
+    ctx: &ServiceContext,
+    node_reference: &str,
+    node_token: &str,
+    batch: ProxyBatch,
+) -> Result<BatchOutcome, ApiError> {
+    authenticate_node(ctx, node_reference, node_token).await?;
+    check_batch_size(&batch)?;
+
+    if !store::environment_exists(&ctx.pool, batch.environment_id)
+        .await
+        .map_err(ApiError::from)?
+    {
+        return Err(ApiError::forbidden("telemetry.write"));
+    }
+    ensure_known_sandboxes(ctx, &batch).await?;
+
+    let now = Utc::now();
+    let mut prepared = Vec::with_capacity(batch.traffic.len() + batch.dns.len());
+    let mut body_bytes = 0usize;
+
+    for entry in &batch.traffic {
+        let event = prepare_traffic(entry, batch.environment_id, now)?;
+        body_bytes += event.body_bytes();
+        prepared.push(event);
+    }
+    for entry in &batch.dns {
+        prepared.push(prepare_dns(entry, batch.environment_id, now)?);
+    }
+
+    if body_bytes > MAX_BATCH_BODY_BYTES {
+        return Err(ApiError::unprocessable(
+            ErrorCode::PAYLOAD_TOO_LARGE,
+            format!(
+                "A batch carries at most {MAX_BATCH_BODY_BYTES} bytes of body text; \
+                 this one carries {body_bytes}."
+            ),
+        ));
+    }
+
+    let events: Vec<store::BatchEvent<'_>> = prepared
+        .iter()
+        .map(|item| store::BatchEvent {
+            id: item.id,
+            environment_id: batch.environment_id,
+            sandbox_id: item.sandbox_id,
+            gateway_id: None,
+            kind: item.kind,
+            source: Some("egress-proxy"),
+            ts: item.ts,
+            detail: item.detail.clone(),
+        })
+        .collect();
+
+    let bodies: Vec<traffic_bodies::NewBody<'_>> = prepared
+        .iter()
+        .filter_map(|item| item.body.as_ref().map(|body| (item, body)))
+        .map(|(item, body)| traffic_bodies::NewBody {
+            event_id: item.id,
+            sandbox_id: item.sandbox_id,
+            ts: item.ts,
+            request_body: body.request.as_deref(),
+            response_body: body.response.as_deref(),
+            request_bytes: body.request_bytes,
+            response_bytes: body.response_bytes,
+            truncated: body.truncated,
+        })
+        .collect();
+
+    let calls: Vec<store::NewToolCall> = prepared
+        .iter()
+        .filter_map(|item| item.call.clone())
+        .collect();
+
+    // Each step is attempted even when an earlier one failed, so one broken
+    // statement does not also cost the bodies that arrived with it. The first
+    // error is reported after the live publish, and the proxy retries the batch;
+    // the ids make the retry idempotent.
+    let stored = store::insert_batch(&ctx.pool, batch.environment_id, &events).await;
+    let body_rows = traffic_bodies::insert_batch(&ctx.pool, batch.environment_id, &bodies).await;
+    let mcp_rows = store::insert_tool_calls(&ctx.pool, batch.environment_id, &calls).await;
+
+    for item in &prepared {
+        ctx.bus.publish(LiveEvent::Telemetry(item.live.clone()));
+    }
+
+    let stored = stored.map_err(|error| {
+        tracing::error!(error = %error, "telemetry batch insert failed");
+        ApiError::from(error)
+    })?;
+    let body_rows = body_rows.map_err(|error| {
+        tracing::error!(error = %error, "traffic body insert failed");
+        ApiError::from(error)
+    })?;
+    let mcp_rows = mcp_rows.map_err(|error| {
+        tracing::error!(error = %error, "mcp tool call insert failed");
+        ApiError::from(error)
+    })?;
+
+    Ok(BatchOutcome {
+        accepted: prepared.len(),
+        stored,
+        bodies: body_rows,
+        mcp_calls: mcp_rows,
+    })
+}
+
+/// Refuse a batch that is empty or too large.
+///
+/// Separate from the handler so the limit is a rule with a test, not a constant
+/// someone has to remember to apply.
+pub fn check_batch_size(batch: &ProxyBatch) -> Result<(), ApiError> {
+    let total = batch.traffic.len() + batch.dns.len();
+    if total == 0 {
+        return Err(ApiError::validation("A batch carries no events."));
+    }
+    if total > MAX_EVENTS_PER_BATCH {
+        return Err(ApiError::unprocessable(
+            ErrorCode::PAYLOAD_TOO_LARGE,
+            format!(
+                "A batch carries at most {MAX_EVENTS_PER_BATCH} events; this one carries {total}."
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Verify the node's token against the file its row points at.
+///
+/// Fail-closed at every branch: no header, no row, no locator, no token file, or
+/// a token file that does not match are all the same refusal. The comparison is
+/// over SHA-256 hashes with a constant-time equality, so a token cannot be
+/// guessed one byte at a time from response timing.
+async fn authenticate_node(
+    ctx: &ServiceContext,
+    node_reference: &str,
+    presented_token: &str,
+) -> Result<Uuid, ApiError> {
+    let reference = node_reference.trim();
+    let presented = presented_token.trim();
+    let refused = || ApiError::unauthenticated("This endpoint requires a valid node token.");
+
+    if reference.is_empty() || presented.is_empty() {
+        tracing::warn!("telemetry batch refused: no node reference or no token");
+        return Err(refused());
+    }
+
+    let node = store::node_identity(&ctx.pool, reference)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| {
+            tracing::warn!(node = %reference, "telemetry batch refused: unknown node");
+            refused()
+        })?;
+
+    let locator = node.token_ref.as_deref().ok_or_else(|| {
+        tracing::warn!(node = %node.name, "telemetry batch refused: node has no token configured");
+        refused()
+    })?;
+
+    let expected = secrets::resolve(locator, &ctx.secret_dir).map_err(|error| {
+        tracing::warn!(
+            node = %node.name,
+            reason = error.message(),
+            "telemetry batch refused: node token cannot be resolved"
+        );
+        refused()
+    })?;
+    let expected = expected.trim();
+    if expected.is_empty() {
+        tracing::warn!(node = %node.name, "telemetry batch refused: node token file is empty");
+        return Err(refused());
+    }
+
+    let equal = session::hashes_equal(
+        &session::hash_token(presented),
+        &session::hash_token(expected),
+    );
+    if !equal {
+        tracing::warn!(node = %node.name, "telemetry batch refused: node token mismatch");
+        return Err(refused());
+    }
+
+    Ok(node.id)
+}
+
+/// Every sandbox the batch names must exist and belong to the batch's tenant.
+///
+/// The check runs in one tenant scope for all ids, so a batch with a thousand
+/// entries is still one query. A batch that fails it writes nothing.
+async fn ensure_known_sandboxes(
+    ctx: &ServiceContext,
+    batch: &ProxyBatch,
+) -> Result<(), ApiError> {
+    let mut declared: Vec<Uuid> = batch
+        .traffic
+        .iter()
+        .filter_map(|entry| entry.sandbox_id)
+        .chain(batch.dns.iter().filter_map(|entry| entry.sandbox_id))
+        .collect();
+    declared.sort_unstable();
+    declared.dedup();
+
+    if declared.is_empty() {
+        return Ok(());
+    }
+
+    let mut scope = TenantScope::begin(&ctx.pool, batch.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let found = store::sandboxes_in_environment(&mut scope, &declared)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+
+    if found.len() != declared.len() {
+        tracing::warn!(
+            environment = %batch.environment_id,
+            declared = declared.len(),
+            found = found.len(),
+            "telemetry batch refused: a sandbox is not in the environment"
+        );
+        return Err(ApiError::forbidden("telemetry.write"));
+    }
+    Ok(())
+}
+
+/// One event, built and ready to store.
+struct PreparedEvent {
+    id: Uuid,
+    ts: DateTime<Utc>,
+    sandbox_id: Option<Uuid>,
+    kind: EventKind,
+    detail: serde_json::Value,
+    body: Option<PreparedBody>,
+    call: Option<store::NewToolCall>,
+    live: TelemetryEvent,
+}
+
+impl PreparedEvent {
+    /// Decoded body text this event carries, for the batch cap.
+    fn body_bytes(&self) -> usize {
+        match &self.body {
+            Some(body) => {
+                body.request.as_ref().map_or(0, String::len)
+                    + body.response.as_ref().map_or(0, String::len)
+            }
+            None => 0,
+        }
+    }
+}
+
+/// One event's bodies, already decoded and cut.
+struct PreparedBody {
+    request: Option<String>,
+    response: Option<String>,
+    request_bytes: i64,
+    response_bytes: i64,
+    truncated: bool,
+}
+
+/// A decoded body, with what was actually in it before the cap.
+struct DecodedBody {
+    text: String,
+    bytes: i64,
+    truncated: bool,
+}
+
+/// Build the network event, its body row, and its MCP call from one log line.
+fn prepare_traffic(
+    entry: &ProxyTrafficEntry,
+    environment_id: Uuid,
+    now: DateTime<Utc>,
+) -> Result<PreparedEvent, ApiError> {
+    let host = entry.host.trim();
+    if host.is_empty() {
+        return Err(ApiError::validation("A traffic entry names no host."));
+    }
+
+    let request = decode_body(entry.request_body.as_deref())?;
+    let response = decode_body(entry.response_body.as_deref())?;
+
+    // Recognition comes from the body itself, not only from what the proxy
+    // labelled: a proxy version without the Lua filter still logs the call.
+    let frame = request
+        .as_ref()
+        .and_then(|body| parse_mcp_frame(body.text.as_bytes()));
+    let labelled_mcp = entry.mcp_method.is_some()
+        || entry.mcp_tool.is_some()
+        || entry.mcp_session_id.is_some();
+    let is_mcp = frame.is_some() || labelled_mcp;
+
+    let id = event_id(environment_id, entry.sandbox_id, entry.request_id.as_deref(), entry.ts, now);
+    let ts = entry.ts.unwrap_or(now);
+    let decision = parse_decision(entry.decision.as_deref());
+
+    let event = NetworkEvent {
+        id,
+        environment_id,
+        sandbox_id: entry.sandbox_id,
+        gateway_id: None,
+        ts,
+        direction: Direction::Outbound,
+        protocol: wire_protocol(entry, is_mcp),
+        source: entry
+            .client
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("proxy")
+            .to_string(),
+        destination: host.to_string(),
+        port: entry.port,
+        binary: None,
+        decision,
+        rule_id: entry.rule_id,
+        rule_name: None,
+        latency_ms: entry
+            .duration_ms
+            .map(|ms| ms.clamp(0, i64::from(i32::MAX)) as i32),
+        correlation_id: entry.request_id.clone(),
+        enforcement: Some(
+            match decision {
+                Decision::Audit => "audit",
+                _ => "enforced",
+            }
+            .to_string(),
+        ),
+    };
+
+    let live = TelemetryEvent::Network(event);
+    let mut detail = serde_json::to_value(&live).unwrap_or(serde_json::Value::Null);
+    if let serde_json::Value::Object(map) = &mut detail {
+        // Facts the domain event does not carry but the traffic table shows.
+        // Additive keys keep the event shape intact for the SSE consumer.
+        if let Some(status) = entry.status {
+            map.insert("status".into(), serde_json::json!(status));
+        }
+        map.insert("bytes_in".into(), serde_json::json!(entry.bytes_in));
+        map.insert("bytes_out".into(), serde_json::json!(entry.bytes_out));
+        map.insert(
+            "has_body".into(),
+            serde_json::json!(request.is_some() || response.is_some()),
+        );
+        map.insert(
+            "inspected".into(),
+            serde_json::json!(entry.path.is_some()),
+        );
+        if let Some(reason) = entry.reason.as_deref().filter(|value| !value.is_empty()) {
+            map.insert("reason".into(), serde_json::json!(reason));
+        }
+        if let Some(tool) = entry.mcp_tool.as_deref().filter(|value| !value.is_empty()) {
+            map.insert("mcp_tool".into(), serde_json::json!(tool));
+        }
+    }
+
+    let call = if is_mcp {
+        build_mcp_call(entry, id, ts, frame.as_ref(), response.as_ref())
+    } else {
+        None
+    };
+
+    let body = match (&request, &response) {
+        (None, None) => None,
+        _ => Some(PreparedBody {
+            request: request.as_ref().map(|body| body.text.clone()),
+            response: response.as_ref().map(|body| body.text.clone()),
+            request_bytes: request.as_ref().map_or(0, |body| body.bytes),
+            response_bytes: response.as_ref().map_or(0, |body| body.bytes),
+            truncated: request.as_ref().is_some_and(|body| body.truncated)
+                || response.as_ref().is_some_and(|body| body.truncated),
+        }),
+    };
+
+    Ok(PreparedEvent {
+        id,
+        ts,
+        sandbox_id: entry.sandbox_id,
+        kind: EventKind::Network,
+        detail,
+        body,
+        call,
+        live,
+    })
+}
+
+/// Build the DNS event, with the record facts kept in the stored detail.
+///
+/// `DnsEvent` answers "which name did the sandbox ask for, and was it allowed".
+/// The record type, answer, and TTL are what an operator needs next, and they
+/// are additions to the stored detail rather than new domain fields, so the SSE
+/// consumer keeps one shape.
+fn prepare_dns(
+    entry: &ProxyDnsEntry,
+    environment_id: Uuid,
+    now: DateTime<Utc>,
+) -> Result<PreparedEvent, ApiError> {
+    let hostname = entry.hostname.trim();
+    if hostname.is_empty() {
+        return Err(ApiError::validation("A DNS entry names no hostname."));
+    }
+    let hostname = hostname.to_string();
+    let ts = entry.ts.unwrap_or(now);
+    let id = event_id(environment_id, entry.sandbox_id, entry.request_id.as_deref(), entry.ts, now);
+    let decision = parse_decision(entry.decision.as_deref());
+
+    let event = DnsEvent {
+        id,
+        environment_id,
+        sandbox_id: entry.sandbox_id,
+        ts,
+        hostname,
+        resolver: entry
+            .resolver
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        decision,
+        binary: None,
+        correlation_id: entry.request_id.clone(),
+    };
+
+    let live = TelemetryEvent::Dns(event);
+    let mut detail = serde_json::to_value(&live).unwrap_or(serde_json::Value::Null);
+    if let serde_json::Value::Object(map) = &mut detail {
+        if let Some(qtype) = entry.qtype.as_deref().filter(|value| !value.trim().is_empty()) {
+            map.insert("qtype".into(), serde_json::json!(qtype));
+        }
+        if let Some(answer) = entry.answer.as_deref().filter(|value| !value.trim().is_empty()) {
+            map.insert("answer".into(), serde_json::json!(answer));
+        }
+        if let Some(ttl) = entry.ttl {
+            map.insert("ttl".into(), serde_json::json!(ttl));
+        }
+    }
+
+    Ok(PreparedEvent {
+        id,
+        ts,
+        sandbox_id: entry.sandbox_id,
+        kind: EventKind::Dns,
+        detail,
+        body: None,
+        call: None,
+        live,
+    })
+}
+
+/// Build the `mcp_tool_calls` row from a recognised frame and its response.
+///
+/// Returns `None` when the call has no method at all: a row that says "something
+/// happened" is worse than no row, because the MCP view would show a nameless
+/// call and an operator would have to guess.
+fn build_mcp_call(
+    entry: &ProxyTrafficEntry,
+    event_id: Uuid,
+    ts: DateTime<Utc>,
+    frame: Option<&McpFrame>,
+    response: Option<&DecodedBody>,
+) -> Option<store::NewToolCall> {
+    let method = frame
+        .and_then(|frame| frame.method.clone())
+        .or_else(|| entry.mcp_method.clone())?;
+
+    let response_value = response.map(|body| {
+        serde_json::from_str::<serde_json::Value>(&body.text)
+            .unwrap_or_else(|_| serde_json::Value::String(body.text.clone()))
+    });
+
+    let result = response_value.map(|value| {
+        let is_error = json_rpc_is_error(&value) || entry.status.is_some_and(|code| code >= 400);
+        (value, is_error)
+    });
+    let is_error = result
+        .as_ref()
+        .map(|(_, is_error)| *is_error)
+        .unwrap_or_else(|| entry.status.is_some_and(|code| code >= 400));
+
+    let call_id = deterministic_id(&format!("nestbox-mcp:{event_id}:{method}"));
+
+    Some(store::NewToolCall {
+        id: call_id,
+        sandbox_id: entry.sandbox_id,
+        ts,
+        server_host: entry.host.trim().to_string(),
+        server_key: entry
+            .mcp_server
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        session_id: entry.mcp_session_id.clone(),
+        method,
+        tool_name: frame
+            .and_then(|frame| frame.tool_name.clone())
+            .or_else(|| entry.mcp_tool.clone()),
+        arguments: frame.and_then(|frame| frame.arguments.clone()),
+        result: result.map(|(value, _)| value),
+        is_error,
+        duration_ms: entry
+            .duration_ms
+            .map(|ms| ms.clamp(0, i64::from(i32::MAX)) as i32),
+        request_id: entry.request_id.clone(),
+        event_id: Some(event_id),
+    })
+}
+
+/// Whether a JSON-RPC response is an error, in either supported form.
+///
+/// Two forms exist and both matter: a transport-level `error` object, and the
+/// MCP tool result flag `isError`. Looking only at the HTTP status would report
+/// a failed tool call as a success, because MCP returns tool failures with 200.
+fn json_rpc_is_error(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.contains_key("error")
+                || map
+                    .get("result")
+                    .and_then(|result| result.get("isError"))
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+        }
+        serde_json::Value::Array(items) => items.iter().any(json_rpc_is_error),
+        _ => false,
+    }
+}
+
+/// The id of one event.
+///
+/// With a request id the id is derived, so a batch the proxy retries after a
+/// timeout does not double the timeline; without one there is nothing to derive
+/// from and a random id is the honest choice.
+fn event_id(
+    environment_id: Uuid,
+    sandbox_id: Option<Uuid>,
+    request_id: Option<&str>,
+    ts: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Uuid {
+    let request_id = request_id.map(str::trim).filter(|value| !value.is_empty());
+    match request_id {
+        Some(request_id) => {
+            let stamp = ts.unwrap_or(now).timestamp_millis();
+            let sandbox = sandbox_id.map(|id| id.to_string()).unwrap_or_default();
+            deterministic_id(&format!(
+                "nestbox-egress:{environment_id}:{sandbox}:{request_id}:{stamp}"
+            ))
+        }
+        None => Uuid::new_v4(),
+    }
+}
+
+/// A UUID derived from a key, so a retried batch keeps its ids.
+///
+/// SHA-256 rather than RFC 4122 version 5 (which is SHA-1) because SHA-256 is
+/// already a dependency and the only property needed is "same input, same id".
+/// The version and variant bits are set anyway, so a reader can tell a derived
+/// id from a random one.
+fn deterministic_id(key: &str) -> Uuid {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    hasher.update(key.as_bytes());
+    let digest = hasher.finalize();
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Uuid::from_bytes(bytes)
+}
+
+/// What the proxy decided, read conservatively.
+///
+/// An absent or unrecognised decision is a deny. The alternative — defaulting to
+/// allow — would let a proxy version that stopped sending the field turn every
+/// blocked request into a green row.
+fn parse_decision(raw: Option<&str>) -> Decision {
+    raw.map(str::trim)
+        .and_then(Decision::parse)
+        .unwrap_or(Decision::Deny)
+}
+
+/// The protocol as the console groups it.
+///
+/// Envoy logs `%PROTOCOL%` as `HTTP/1.1` or `HTTP/2`; the console filters on
+/// `http`, `https`, `tcp`, `mcp`, and `dns`. Anything else is passed through
+/// lowercased rather than flattened, so a new protocol is visible as itself
+/// instead of looking like a mistake.
+fn wire_protocol(entry: &ProxyTrafficEntry, is_mcp: bool) -> String {
+    if is_mcp {
+        return "mcp".to_string();
+    }
+    match entry.protocol.as_deref() {
+        Some(raw) => {
+            let lowered = raw.trim().to_ascii_lowercase();
+            if lowered.starts_with("http") {
+                if entry.port == Some(443) {
+                    "https".to_string()
+                } else {
+                    "http".to_string()
+                }
+            } else if lowered.is_empty() {
+                "tcp".to_string()
+            } else {
+                lowered
+            }
+        }
+        None => "tcp".to_string(),
+    }
+}
+
+/// Decode one body and enforce the per-side cap.
+///
+/// The proxy is expected to cap at 64 KiB; this repeats the cap because the
+/// proxy is a client, not an authority. A longer body is cut and flagged, not
+/// refused: losing one body should not also lose the event that points at it.
+fn decode_body(raw: Option<&str>) -> Result<Option<DecodedBody>, ApiError> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+
+    let engine = base64::engine::general_purpose::STANDARD;
+    let decoded = engine.decode(raw).or_else(|_| {
+        base64::engine::general_purpose::STANDARD_NO_PAD.decode(raw)
+    });
+    let decoded = decoded.map_err(|_| {
+        ApiError::validation("A body in the batch is not valid base64.")
+    })?;
+
+    let bytes = decoded.len();
+    let truncated = bytes > traffic_bodies::MAX_BODY_BYTES;
+    let slice = if truncated {
+        &decoded[..traffic_bodies::MAX_BODY_BYTES]
+    } else {
+        &decoded[..]
+    };
+
+    Ok(Some(DecodedBody {
+        // A body is not guaranteed to be UTF-8: the proxy captures bytes. Lossy
+        // conversion keeps the readable part instead of dropping the row.
+        text: String::from_utf8_lossy(slice).into_owned(),
+        bytes: bytes as i64,
+        truncated,
+    }))
 }
 
 /// Recent events, for the console's history view.
@@ -167,6 +935,42 @@ pub fn sample_event(environment_id: Uuid, sandbox_id: Option<Uuid>, index: u64) 
 mod tests {
     use super::*;
 
+    fn traffic_entry() -> ProxyTrafficEntry {
+        ProxyTrafficEntry {
+            ts: None,
+            sandbox_id: None,
+            host: "mcp.example.com".into(),
+            port: Some(443),
+            protocol: Some("HTTP/2".into()),
+            method: Some("POST".into()),
+            path: Some("/mcp".into()),
+            status: Some(200),
+            duration_ms: Some(37),
+            bytes_in: 12,
+            bytes_out: 34,
+            client: Some("10.244.0.2".into()),
+            user_agent: Some("hermes/0.22".into()),
+            request_id: Some("req-1".into()),
+            decision: Some("allow".into()),
+            reason: Some("rule".into()),
+            rule_id: None,
+            mcp_session_id: Some("sess-1".into()),
+            mcp_method: None,
+            mcp_tool: None,
+            mcp_server: Some("nestbox-hub".into()),
+            request_body: None,
+            response_body: None,
+        }
+    }
+
+    fn batch_with(traffic: Vec<ProxyTrafficEntry>, dns: Vec<ProxyDnsEntry>) -> ProxyBatch {
+        ProxyBatch {
+            environment_id: Uuid::nil(),
+            traffic,
+            dns,
+        }
+    }
+
     #[test]
     fn a_sample_event_alternates_allow_and_deny() {
         let env = Uuid::new_v4();
@@ -179,5 +983,186 @@ mod tests {
         }
         assert!(decisions.contains(&Decision::Allow));
         assert!(decisions.contains(&Decision::Deny));
+    }
+
+    #[test]
+    fn a_batch_may_not_exceed_its_event_cap() {
+        let entry = traffic_entry();
+        let at_limit = batch_with(vec![entry.clone(); MAX_EVENTS_PER_BATCH], vec![]);
+        assert!(check_batch_size(&at_limit).is_ok());
+
+        let over_limit = batch_with(vec![entry; MAX_EVENTS_PER_BATCH + 1], vec![]);
+        let error = check_batch_size(&over_limit).expect_err("refused");
+        assert_eq!(error.code, ErrorCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[test]
+    fn an_empty_batch_is_refused() {
+        let error = check_batch_size(&batch_with(vec![], vec![])).expect_err("refused");
+        assert_eq!(error.code, ErrorCode::VALIDATION_FAILED);
+    }
+
+    #[test]
+    fn a_traffic_entry_becomes_a_network_event() {
+        let prepared = prepare_traffic(&traffic_entry(), Uuid::nil(), Utc::now()).expect("built");
+        assert_eq!(prepared.kind, EventKind::Network);
+        assert_eq!(prepared.detail["kind"], "network");
+        assert_eq!(prepared.detail["destination"], "mcp.example.com");
+        assert_eq!(prepared.detail["port"], 443);
+        assert_eq!(prepared.detail["decision"], "allow");
+        assert_eq!(prepared.detail["status"], 200);
+        assert_eq!(prepared.detail["bytes_out"], 34);
+        assert_eq!(prepared.detail["has_body"], false);
+    }
+
+    #[test]
+    fn a_missing_decision_is_read_as_a_deny() {
+        // Defaulting to allow would turn a proxy that stopped sending the field
+        // into a green traffic log.
+        assert_eq!(parse_decision(None), Decision::Deny);
+        assert_eq!(parse_decision(Some("nonsense")), Decision::Deny);
+        assert_eq!(parse_decision(Some("allow")), Decision::Allow);
+        assert_eq!(parse_decision(Some("audit")), Decision::Audit);
+    }
+
+    #[test]
+    fn the_protocol_is_grouped_the_way_the_console_filters_it() {
+        let entry = traffic_entry();
+        assert_eq!(wire_protocol(&entry, false), "https");
+        assert_eq!(wire_protocol(&entry, true), "mcp");
+
+        let mut plain = entry.clone();
+        plain.port = Some(80);
+        assert_eq!(wire_protocol(&plain, false), "http");
+
+        let mut missing = entry;
+        missing.protocol = None;
+        assert_eq!(wire_protocol(&missing, false), "tcp");
+    }
+
+    #[test]
+    fn a_base64_body_is_decoded_and_a_broken_one_is_refused() {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(b"{\"a\":1}");
+        let body = decode_body(Some(&encoded)).expect("decoded").expect("body");
+        assert_eq!(body.text, "{\"a\":1}");
+        assert_eq!(body.bytes, 7);
+        assert!(!body.truncated);
+        assert!(decode_body(Some("not base64!!")).is_err());
+        assert!(decode_body(None).expect("none").is_none());
+    }
+
+    #[test]
+    fn a_body_beyond_the_cap_is_cut_and_flagged() {
+        let raw = vec![b'a'; traffic_bodies::MAX_BODY_BYTES + 10];
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&raw);
+        let body = decode_body(Some(&encoded)).expect("decoded").expect("body");
+        assert!(body.truncated);
+        assert_eq!(body.text.len(), traffic_bodies::MAX_BODY_BYTES);
+        assert_eq!(body.bytes as usize, raw.len());
+    }
+
+    #[test]
+    fn an_mcp_post_fills_the_tool_call_from_the_body_and_the_response() {
+        let request = br#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"/etc/hostname"}}}"#;
+        let response = br#"{"jsonrpc":"2.0","id":7,"result":{"content":[{"type":"text","text":"host"}],"isError":false}}"#;
+        let mut entry = traffic_entry();
+        entry.request_body =
+            Some(base64::engine::general_purpose::STANDARD.encode(request));
+        entry.response_body =
+            Some(base64::engine::general_purpose::STANDARD.encode(response));
+
+        let prepared = prepare_traffic(&entry, Uuid::nil(), Utc::now()).expect("built");
+        let call = prepared.call.expect("an mcp call");
+        assert_eq!(call.method, "tools/call");
+        assert_eq!(call.tool_name.as_deref(), Some("read_file"));
+        assert_eq!(call.session_id.as_deref(), Some("sess-1"));
+        assert_eq!(call.server_key.as_deref(), Some("nestbox-hub"));
+        assert_eq!(call.duration_ms, Some(37));
+        assert!(!call.is_error);
+        assert_eq!(
+            call.arguments
+                .as_ref()
+                .and_then(|value| value.get("path").cloned()),
+            Some(serde_json::json!("/etc/hostname"))
+        );
+    }
+
+    #[test]
+    fn an_mcp_error_result_is_recorded_as_an_error() {
+        let request = br#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"run_command","arguments":{"cmd":"false"}}}"#;
+        // MCP reports a failed tool with HTTP 200 and `isError`: the status
+        // alone would call this a success.
+        let response = br#"{"jsonrpc":"2.0","id":7,"result":{"content":[],"isError":true}}"#;
+        let mut entry = traffic_entry();
+        entry.request_body =
+            Some(base64::engine::general_purpose::STANDARD.encode(request));
+        entry.response_body =
+            Some(base64::engine::general_purpose::STANDARD.encode(response));
+
+        let prepared = prepare_traffic(&entry, Uuid::nil(), Utc::now()).expect("built");
+        let call = prepared.call.expect("an mcp call");
+        assert!(call.is_error);
+    }
+
+    #[test]
+    fn a_json_rpc_error_body_is_an_error_too() {
+        let value: serde_json::Value = serde_json::from_str(
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"nope"}}"#,
+        )
+        .expect("json");
+        assert!(json_rpc_is_error(&value));
+    }
+
+    #[test]
+    fn a_retried_batch_keeps_the_event_id() {
+        let ts = Utc::now();
+        let first = event_id(Uuid::nil(), None, Some("req-1"), Some(ts), Utc::now());
+        let second = event_id(Uuid::nil(), None, Some("req-1"), Some(ts), Utc::now());
+        assert_eq!(first, second);
+
+        // Without a request id there is nothing to derive from.
+        let a = event_id(Uuid::nil(), None, None, Some(ts), Utc::now());
+        let b = event_id(Uuid::nil(), None, None, Some(ts), Utc::now());
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn a_dns_entry_becomes_a_dns_event_with_its_record_facts() {
+        let entry = ProxyDnsEntry {
+            ts: None,
+            sandbox_id: None,
+            hostname: "api.example.com".into(),
+            qtype: Some("A".into()),
+            answer: Some("93.184.216.34".into()),
+            ttl: Some(60),
+            decision: Some("allow".into()),
+            resolver: Some("coredns".into()),
+            request_id: Some("dns-1".into()),
+        };
+        let prepared = prepare_dns(&entry, Uuid::nil(), Utc::now()).expect("built");
+        assert_eq!(prepared.kind, EventKind::Dns);
+        assert_eq!(prepared.detail["kind"], "dns");
+        assert_eq!(prepared.detail["hostname"], "api.example.com");
+        assert_eq!(prepared.detail["qtype"], "A");
+        assert_eq!(prepared.detail["answer"], "93.184.216.34");
+        assert_eq!(prepared.detail["ttl"], 60);
+        assert!(prepared.body.is_none());
+
+        let nameless = ProxyDnsEntry {
+            hostname: "   ".into(),
+            ..entry
+        };
+        assert!(prepare_dns(&nameless, Uuid::nil(), Utc::now()).is_err());
+    }
+
+    #[test]
+    fn a_plain_json_post_is_not_an_mcp_call() {
+        let mut entry = traffic_entry();
+        entry.request_body = Some(
+            base64::engine::general_purpose::STANDARD
+                .encode(br#"{"model":"x","messages":[]}"#),
+        );
+        let prepared = prepare_traffic(&entry, Uuid::nil(), Utc::now()).expect("built");
+        assert!(prepared.call.is_none());
     }
 }

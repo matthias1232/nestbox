@@ -43,7 +43,7 @@ than by the compiler.
 | `mod.rs` | `TenantScope`, shared helpers, re-exports |
 | `postgres/sandboxes.rs` | Sandbox reads and writes |
 | `postgres/policies.rs` | Policy documents, versions, rules, and the compiled rule-set hash |
-| `postgres/telemetry.rs` | Event insert and query |
+| `postgres/telemetry.rs` | Event insert and query, batch insert, node identity for ingest, MCP tool-call rows, partition maintenance |
 | `postgres/gateways.rs` | Gateways and supervisors |
 | `postgres/models.rs` | Catalog (with SQL filters and facets) and hardware profiles per node |
 | `postgres/model_installs.rs` | Installs per node and their reservations |
@@ -66,7 +66,7 @@ security policy on `mounts` repeats the sandbox check.
 | `postgres/egress.rs` | Compiled policy hash, decisions, windows, the node token locator, and the deployment comparison |
 | `postgres/mcp.rs` | MCP registry, attachments, tool calls |
 | `postgres/traffic.rs` | Traffic rows, map edges, per-destination counts |
-| `postgres/traffic_bodies.rs` | Redacted bodies, capped and short-lived |
+| `postgres/traffic_bodies.rs` | Redacted bodies, capped and short-lived: insert per batch, read one, purge by age |
 
 ## Unscoped reads, and why each one is allowed
 

@@ -2,7 +2,9 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::http::HeaderMap;
 use axum::http::StatusCode;
+use axum::http::header::AUTHORIZATION;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -130,13 +132,56 @@ pub async fn seed_demo(
 
 /// Ingest a batch of access-log lines from a node's egress proxy.
 ///
-/// Session-less by design: the node presents its own token. Bodies in the batch
-/// go through the central redactor before they are stored, and the batch is
-/// capped so one node cannot fill the table in a single request. The
-/// `feat/proxy-telemetry` package fills the body.
+/// Session-less by design: the node presents its own token, which is resolved
+/// from `nodes.node_token_ref` and compared in constant time. Bodies in the
+/// batch go through the central redactor before they are stored, and the batch is
+/// capped so one node cannot fill the table in a single request. A node without
+/// a resolvable token is refused — there is no unauthenticated ingest path and
+/// no default node.
 pub async fn internal_batch(
-    State(_state): State<AppState>,
-    Json(_batch): Json<serde_json::Value>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(batch): Json<telemetry_service::ProxyBatch>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::not_implemented("POST /internal/telemetry/batch"))
+    let node = header_value(&headers, "x-nestbox-node").unwrap_or_default();
+    let token = node_token(&headers).unwrap_or_default();
+
+    let outcome = telemetry_service::ingest_batch(&state.services, &node, &token, batch).await?;
+
+    Ok(Json(serde_json::json!({
+        "accepted": outcome.accepted,
+        "stored": outcome.stored,
+        "bodies": outcome.bodies,
+        "mcp_calls": outcome.mcp_calls,
+    })))
+}
+
+/// One header as a string, or `None` when it is absent or not ASCII.
+fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+/// The node's bearer token from the authorization header.
+///
+/// Both spellings are accepted because the console and the runner differ in
+/// what they send. This mirrors `principal::bearer_token`, which is private to
+/// the extractor and cannot be reused without giving every caller a session;
+/// the two should collapse into one helper once a shared node-authentication
+/// module exists (the policy check and metrics ingest need it as well).
+fn node_token(headers: &HeaderMap) -> Option<String> {
+    let raw = headers.get(AUTHORIZATION)?.to_str().ok()?;
+    let (scheme, token) = raw.split_once(' ')?;
+    if !(scheme.eq_ignore_ascii_case("bearer") || scheme.eq_ignore_ascii_case("token")) {
+        return None;
+    }
+    let token = token.trim();
+    if token.is_empty() {
+        None
+    } else {
+        Some(token.to_string())
+    }
 }
