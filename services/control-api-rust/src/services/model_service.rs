@@ -702,12 +702,9 @@ pub async fn uninstall(
                 ),
             ));
         }
-        super::provider_service::delete_for_install(&mut scope, profile_id)
-            .await
-            .map_err(ApiError::from)?;
     }
 
-    // The server goes before the row does. If the node cannot stop it, the
+    // The server goes before the rows do. If the node cannot stop it, the
     // row stays: an install that is gone from the database while its container
     // still holds memory is worse than an uninstall that has to be retried.
     // The artefact stays on disk, so installing the same model again does not
@@ -728,6 +725,14 @@ pub async fn uninstall(
         .await
         .map_err(ApiError::from)?;
 
+    // The profile and the row are removed together, and only now that the
+    // container is gone: an uninstall that failed at the stop leaves nothing
+    // half-deleted for the retry to trip over.
+    if let Some(profile_id) = install.provider_profile_id {
+        super::provider_service::delete_for_install(&mut scope, profile_id)
+            .await
+            .map_err(ApiError::from)?;
+    }
     install_store::delete(&mut scope, install.id)
         .await
         .map_err(ApiError::from)?;
