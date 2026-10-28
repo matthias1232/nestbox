@@ -48,7 +48,7 @@ use crate::store::postgres::{
 /// Bump this when the Dockerfile template changes in a way that must produce a
 /// new image for an unchanged recipe. Without it a code deploy would keep
 /// reusing the previous template's image because no recipe field moved.
-const GENERATOR_VERSION: u32 = 1;
+const GENERATOR_VERSION: u32 = 2;
 
 /// What a create or edit carries.
 ///
@@ -1421,7 +1421,12 @@ pub fn supervisor_script(plan: &ImagePlan) -> Result<String, String> {
         .collect();
     let command = crate::domain::builder::entrypoint_command(&launches);
     match command.as_slice() {
-        [shell, flag, script] if shell == "/bin/bash" && flag == "-c" => Ok(script.clone()),
+        // The shebang is not decoration: without it the kernel hands the file
+        // to /bin/sh, dash has no `wait -n`, and the sandbox dies at start with
+        // "wait: Illegal option -n".
+        [shell, flag, script] if shell == "/bin/bash" && flag == "-c" => {
+            Ok(format!("#!/bin/bash\n{script}"))
+        }
         _ => Err("The supervisor generator did not produce a bash script.".to_string()),
     }
 }
@@ -2035,6 +2040,7 @@ mod tests {
         // The supervisor is the same generator the agents API answers with, so
         // the image and the API cannot disagree about what is running.
         let (_, supervisor) = &request.files[1];
+        assert!(supervisor.starts_with("#!/bin/bash\n"), "the kernel needs the shebang");
         assert!(supervisor.contains("mkdir -p /home/nestbox"));
         assert!(supervisor.contains("exec sleep infinity"));
         assert!(supervisor.contains("wait -n"));
