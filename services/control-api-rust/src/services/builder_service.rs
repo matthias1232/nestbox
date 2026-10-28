@@ -24,7 +24,8 @@ use uuid::Uuid;
 use super::{require, ServiceContext};
 use crate::domain::auth::{Permission, Principal};
 use crate::domain::builder::{
-    AgentSpec, ProjectMount, Recipe, RecipeName, RecipeState, ResourceLimits,
+    AgentLaunch, AgentSpec, HomeMode, ProjectMount, Recipe, RecipeName, RecipeState,
+    ResourceLimits,
 };
 use crate::domain::job::{JobKind, TargetState};
 use crate::domain::model::HardwareProfile;
@@ -93,6 +94,14 @@ pub struct PlannedAgent {
     pub pack_key: String,
     pub install: PackInstall,
     pub home_directories: Vec<String>,
+    /// The pack's command, so the image can start the agent itself.
+    pub command: Vec<String>,
+    /// The environment slots the pack reads at run time.
+    pub env_slots: Vec<String>,
+    /// Where the agent's home is, and therefore where it starts.
+    pub home_mode: HomeMode,
+    /// The port the agent listens on, when it has one.
+    pub port: Option<u16>,
 }
 
 /// Everything the Dockerfile is generated from, already resolved.
@@ -986,6 +995,10 @@ async fn prepare(
             pack_key: pack.key.clone(),
             install,
             home_directories: directories,
+            command: pack.default_command.clone(),
+            env_slots: pack.env_slots.clone(),
+            home_mode: agent.home_mode,
+            port: agent.port,
         });
     }
 
@@ -1262,10 +1275,16 @@ pub fn render(plan: &ImagePlan, tag: &str) -> Result<BuildRequest, String> {
     Ok(BuildRequest {
         tag: validate_tag(tag)?,
         dockerfile: dockerfile(plan)?,
-        files: vec![(
-            "nestbox-entrypoint.sh".to_string(),
-            entrypoint_script(plan)?,
-        )],
+        files: vec![
+            (
+                "nestbox-entrypoint.sh".to_string(),
+                entrypoint_script(plan)?,
+            ),
+            (
+                "nestbox-supervisor.sh".to_string(),
+                supervisor_script(plan)?,
+            ),
+        ],
     })
 }
 
@@ -1286,6 +1305,34 @@ pub fn dockerfile(plan: &ImagePlan) -> Result<String, String> {
     ));
     out.push_str("# Do not edit: the next build regenerates this file from the recipe.\n");
     out.push_str(&format!("FROM {base}\n"));
+
+    // The homes and the search path come first: an installer that writes to
+    // `~/.local/bin` (the common shape for an agent CLI) needs both to exist
+    // before it runs, and the supervisor later needs the same PATH.
+    let directories: Vec<String> = plan
+        .home_directories
+        .iter()
+        .map(|directory| validate_directory(directory))
+        .collect::<Result<_, _>>()?;
+    let home = directories
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "/home/nestbox".to_string());
+    out.push_str("\n# Homes and the persisted paths inside them.\n");
+    out.push_str("# A bind mount replaces a home at run time; the copy here keeps\n");
+    out.push_str("# an unmounted container usable.\n");
+    out.push_str(&format!(
+        "RUN mkdir -p {}\n",
+        directories
+            .iter()
+            .map(|directory| shell_quote(directory))
+            .collect::<Vec<_>>()
+            .join(" ")
+    ));
+    // No quotes here: ENV and WORKDIR are Dockerfile syntax, not a shell, so a
+    // quote would become part of the value. The path is validated above.
+    out.push_str(&format!("ENV HOME={home}\n"));
+    out.push_str(&format!("ENV PATH={home}/.local/bin:$PATH\n"));
 
     if !plan.packages.is_empty() {
         let packages = plan.packages.join(" ");
@@ -1313,34 +1360,9 @@ pub fn dockerfile(plan: &ImagePlan) -> Result<String, String> {
         out.push_str(&install_step(&agent.install)?);
     }
 
-    out.push_str("\n# Homes and the persisted paths inside them.\n");
-    out.push_str("# A bind mount replaces a home at run time; the copy here keeps\n");
-    out.push_str("# an unmounted container usable.\n");
-    let directories: Vec<String> = plan
-        .home_directories
-        .iter()
-        .map(|directory| validate_directory(directory))
-        .collect::<Result<_, _>>()?;
-    out.push_str(&format!(
-        "RUN mkdir -p {}\n",
-        directories
-            .iter()
-            .map(|directory| shell_quote(directory))
-            .collect::<Vec<_>>()
-            .join(" ")
-    ));
-
-    let home = plan
-        .home_directories
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "/home/nestbox".to_string());
-    let home = validate_directory(&home)?;
     out.push_str("\nCOPY nestbox-entrypoint.sh /usr/local/bin/nestbox-entrypoint\n");
-    out.push_str("RUN chmod 0755 /usr/local/bin/nestbox-entrypoint\n");
-    // No quotes here: ENV and WORKDIR are Dockerfile syntax, not a shell, so a
-    // quote would become part of the value. The path is validated above.
-    out.push_str(&format!("ENV HOME={home}\n"));
+    out.push_str("COPY nestbox-supervisor.sh /usr/local/bin/nestbox-supervisor\n");
+    out.push_str("RUN chmod 0755 /usr/local/bin/nestbox-entrypoint /usr/local/bin/nestbox-supervisor\n");
     out.push_str(&format!("WORKDIR {home}\n"));
     out.push_str("ENTRYPOINT [\"/usr/local/bin/nestbox-entrypoint\"]\n");
     out.push_str("CMD [\"sleep\", \"infinity\"]\n");
@@ -1362,8 +1384,36 @@ pub fn entrypoint_script(plan: &ImagePlan) -> Result<String, String> {
             shell_quote(&directory)
         ));
     }
-    script.push_str("if [ \"$#\" -gt 0 ]; then\n    exec \"$@\"\nfi\nexec sleep infinity\n");
+    script.push_str(
+        "# The supervisor starts every agent the recipe named and ends the\n\
+         # container when one of them stops.\n\
+         exec /usr/local/bin/nestbox-supervisor\n",
+    );
     Ok(script)
+}
+
+/// The supervisor script: one process per agent, one `wait`.
+///
+/// It is the same generator the agent API answers with, so the image and the
+/// API cannot disagree about what a sandbox is running. The image writes it to
+/// `/usr/local/bin/nestbox-supervisor`; the entrypoint execs it.
+pub fn supervisor_script(plan: &ImagePlan) -> Result<String, String> {
+    let launches: Vec<AgentLaunch> = plan
+        .agents
+        .iter()
+        .map(|agent| AgentLaunch {
+            instance: agent.instance.clone(),
+            home_mode: agent.home_mode,
+            command: agent.command.clone(),
+            env_slots: agent.env_slots.clone(),
+            port: agent.port,
+        })
+        .collect();
+    let command = crate::domain::builder::entrypoint_command(&launches);
+    match command.as_slice() {
+        [shell, flag, script] if shell == "/bin/bash" && flag == "-c" => Ok(script.clone()),
+        _ => Err("The supervisor generator did not produce a bash script.".to_string()),
+    }
 }
 
 /// One `RUN` line per install kind.
@@ -1824,6 +1874,10 @@ mod tests {
                 pack_key: "hermes".into(),
                 install: PackInstall::Script("https://example.test/install.sh".into()),
                 home_directories: vec!["/home/nestbox".into(), "/home/nestbox/.hermes".into()],
+                command: vec!["sleep".into(), "infinity".into()],
+                env_slots: vec!["OPENAI_API_KEY".into()],
+                home_mode: HomeMode::Shared,
+                port: None,
             }],
             home_directories: vec!["/home/nestbox".into(), "/home/nestbox/.hermes".into()],
         }
@@ -1949,7 +2003,7 @@ mod tests {
     }
 
     #[test]
-    fn the_persisted_home_directories_are_created_and_the_entrypoint_is_a_file() {
+    fn the_persisted_home_directories_are_created_and_the_supervisor_started() {
         let request = render(&plan(PackageManager::Apt, &["vim"]), "nestbox-recipe/dev-box:abc")
             .expect("request");
         assert!(request.dockerfile.contains(
@@ -1960,10 +2014,21 @@ mod tests {
             .contains("ENTRYPOINT [\"/usr/local/bin/nestbox-entrypoint\"]"));
         assert!(request.dockerfile.contains("ENV HOME=/home/nestbox"));
         assert!(request.dockerfile.contains("WORKDIR /home/nestbox"));
-        let (name, script) = request.files.first().expect("entrypoint file");
-        assert_eq!(name, "nestbox-entrypoint.sh");
-        assert!(script.starts_with("#!/bin/sh"));
-        assert!(script.contains("exec \"$@\""));
+        // Both scripts ship, or the entrypoint execs a file that does not exist.
+        let names: Vec<&str> = request.files.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, vec!["nestbox-entrypoint.sh", "nestbox-supervisor.sh"]);
+
+        let (_, entrypoint) = &request.files[0];
+        assert!(entrypoint.starts_with("#!/bin/sh"));
+        assert!(entrypoint.contains("exec /usr/local/bin/nestbox-supervisor"));
+
+        // The supervisor is the same generator the agents API answers with, so
+        // the image and the API cannot disagree about what is running.
+        let (_, supervisor) = &request.files[1];
+        assert!(supervisor.contains("mkdir -p /home/nestbox"));
+        assert!(supervisor.contains("exec sleep infinity"));
+        assert!(supervisor.contains("wait -n"));
+        assert!(supervisor.contains("export OPENAI_API_KEY="));
     }
 
     #[test]
