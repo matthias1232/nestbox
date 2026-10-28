@@ -715,6 +715,18 @@ async fn an_instantiated_sandbox_reports_through_its_supervisor_token() {
     .await
     .expect_err("a free command is not on the whitelist");
     assert_eq!(refused.status, axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+
+    // 6. A deleted sandbox takes its supervisor with it: a row that can never
+    //    report again is noise in the operator's table.
+    nestbox_control_api::services::sandbox_service::delete(&ctx, &who, sandbox.id)
+        .await
+        .expect("the sandbox is deleted");
+    let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM supervisors WHERE id = $1")
+        .bind(row.0)
+        .fetch_one(pool)
+        .await
+        .expect("count");
+    assert_eq!(remaining, 0, "the supervisor is removed with its sandbox");
 }
 
 /// A recipe write without the write permission is refused before any query.

@@ -534,3 +534,21 @@ pub async fn get_supervisor(
         .ok_or(StoreError::NotFound)?;
     row_to_supervisor(&row)
 }
+
+/// Delete the supervisors that belong to a sandbox.
+///
+/// The foreign key is `ON DELETE SET NULL`, which keeps a manually registered
+/// supervisor's identity when its sandbox is gone. An automatically created one
+/// has no meaning without its sandbox — a row that can never report again — so
+/// it is removed with it.
+pub async fn delete_supervisors_for_sandbox(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+) -> Result<u64, StoreError> {
+    let removed = sqlx::query("DELETE FROM supervisors WHERE sandbox_id = $1")
+        .bind(sandbox_id)
+        .execute(scope.connection())
+        .await?
+        .rows_affected();
+    Ok(removed)
+}

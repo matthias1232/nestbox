@@ -721,6 +721,12 @@ pub async fn delete(
     .await
     .map_err(ApiError::from)?;
 
+    // A supervisor that belongs to this sandbox cannot report again, so it goes
+    // with it. A manually registered one (no sandbox) is left alone.
+    crate::store::postgres::gateways::delete_supervisors_for_sandbox(&mut scope, id)
+        .await
+        .map_err(ApiError::from)?;
+
     store::delete(&mut scope, id).await.map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
     Ok(())
