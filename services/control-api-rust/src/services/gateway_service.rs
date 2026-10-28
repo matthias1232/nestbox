@@ -185,8 +185,9 @@ async fn deliver_settings(
     }
     use base64::Engine;
     let encoded = base64::engine::general_purpose::STANDARD.encode(settings.to_string());
+    let directory = crate::domain::builder::supervisor_state_directory();
     let script = format!(
-        "mkdir -p ~/.nestbox-supervisor && printf %s '{encoded}' | base64 -d > ~/.nestbox-supervisor/settings.json",
+        "mkdir -p {directory} && printf %s '{encoded}' | base64 -d > {directory}/settings.json",
     );
     let outcome = ctx
         .runtime
@@ -696,8 +697,9 @@ pub async fn queue_supervisor_action(
     // that sees quotes in it is a second parser with its own rules.
     use base64::Engine;
     let encoded = base64::engine::general_purpose::STANDARD.encode(document.to_string());
+    let directory = crate::domain::builder::supervisor_state_directory();
     let script = format!(
-        "mkdir -p ~/.nestbox-supervisor/commands && printf %s '{encoded}' | base64 -d > ~/.nestbox-supervisor/commands/{command_id}.json",
+        "mkdir -p {directory}/commands && printf %s '{encoded}' | base64 -d > {directory}/commands/{command_id}.json",
     );
     let outcome = ctx
         .runtime

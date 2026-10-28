@@ -23,7 +23,10 @@ from pathlib import Path
 ALLOWED = {"apply_policy", "restart_agent", "run_check"}
 
 HOME = Path.home()
-STATE = HOME / ".nestbox-supervisor"
+# The control plane writes settings and commands here, so the path is agreed by
+# both sides and passed in; `~/.nestbox-supervisor` is only the fallback for a
+# hand-run copy of this script.
+STATE = Path(os.getenv("NESTBOX_SUPERVISOR_STATE") or (HOME / ".nestbox-supervisor"))
 COMMANDS = STATE / "commands"
 RESULTS = STATE / "results"
 SETTINGS = STATE / "settings.json"

@@ -893,6 +893,10 @@ pub async fn instantiate(
     // endpoint and one row, and the node token never enters a sandbox.
     if let Some((supervisor, token)) = &supervisor_token {
         environment.push((
+            "NESTBOX_SUPERVISOR_STATE".to_string(),
+            crate::domain::builder::supervisor_state_directory(),
+        ));
+        environment.push((
             "NESTBOX_SUPERVISOR_ID".to_string(),
             supervisor.id.to_string(),
         ));
@@ -1512,6 +1516,7 @@ pub fn supervisor_script(plan: &ImagePlan) -> Result<String, String> {
             "NESTBOX_SUPERVISOR_TOKEN".to_string(),
             "NESTBOX_CONTROL_URL".to_string(),
             "NESTBOX_SUPERVISOR_INTERVAL".to_string(),
+            "NESTBOX_SUPERVISOR_STATE".to_string(),
             "NESTBOX_TOOLS".to_string(),
         ],
         port: None,

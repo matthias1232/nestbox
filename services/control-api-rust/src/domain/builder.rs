@@ -45,6 +45,25 @@ impl HomeMode {
     }
 }
 
+/// The instance name the supervisor runs under.
+///
+/// It is a fixed word, not an operator choice: the control plane delivers
+/// settings and commands into this instance's home, and a name the operator
+/// could change would break that path silently.
+pub const SUPERVISOR_INSTANCE: &str = "supervisor";
+
+/// Where the supervisor keeps its state directory.
+///
+/// Both sides must agree: the process writes its reports from here, and the
+/// control plane writes the settings and commands it reads. The sandbox exports
+/// the same value as `NESTBOX_SUPERVISOR_STATE`.
+pub fn supervisor_state_directory() -> String {
+    format!(
+        "{}/.nestbox-supervisor",
+        HomeMode::Isolated.home_path(SUPERVISOR_INSTANCE)
+    )
+}
+
 /// Whether an agent's home survives the container.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -467,4 +486,15 @@ mod supervisor_tests {
         assert!(!rendered[2].contains("rm -rf"));
         assert!(rendered[2].contains("export GOOD_ONE="));
     }
+    #[test]
+    fn the_supervisor_state_lives_in_the_supervisors_own_home() {
+        // The control plane writes into this path and the process reads from
+        // it; if the two ever disagree, settings and commands are delivered to
+        // a directory nobody reads.
+        assert_eq!(
+            supervisor_state_directory(),
+            format!("/home/agents/{SUPERVISOR_INSTANCE}/.nestbox-supervisor")
+        );
+    }
+
 }
