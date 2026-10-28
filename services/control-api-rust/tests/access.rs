@@ -332,7 +332,18 @@ async fn the_key_downloads_once_and_rotation_writes_a_new_file() {
         .await
         .expect("the rotated key downloads once");
     assert_eq!(third.fingerprint, rotated.fingerprint);
-    assert_eq!(third.private_key_pem.trim(), after.trim());
+    // Byte for byte, including the final newline: a trimmed PEM is a key
+    // `ssh-keygen` refuses to load (`error in libcrypto`).
+    assert_eq!(third.private_key_pem, after);
+    assert!(third.private_key_pem.ends_with('\n'));
+
+    // The downloaded material really is the pair behind the recorded public
+    // half, not merely a file that looks like a key.
+    let parsed = ssh_key::PrivateKey::from_openssh(&third.private_key_pem).expect("a usable key");
+    assert_eq!(
+        parsed.public_key().to_openssh().expect("public half"),
+        rotated.public_key
+    );
 
     // The record endpoint never carries material.
     let record = access_service::key(&ctx, &who, created.id)

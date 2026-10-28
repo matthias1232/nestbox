@@ -33,6 +33,10 @@ not another.
    path outside the secret directory and a file that group or world can read.
    The value it returns goes into a container environment or an outbound
    request, never into a response, a log, or the database (ADR 0016).
+   `secrets::resolve_verbatim` is the same check without the trailing trim: a
+   multi-line secret (a private key) needs its final newline, which OpenSSH
+   refuses to parse without. The one response that may carry such a value is the
+   one-time SSH key download (ADR 0024), and it is built for exactly that.
 
 ## Conventions
 

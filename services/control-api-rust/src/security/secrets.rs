@@ -62,7 +62,25 @@ impl SecretError {
 /// practice. A blocking file read of a few bytes does not deserve a thread
 /// spawn, and making it async would hide that it is I/O under a lock-free
 /// façade.
+///
+/// The value is trimmed, which is right for a token and wrong for anything
+/// multi-line: use [`resolve_verbatim`] for a key.
 pub fn resolve(locator: &str, secret_dir: &Path) -> Result<String, SecretError> {
+    let value = resolve_verbatim(locator, secret_dir)?;
+    let trimmed = value.trim().to_string();
+    if trimmed.is_empty() {
+        return Err(SecretError::Unreadable);
+    }
+    Ok(trimmed)
+}
+
+/// Read the value a locator points at, byte for byte.
+///
+/// A private key is multi-line PEM, and OpenSSH refuses a key whose final line
+/// has no newline (`error in libcrypto`). Trimming would therefore hand out a
+/// key that does not work, so the download path reads the file as it is. The
+/// scheme, containment and permission checks are the same ones `resolve` uses.
+pub fn resolve_verbatim(locator: &str, secret_dir: &Path) -> Result<String, SecretError> {
     let rest = locator
         .strip_prefix("file://")
         .ok_or(SecretError::UnsupportedScheme)?;
@@ -89,12 +107,7 @@ pub fn resolve(locator: &str, secret_dir: &Path) -> Result<String, SecretError> 
 
     check_permissions(&resolved)?;
 
-    let value = std::fs::read_to_string(&resolved).map_err(|_| SecretError::Unreadable)?;
-    let trimmed = value.trim().to_string();
-    if trimmed.is_empty() {
-        return Err(SecretError::Unreadable);
-    }
-    Ok(trimmed)
+    std::fs::read_to_string(&resolved).map_err(|_| SecretError::Unreadable)
 }
 
 /// Refuse a secret file that group or world can read.
@@ -139,6 +152,25 @@ mod tests {
         }
         let locator = format!("file://{}", file.display());
         assert_eq!(resolve(&locator, &dir).expect("resolve"), "s3cret");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_multiline_value_keeps_its_line_endings_when_read_verbatim() {
+        let dir = temp_dir("verbatim");
+        let file = dir.join("key");
+        let material = "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----\n";
+        std::fs::write(&file, material).expect("write");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+        }
+        let locator = format!("file://{}", file.display());
+        // The trailing newline is what OpenSSH needs; trimming breaks the key.
+        assert_eq!(resolve_verbatim(&locator, &dir).expect("resolve"), material);
+        // `resolve` is for single-line tokens and trims.
+        assert_eq!(resolve(&locator, &dir).expect("resolve"), material.trim());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

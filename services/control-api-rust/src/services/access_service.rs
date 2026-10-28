@@ -308,10 +308,12 @@ pub async fn download(
         .map_err(map_key_missing)?;
     scope.commit().await.map_err(ApiError::from)?;
 
-    let material = secrets::resolve(&key.private_key_ref, &ctx.secret_dir).map_err(|error| {
-        // The message names the problem without naming the path or the key.
-        ApiError::unprocessable(ErrorCode::SSH_KEY_UNREADABLE, error.message())
-    })?;
+    let material = secrets::resolve_verbatim(&key.private_key_ref, &ctx.secret_dir).map_err(
+        |error| {
+            // The message names the problem without naming the path or the key.
+            ApiError::unprocessable(ErrorCode::SSH_KEY_UNREADABLE, error.message())
+        },
+    )?;
 
     let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
         .await
