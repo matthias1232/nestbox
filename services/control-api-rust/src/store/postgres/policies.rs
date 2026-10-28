@@ -5,7 +5,8 @@ use uuid::Uuid;
 
 use super::super::TenantScope;
 use crate::domain::policy::{
-    Enforcement, NetworkRule, Policy, PolicyScope, RuleAction, RuleProtocol,
+    Enforcement, DnsRule, EgressMode, EgressModeSetting, Matcher, NetworkRule, Policy, PolicyScope,
+    RuleAction, RuleProtocol,
 };
 use crate::error::StoreError;
 
@@ -214,7 +215,7 @@ fn row_to_rule(row: &sqlx::postgres::PgRow) -> Result<NetworkRule, StoreError> {
     let action_raw: String = row.try_get("action")?;
     let protocol_raw: String = row.try_get("protocol")?;
     let enforcement_raw: String = row.try_get("enforcement")?;
-    Ok(NetworkRule {
+    let mut rule = NetworkRule {
         id: row.try_get("id")?,
         environment_id: row.try_get("environment_id")?,
         policy_id: row.try_get("policy_id")?,
@@ -226,15 +227,28 @@ fn row_to_rule(row: &sqlx::postgres::PgRow) -> Result<NetworkRule, StoreError> {
         protocol: RuleProtocol::parse(&protocol_raw).unwrap_or(RuleProtocol::Rest),
         methods: row.try_get("methods")?,
         binaries: row.try_get("binaries")?,
+    matchers: read_matchers(&row)?,
         enforcement: Enforcement::parse(&enforcement_raw).unwrap_or(Enforcement::Enforced),
         priority: row.try_get("priority")?,
         enabled: row.try_get("enabled")?,
         version: row.try_get("version")?,
-    })
+    };
+    crate::domain::policy::normalise_matchers(&mut rule);
+    Ok(rule)
 }
 
 const RULE_COLUMNS: &str = "id, environment_id, policy_id, sandbox_id, name, action, \
-     host, port, protocol, methods, binaries, enforcement, priority, enabled, version";
+     host, port, protocol, methods, binaries, matchers, enforcement, priority, enabled, version";
+
+/// Read the matcher list of one row.
+///
+/// The column carries JSON and the domain carries a typed list; a malformed
+/// value is a store error, not a rule that silently matches nothing. Shared
+/// with `traffic.rs`, which reads the same rows for the effective-rules view.
+pub(crate) fn read_matchers(row: &sqlx::postgres::PgRow) -> Result<Vec<Matcher>, StoreError> {
+    let raw: serde_json::Value = row.try_get("matchers")?;
+    serde_json::from_value(raw).map_err(|error| StoreError::UnexpectedData(error.to_string()))
+}
 
 /// All network rules in this environment.
 pub async fn list_rules(scope: &mut TenantScope<'_>) -> Result<Vec<NetworkRule>, StoreError> {
@@ -275,34 +289,44 @@ pub async fn rules_for_sandbox(
 }
 
 /// Insert a network rule.
+///
+/// The matchers column carries the authoritative conditions; the flat fields
+/// are written from it so a reader that predates 0032 sees the same rule.
+/// Deriving the flat host/port/protocol from the matchers is honest for every
+/// form the console and the projection produce: one host, one port, one
+/// protocol word.
 pub async fn insert_rule(
     scope: &mut TenantScope<'_>,
     rule: &NetworkRule,
 ) -> Result<NetworkRule, StoreError> {
+    let mut prepared = rule.clone();
+    crate::domain::policy::normalise_matchers(&mut prepared);
+    let flat = crate::domain::policy::flat_from_matchers(&prepared.matchers);
     let sql = format!(
         "WITH inserted AS (
             INSERT INTO network_rules
                 (environment_id, policy_id, sandbox_id, name, action, host, port,
-                 protocol, methods, binaries, enforcement, priority, enabled)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                 protocol, methods, binaries, matchers, enforcement, priority, enabled)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             RETURNING {RULE_COLUMNS}
          )
          SELECT {RULE_COLUMNS} FROM inserted"
     );
     let row = sqlx::query(&sql)
         .bind(scope.environment_id())
-        .bind(rule.policy_id)
-        .bind(rule.sandbox_id)
-        .bind(&rule.name)
-        .bind(rule.action.as_str())
-        .bind(&rule.host)
-        .bind(rule.port)
-        .bind(rule.protocol.as_str())
-        .bind(&rule.methods)
-        .bind(&rule.binaries)
-        .bind(rule.enforcement.as_str())
-        .bind(rule.priority)
-        .bind(rule.enabled)
+        .bind(prepared.policy_id)
+        .bind(prepared.sandbox_id)
+        .bind(&prepared.name)
+        .bind(prepared.action.as_str())
+        .bind(&flat.host)
+        .bind(flat.port)
+        .bind(flat.protocol.as_str())
+        .bind(&flat.methods)
+        .bind(&flat.binaries)
+        .bind(serde_json::to_value(&prepared.matchers).unwrap_or(serde_json::Value::Array(Vec::new())))
+        .bind(prepared.enforcement.as_str())
+        .bind(prepared.priority)
+        .bind(prepared.enabled)
         .fetch_one(scope.connection())
         .await?;
     row_to_rule(&row)
@@ -377,6 +401,166 @@ pub struct DraftRecord {
     pub draft: serde_json::Value,
     pub diff: Option<serde_json::Value>,
     pub status: String,
+}
+
+/// All DNS rules in this environment.
+pub async fn list_dns_rules(scope: &mut TenantScope<'_>) -> Result<Vec<DnsRule>, StoreError> {
+    let rows = sqlx::query(
+        "SELECT id, environment_id, policy_id, sandbox_id, action, pattern,
+                priority, enabled, version
+           FROM dns_rules
+          WHERE environment_id = $1
+          ORDER BY priority, pattern",
+    )
+    .bind(scope.environment_id())
+    .fetch_all(scope.connection())
+    .await?;
+    rows.iter().map(row_to_dns_rule).collect()
+}
+
+/// DNS rules attached to one sandbox, for the detail drawer.
+pub async fn dns_rules_for_sandbox(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+) -> Result<Vec<DnsRule>, StoreError> {
+    let rows = sqlx::query(
+        "SELECT id, environment_id, policy_id, sandbox_id, action, pattern,
+                priority, enabled, version
+           FROM dns_rules
+          WHERE environment_id = $1 AND sandbox_id = $2
+          ORDER BY priority, pattern",
+    )
+    .bind(scope.environment_id())
+    .bind(sandbox_id)
+    .fetch_all(scope.connection())
+    .await?;
+    rows.iter().map(row_to_dns_rule).collect()
+}
+
+/// Insert a DNS rule.
+pub async fn insert_dns_rule(
+    scope: &mut TenantScope<'_>,
+    rule: &DnsRule,
+) -> Result<DnsRule, StoreError> {
+    let row = sqlx::query(
+        "INSERT INTO dns_rules
+            (environment_id, policy_id, sandbox_id, action, pattern, priority, enabled)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, environment_id, policy_id, sandbox_id, action, pattern,
+                   priority, enabled, version",
+    )
+    .bind(scope.environment_id())
+    .bind(rule.policy_id)
+    .bind(rule.sandbox_id)
+    .bind(rule.action.as_str())
+    .bind(rule.pattern.trim())
+    .bind(rule.priority)
+    .bind(rule.enabled)
+    .fetch_one(scope.connection())
+    .await?;
+    row_to_dns_rule(&row)
+}
+
+/// Delete one DNS rule.
+pub async fn delete_dns_rule(
+    scope: &mut TenantScope<'_>,
+    id: Uuid,
+) -> Result<(), StoreError> {
+    let affected =
+        sqlx::query("DELETE FROM dns_rules WHERE environment_id = $1 AND id = $2")
+            .bind(scope.environment_id())
+            .bind(id)
+            .execute(scope.connection())
+            .await?
+            .rows_affected();
+    if affected == 0 {
+        Err(StoreError::NotFound)
+    } else {
+        Ok(())
+    }
+}
+
+fn row_to_dns_rule(row: &sqlx::postgres::PgRow) -> Result<DnsRule, StoreError> {
+    let action_raw: String = row.try_get("action")?;
+    Ok(DnsRule {
+        id: row.try_get("id")?,
+        environment_id: row.try_get("environment_id")?,
+        policy_id: row.try_get("policy_id")?,
+        sandbox_id: row.try_get("sandbox_id")?,
+        action: RuleAction::parse(&action_raw).unwrap_or(RuleAction::Deny),
+        pattern: row.try_get("pattern")?,
+        priority: row.try_get("priority")?,
+        enabled: row.try_get("enabled")?,
+        version: row.try_get("version")?,
+    })
+}
+
+/// One sandbox's egress mode, when it has been set.
+///
+/// Absent means forward proxy, which is the default the proxy itself runs; a
+/// row exists only when an operator has chosen something else.
+pub async fn egress_mode_for_sandbox(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+) -> Result<Option<EgressModeSetting>, StoreError> {
+    let row = sqlx::query(
+        "SELECT sandbox_id, mode, trust_ca_ref, enabled, version
+           FROM egress_modes
+          WHERE environment_id = $1 AND sandbox_id = $2",
+    )
+    .bind(scope.environment_id())
+    .bind(sandbox_id)
+    .fetch_optional(scope.connection())
+    .await?;
+    let Some(row) = row else { return Ok(None) };
+    let mode_raw: String = row.try_get("mode")?;
+    Ok(Some(EgressModeSetting {
+        sandbox_id: row.try_get("sandbox_id")?,
+        mode: EgressMode::parse(&mode_raw).unwrap_or(EgressMode::ForwardProxy),
+        trust_ca_ref: row.try_get("trust_ca_ref")?,
+        enabled: row.try_get("enabled")?,
+        version: row.try_get("version")?,
+    }))
+}
+
+/// Set one sandbox's egress mode.
+///
+/// The unique index makes this an upsert: a second write is the operator
+/// changing their mind, not a conflict.
+pub async fn set_egress_mode(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+    mode: EgressMode,
+    trust_ca_ref: Option<&str>,
+    enabled: bool,
+) -> Result<EgressModeSetting, StoreError> {
+    let row = sqlx::query(
+        "INSERT INTO egress_modes
+            (environment_id, sandbox_id, mode, trust_ca_ref, enabled)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (sandbox_id) DO UPDATE
+            SET mode = EXCLUDED.mode,
+                trust_ca_ref = EXCLUDED.trust_ca_ref,
+                enabled = EXCLUDED.enabled,
+                version = egress_modes.version + 1,
+                updated_at = now()
+         RETURNING sandbox_id, mode, trust_ca_ref, enabled, version",
+    )
+    .bind(scope.environment_id())
+    .bind(sandbox_id)
+    .bind(mode.as_str())
+    .bind(trust_ca_ref)
+    .bind(enabled)
+    .fetch_one(scope.connection())
+    .await?;
+    let mode_raw: String = row.try_get("mode")?;
+    Ok(EgressModeSetting {
+        sandbox_id: row.try_get("sandbox_id")?,
+        mode: EgressMode::parse(&mode_raw).unwrap_or(mode),
+        trust_ca_ref: row.try_get("trust_ca_ref")?,
+        enabled: row.try_get("enabled")?,
+        version: row.try_get("version")?,
+    })
 }
 
 /// Pending drafts, for the approval queue.
@@ -585,6 +769,7 @@ mod tests {
             protocol: RuleProtocol::Rest,
             methods: Vec::new(),
             binaries: Vec::new(),
+            matchers: Vec::new(),
             enforcement: Enforcement::Enforced,
             priority,
             enabled: true,

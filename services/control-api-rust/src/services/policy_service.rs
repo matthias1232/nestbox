@@ -13,8 +13,8 @@ use crate::domain::egress::{
     decide, CheckRequest, CheckResponse, CompiledPolicy, Decision, DecisionReason,
 };
 use crate::domain::policy::{
-    apply_outcome, rules_from_document, validate_document, ApplyOutcome, NetworkRule, Policy,
-    PolicyScope, PolicySection,
+    apply_outcome, rules_from_document, validate_document, ApplyOutcome, DnsRule, EgressMode,
+    EgressModeSetting, Matcher, NetworkRule, Policy, PolicyScope, PolicySection,
 };
 use crate::error::{ApiError, ErrorCode};
 use crate::security::node_token;
@@ -444,6 +444,7 @@ pub async fn decide_draft(
                 .and_then(|p| i32::try_from(p).ok()),
             protocol: crate::domain::policy::RuleProtocol::Rest,
             methods: Vec::new(),
+            matchers: Vec::new(),
             binaries: Vec::new(),
             enforcement: crate::domain::policy::Enforcement::Enforced,
             priority: 100,
@@ -533,6 +534,11 @@ fn policy_error(error: crate::domain::policy::PolicyError) -> ApiError {
     .with_details(serde_json::json!({ "code": error.code() }))
 }
 
+/// Validate a rule and put its matchers into the authoritative form.
+///
+/// The matchers are what the decider reads, so an unvalidated one would be a
+/// rule that silently matches nothing. The flat host check stays: a rule the
+/// console shows as "host example.com" must not be creatable without one.
 fn validate_rule(rule: &NetworkRule) -> Result<(), ApiError> {
     if rule.host.trim().is_empty() {
         return Err(ApiError::validation("A rule needs a host."));
@@ -545,12 +551,145 @@ fn validate_rule(rule: &NetworkRule) -> Result<(), ApiError> {
             "A rule must target a policy or a sandbox.",
         ));
     }
+    for matcher in &rule.matchers {
+        Matcher::new(matcher.kind, matcher.value.clone()).map_err(|error| {
+            ApiError::validation(format!("{error}")).with_details(serde_json::json!({
+                "code": error.code(),
+            }))
+        })?;
+    }
     Ok(())
 }
 
 /// Sections a document touches, for the console's warning label.
 pub fn sections_of(spec: &serde_json::Value) -> Vec<PolicySection> {
     validate_document(spec).unwrap_or_default()
+}
+
+/// All DNS rules in this environment.
+///
+/// These are the names the proxy may resolve; they exist in the schema since
+/// 0003 and got their API with the matcher change, so the console can offer
+/// them like every other rule kind.
+pub async fn list_dns_rules(
+    ctx: &ServiceContext,
+    principal: &Principal,
+) -> Result<Vec<DnsRule>, ApiError> {
+    require(principal, Permission::PolicyRead)?;
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let rules = store::list_dns_rules(&mut scope)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(rules)
+}
+
+/// Create a DNS rule.
+pub async fn create_dns_rule(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    rule: DnsRule,
+) -> Result<DnsRule, ApiError> {
+    require(principal, Permission::PolicyWrite)?;
+
+    let pattern = rule.pattern.trim().to_string();
+    if pattern.is_empty() {
+        return Err(ApiError::validation("A DNS rule needs a pattern."));
+    }
+    if pattern.contains(' ') {
+        return Err(ApiError::validation("A pattern is one name or suffix."));
+    }
+    if rule.policy_id.is_none() && rule.sandbox_id.is_none() {
+        return Err(ApiError::validation(
+            "A DNS rule must target a policy or a sandbox.",
+        ));
+    }
+
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let created = store::insert_dns_rule(
+        &mut scope,
+        &DnsRule { pattern, ..rule },
+    )
+    .await
+    .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(created)
+}
+
+/// Delete one DNS rule.
+pub async fn delete_dns_rule(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    id: Uuid,
+) -> Result<(), ApiError> {
+    require(principal, Permission::PolicyWrite)?;
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    store::delete_dns_rule(&mut scope, id)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(())
+}
+
+/// One sandbox's egress mode. Absent is forward proxy, said as a value.
+pub async fn egress_mode(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+) -> Result<EgressModeSetting, ApiError> {
+    require(principal, Permission::PolicyRead)?;
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let sandbox = sandbox_store::get(&mut scope, sandbox_id)
+        .await
+        .map_err(ApiError::from)?;
+    let setting = store::egress_mode_for_sandbox(&mut scope, sandbox.id)
+        .await
+        .map_err(ApiError::from)?
+        .unwrap_or(EgressModeSetting {
+            sandbox_id: sandbox.id,
+            mode: EgressMode::ForwardProxy,
+            trust_ca_ref: None,
+            enabled: true,
+            version: 0,
+        });
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(setting)
+}
+
+/// Set one sandbox's egress mode.
+pub async fn set_egress_mode(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+    mode: EgressMode,
+    trust_ca_ref: Option<String>,
+) -> Result<EgressModeSetting, ApiError> {
+    require(principal, Permission::PolicyWrite)?;
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let sandbox = sandbox_store::get(&mut scope, sandbox_id)
+        .await
+        .map_err(ApiError::from)?;
+    let setting = store::set_egress_mode(
+        &mut scope,
+        sandbox.id,
+        mode,
+        trust_ca_ref.as_deref(),
+        true,
+    )
+    .await
+    .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(setting)
 }
 
 /// Network rules attached to one sandbox.

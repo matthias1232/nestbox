@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use crate::domain::egress::host_glob_matches;
+
 /// Which sandboxes a policy applies to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -137,10 +139,457 @@ pub struct NetworkRule {
     pub methods: Vec<String>,
     /// The allowlist of executables. A script calling `curl` is not `curl`.
     pub binaries: Vec<String>,
+    /// The conditions of the rule, since migration 0032 the authoritative
+    /// form. An empty list means "no condition": a deny rule without matchers
+    /// is the honest way to write default-deny. The flat fields above are kept
+    /// for readers that predate the change and are written in step.
+    #[serde(default)]
+    pub matchers: Vec<Matcher>,
     pub enforcement: Enforcement,
     pub priority: i32,
     pub enabled: bool,
     pub version: i64,
+}
+
+/// Which conditions a matcher kind expresses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MatcherKind {
+    /// One exact hostname.
+    Host,
+    /// Every host ending in this suffix (`.example.com` covers `api.example.com`).
+    HostSuffix,
+    /// An IPv4 or IPv6 prefix (`10.0.0.0/8`), matched against literal IP hosts.
+    Cidr,
+    /// A port or a range (`443`, `8000-8100`).
+    Port,
+    /// One wire protocol.
+    Protocol,
+    /// One HTTP method.
+    Method,
+    /// One executable path.
+    Binary,
+    /// No condition. Written explicitly so a reader never has to know that an
+    /// empty list means the same thing.
+    Any,
+}
+
+impl MatcherKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Host => "host",
+            Self::HostSuffix => "host_suffix",
+            Self::Cidr => "cidr",
+            Self::Port => "port",
+            Self::Protocol => "protocol",
+            Self::Method => "method",
+            Self::Binary => "binary",
+            Self::Any => "any",
+        }
+    }
+
+    /// Whether this kind carries a value. `Any` is the only one that does not,
+    /// and `{"kind":"any","value":"..."}` is a typo the constructor refuses.
+    pub fn takes_value(self) -> bool {
+        !matches!(self, Self::Any)
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "host" => Self::Host,
+            "host_suffix" => Self::HostSuffix,
+            "cidr" => Self::Cidr,
+            "port" => Self::Port,
+            "protocol" => Self::Protocol,
+            "method" => Self::Method,
+            "binary" => Self::Binary,
+            "any" => Self::Any,
+            _ => return None,
+        })
+    }
+}
+
+/// One condition of a network rule.
+///
+/// The JSON form is `{"kind":"host","value":"api.example.com"}`; `Any` is
+/// `{"kind":"any"}`. The constructor validates the value against the kind, so a
+/// malformed `cidr` is a `PolicyError` at construction, not a rule that
+/// silently matches nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Matcher {
+    pub kind: MatcherKind,
+    /// The value the kind matches on. Absent only for `Any`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+}
+
+impl Matcher {
+    /// Build and validate one matcher.
+    pub fn new(kind: MatcherKind, value: Option<String>) -> Result<Self, PolicyError> {
+        match (kind, value.as_deref().map(str::trim)) {
+            (MatcherKind::Any, None | Some("")) => {}
+            (MatcherKind::Any, Some(_)) => {
+                return Err(PolicyError::MatcherValue {
+                    kind: "any".into(),
+                    why: "the any kind takes no value".into(),
+                })
+            }
+            (_, None | Some("")) => {
+                return Err(PolicyError::MatcherValue {
+                    kind: kind.as_str().to_string(),
+                    why: "needs a non-empty value".into(),
+                })
+            }
+            (MatcherKind::Host, Some(value)) => {
+                if value.is_empty() || value.contains(' ') {
+                    return Err(PolicyError::MatcherValue {
+                        kind: "host".into(),
+                        why: "a host is one name without spaces".into(),
+                    });
+                }
+            }
+            (MatcherKind::HostSuffix, Some(value)) => {
+                // A suffix must be a dot-suffix or a full domain; `example.com`
+                // is accepted and read as `.example.com` when matching, so the
+                // value stays human-shaped.
+                if !value.contains('.') || value.starts_with('.') && value.len() < 2 {
+                    return Err(PolicyError::MatcherValue {
+                        kind: "host_suffix".into(),
+                        why: "a suffix is a domain such as .example.com".into(),
+                    });
+                }
+            }
+            (MatcherKind::Cidr, Some(value)) => {
+                if !cidr_is_valid(value) {
+                    return Err(PolicyError::MatcherValue {
+                        kind: "cidr".into(),
+                        why: "a CIDR prefix is address/length, such as 10.0.0.0/8".into(),
+                    });
+                }
+            }
+            (MatcherKind::Port, Some(value)) => {
+                if port_range(value).is_none() {
+                    return Err(PolicyError::MatcherValue {
+                        kind: "port".into(),
+                        why: "a port is a number or a range a-b, 1 to 65535".into(),
+                    });
+                }
+            }
+            (MatcherKind::Protocol, Some(value)) => {
+                if RuleProtocol::parse(value).is_none() {
+                    return Err(PolicyError::MatcherValue {
+                        kind: "protocol".into(),
+                        why: "one of rest, http, websocket, graphql, mcp, jsonrpc, tcp".into(),
+                    });
+                }
+            }
+            (MatcherKind::Method, Some(value)) => {
+                if !value.chars().all(|c| c.is_ascii_alphabetic()) {
+                    return Err(PolicyError::MatcherValue {
+                        kind: "method".into(),
+                        why: "an HTTP method is letters, such as GET or POST".into(),
+                    });
+                }
+            }
+            (MatcherKind::Binary, Some(value)) => {
+                if value.contains(' ') || value.contains('\0') {
+                    return Err(PolicyError::MatcherValue {
+                        kind: "binary".into(),
+                        why: "an executable path is one word".into(),
+                    });
+                }
+            }
+        }
+
+        Ok(Self { kind, value })
+    }
+
+    /// Whether one request side satisfies this matcher.
+    ///
+    /// The subject is the request flattened to the five things a rule may name.
+    /// Evaluation is pure, so a rule is testable without a database or a
+    /// runtime.
+    pub fn matches(&self, subject: &MatchSubject<'_>) -> bool {
+        let Some(value) = self.value.as_deref() else {
+            return self.kind == MatcherKind::Any;
+        };
+        match self.kind {
+            MatcherKind::Any => true,
+            MatcherKind::Host => host_glob_matches(value, subject.host),
+            MatcherKind::HostSuffix => host_ends_with_suffix(value, subject.host),
+            MatcherKind::Cidr => cidr_contains(value, subject.host),
+            MatcherKind::Port => {
+                // A request port outside the rule vocabulary cannot be inside
+                // a rule's range; comparing after a cast would make 70000
+                // match 4464 and that is exactly the kind of lie a cast hides.
+                if !(1..=65535).contains(&subject.port) {
+                    return false;
+                }
+                let port = u16::try_from(subject.port).unwrap_or(0);
+                port_range(value)
+                    .map(|(low, high)| port >= low && port <= high)
+                    .unwrap_or(false)
+            }
+            MatcherKind::Protocol => protocol_word_matches(value, subject.protocol),
+            MatcherKind::Method => subject
+                .method
+                .map(|m| m.eq_ignore_ascii_case(value))
+                .unwrap_or(false),
+            MatcherKind::Binary => subject
+                .binary
+                .map(|b| b == value)
+                .unwrap_or(false),
+        }
+    }
+}
+
+/// The request side of a match, flattened to what rules may name.
+///
+/// `binary` is what executed the request, when the caller knows it; a rule
+/// naming a binary is untestable against an unknown executor, so it simply does
+/// not match rather than matching on a guess.
+#[derive(Debug, Clone, Copy)]
+pub struct MatchSubject<'a> {
+    pub host: &'a str,
+    pub port: i32,
+    pub protocol: Option<&'a str>,
+    pub method: Option<&'a str>,
+    pub binary: Option<&'a str>,
+}
+
+/// Whether `host` ends with `suffix`, where a bare domain counts as its own
+/// `.suffix`.
+///
+/// `host_ends_with_suffix(".example.com", "api.example.com")` is true and
+/// `host_ends_with_suffix(".example.com", "notexample.com")` is false, which is
+/// the difference that makes the suffix useful.
+fn host_ends_with_suffix(suffix: &str, host: &str) -> bool {
+    let suffix = suffix.trim_start_matches('.');
+    let dotted = format!(".{suffix}");
+    let host = host.trim_end_matches('.');
+    host == suffix || host.ends_with(&dotted)
+}
+
+/// Whether `value` is a well-formed CIDR prefix.
+fn cidr_is_valid(value: &str) -> bool {
+    cidr_prefix(value).is_some()
+}
+
+/// Parse `address/length` into the address and the prefix length.
+fn cidr_prefix(value: &str) -> Option<(std::net::IpAddr, u8)> {
+    let (address, length) = value.split_once('/')?;
+    let length: u8 = length.trim().parse().ok()?;
+    let address: std::net::IpAddr = address.trim().parse().ok()?;
+    let max = match address {
+        std::net::IpAddr::V4(_) => 32,
+        std::net::IpAddr::V6(_) => 128,
+    };
+    if length > max {
+        return None;
+    }
+    Some((address, length))
+}
+
+/// Whether `host` — which may be a name or a literal IP — falls inside the
+/// prefix. A name cannot be inside a prefix; a literal IP can, and that is the
+/// whole point.
+fn cidr_contains(cidr: &str, host: &str) -> bool {
+    let Some((base, length)) = cidr_prefix(cidr) else {
+        return false;
+    };
+    let Ok(address) = host.trim().parse::<std::net::IpAddr>() else {
+        return false;
+    };
+    match (base, address) {
+        (std::net::IpAddr::V4(base), std::net::IpAddr::V4(address)) => {
+            let base = u32::from(base);
+            let address = u32::from(address);
+            let shift = 32 - u32::from(length);
+            (base >> shift) == (address >> shift)
+        }
+        (std::net::IpAddr::V6(base), std::net::IpAddr::V6(address)) => {
+            let base = u128::from(base);
+            let address = u128::from(address);
+            let shift = 128 - u32::from(length);
+            (base >> shift) == (address >> shift)
+        }
+        _ => false,
+    }
+}
+
+/// Parse `443` or `8000-8100` into an inclusive range.
+fn port_range(value: &str) -> Option<(u16, u16)> {
+    let (low, high) = match value.split_once('-') {
+        Some((low, high)) => (low.trim().parse().ok()?, high.trim().parse().ok()?),
+        None => {
+            let port: u16 = value.trim().parse().ok()?;
+            (port, port)
+        }
+    };
+    if low == 0 || high == 0 || high < low {
+        return None;
+    }
+    Some((low, high))
+}
+
+/// One protocol word against the request's wire protocol.
+///
+/// The same tolerance `RuleProtocol` has: `http` covers https and the
+/// application protocols that ride on it, `tcp` is the wildcard.
+fn protocol_word_matches(value: &str, request: Option<&str>) -> bool {
+    let Some(rule) = RuleProtocol::parse(value) else {
+        return false;
+    };
+    let request = request.unwrap_or("tcp");
+    match rule {
+        RuleProtocol::Tcp => true,
+        RuleProtocol::Rest | RuleProtocol::Http => {
+            matches!(request, "http" | "https" | "rest" | "mcp" | "jsonrpc" | "graphql")
+        }
+        RuleProtocol::Websocket => matches!(request, "websocket" | "ws" | "wss"),
+        RuleProtocol::Graphql => request == "graphql",
+        RuleProtocol::Mcp => request == "mcp",
+        RuleProtocol::Jsonrpc => matches!(request, "jsonrpc" | "mcp"),
+    }
+}
+
+/// The matcher form of a rule that arrives without one.
+///
+/// Migration 0032 filled the column for every existing row; this covers a
+/// caller that sends the old flat shape and lets one constructor own both.
+/// `tcp` disappears because it is the wildcard protocol and carries no
+/// condition.
+pub fn matchers_from_flat(
+    host: &str,
+    port: Option<i32>,
+    protocol: RuleProtocol,
+    methods: &[String],
+    binaries: &[String],
+) -> Vec<Matcher> {
+    let mut matchers = Vec::new();
+    if !host.is_empty() && host != "*" {
+        matchers.push(Matcher {
+            kind: MatcherKind::Host,
+            value: Some(host.to_string()),
+        });
+    }
+    if let Some(port) = port {
+        matchers.push(Matcher {
+            kind: MatcherKind::Port,
+            value: Some(port.to_string()),
+        });
+    }
+    if protocol != RuleProtocol::Tcp {
+        matchers.push(Matcher {
+            kind: MatcherKind::Protocol,
+            value: Some(protocol.as_str().to_string()),
+        });
+    }
+    for method in methods {
+        matchers.push(Matcher {
+            kind: MatcherKind::Method,
+            value: Some(method.clone()),
+        });
+    }
+    for binary in binaries {
+        matchers.push(Matcher {
+            kind: MatcherKind::Binary,
+            value: Some(binary.clone()),
+        });
+    }
+    matchers
+}
+
+/// The flat fields of a rule that arrives without matchers, kept so a legacy
+/// caller's rule still means what it meant.
+///
+/// Rules are normalised on the way in: a rule with matchers is stored as sent,
+/// a rule without matchers gets them derived from the flat fields. There is no
+/// third case, so the decider never has to guess which form it is reading.
+pub fn normalise_matchers(rule: &mut NetworkRule) {
+    if rule.matchers.is_empty() {
+        rule.matchers = matchers_from_flat(
+            &rule.host,
+            rule.port,
+            rule.protocol,
+            &rule.methods,
+            &rule.binaries,
+        );
+    }
+}
+
+/// Derive the flat fields readers that predate 0032 still show.
+///
+/// One host, one port, one protocol word, all methods, all binaries — exactly
+/// what one matcher list can say. A rule the flat form cannot express (a CIDR
+/// or a port range) still has its matchers, and the decider reads those; the
+/// flat host becomes `*` so the legacy reader sees "unconditional" rather than
+/// a host the rule does not name.
+pub fn flat_from_matchers(matchers: &[Matcher]) -> FlatRule {
+    let mut flat = FlatRule {
+        host: String::new(),
+        port: None,
+        protocol: RuleProtocol::Tcp,
+        methods: Vec::new(),
+        binaries: Vec::new(),
+    };
+    let mut named_host = false;
+    for matcher in matchers {
+        let Some(value) = matcher.value.as_deref() else {
+            continue;
+        };
+        match matcher.kind {
+            MatcherKind::Any => {}
+            MatcherKind::Host => {
+                flat.host = value.to_string();
+                named_host = true;
+            }
+            MatcherKind::HostSuffix => {
+                if !named_host {
+                    flat.host = value.to_string();
+                }
+                named_host = true;
+            }
+            MatcherKind::Cidr => {
+                if !named_host {
+                    // The legacy column is NOT NULL and has no IP meaning; a
+                    // bare star is the honest "see the matchers" answer.
+                    flat.host = "*".to_string();
+                }
+                named_host = true;
+            }
+            MatcherKind::Port => {
+                if flat.port.is_none() {
+                    flat.port = port_range(value).and_then(|(low, high)| {
+                        // A range cannot be one column; the matchers stay
+                        // exact and the legacy column shows nothing.
+                        (low == high).then(|| i32::from(low))
+                    });
+                }
+            }
+            MatcherKind::Protocol => {
+                if let Some(rule) = RuleProtocol::parse(value) {
+                    flat.protocol = rule;
+                }
+            }
+            MatcherKind::Method => flat.methods.push(value.to_string()),
+            MatcherKind::Binary => flat.binaries.push(value.to_string()),
+        }
+    }
+    if flat.host.is_empty() {
+        flat.host = "*".to_string();
+    }
+    flat
+}
+
+/// The flat shape of a rule, for readers that predate the matcher form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlatRule {
+    pub host: String,
+    pub port: Option<i32>,
+    pub protocol: RuleProtocol,
+    pub methods: Vec<String>,
+    pub binaries: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -300,6 +749,20 @@ pub enum PolicyError {
     Empty,
     #[error("network_policies must be an object of named policies")]
     NetworkNotAnObject,
+    #[error("matcher {kind} is not valid: {why}")]
+    MatcherValue {
+        kind: String,
+        why: String,
+    },
+    #[error("section {section} is not valid: {why}")]
+    Section {
+        section: String,
+        why: String,
+    },
+    #[error("document section {section} must be a JSON object")]
+    SectionNotAnObject {
+        section: String,
+    },
 }
 
 impl PolicyError {
@@ -310,6 +773,9 @@ impl PolicyError {
             Self::NotAnObject => "policy.not_an_object",
             Self::Empty => "policy.empty",
             Self::NetworkNotAnObject => "policy.network_not_an_object",
+            Self::MatcherValue { .. } => "policy.matcher_invalid",
+            Self::Section { .. } => "policy.section_invalid",
+            Self::SectionNotAnObject { .. } => "policy.section_not_an_object",
         }
     }
 }
@@ -356,7 +822,7 @@ pub fn rules_from_document(spec: &serde_json::Value) -> Vec<NetworkRuleSeed> {
                 .and_then(|v| v.as_str())
                 .and_then(Enforcement::parse)
                 .unwrap_or(Enforcement::Enforced);
-            let methods = endpoint
+            let methods: Vec<String> = endpoint
                 .get("methods")
                 .and_then(|v| v.as_array())
                 .map(|a| {
@@ -365,7 +831,7 @@ pub fn rules_from_document(spec: &serde_json::Value) -> Vec<NetworkRuleSeed> {
                         .collect()
                 })
                 .unwrap_or_default();
-            let binaries = endpoint
+            let binaries: Vec<String> = endpoint
                 .get("binaries")
                 .and_then(|v| v.as_array())
                 .map(|a| {
@@ -376,7 +842,11 @@ pub fn rules_from_document(spec: &serde_json::Value) -> Vec<NetworkRuleSeed> {
                 })
                 .unwrap_or_default();
 
+            let matchers =
+                matchers_from_flat(&host, port, protocol, &methods, &binaries);
+
             out.push(NetworkRuleSeed {
+                matchers,
                 name: rule_name.clone(),
                 action,
                 host,
@@ -391,6 +861,73 @@ pub fn rules_from_document(spec: &serde_json::Value) -> Vec<NetworkRuleSeed> {
     out
 }
 
+/// A DNS rule: which names this sandbox may resolve.
+///
+/// `pattern` is an exact name or a `.suffix`; the same matching rule the
+/// console shows. Actions are the rule vocabulary's two answers, so a
+/// reader never has to learn a second word for "block".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct DnsRule {
+    pub id: Uuid,
+    pub environment_id: Uuid,
+    pub policy_id: Option<Uuid>,
+    pub sandbox_id: Option<Uuid>,
+    pub action: RuleAction,
+    /// An exact name or a `.suffix` such as `.example.net`.
+    pub pattern: String,
+    pub priority: i32,
+    pub enabled: bool,
+    pub version: i64,
+}
+
+/// How deeply one sandbox is observed on the way out.
+///
+/// Three modes, because there are three real answers: the proxy sees the
+/// request and nothing more (`forward_proxy`), the proxy terminates TLS and
+/// reads the decrypted request (`transparent`), or both per port (`hybrid`).
+/// A mode is a per-sandbox row, not a global switch, so a sandbox that must
+/// not have its TLS read is not read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EgressMode {
+    ForwardProxy,
+    Transparent,
+    Hybrid,
+}
+
+impl EgressMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ForwardProxy => "forward_proxy",
+            Self::Transparent => "transparent",
+            Self::Hybrid => "hybrid",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "forward_proxy" => Self::ForwardProxy,
+            "transparent" => Self::Transparent,
+            "hybrid" => Self::Hybrid,
+            _ => return None,
+        })
+    }
+}
+
+/// One sandbox's egress mode.
+///
+/// `trust_ca_ref` is a locator for the sandbox-scoped trust CA (ADR 0005): a
+/// mode that reads TLS needs the sandbox to trust the node's CA, and the key
+/// material never travels through this row.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct EgressModeSetting {
+    pub sandbox_id: Uuid,
+    pub mode: EgressMode,
+    pub trust_ca_ref: Option<String>,
+    pub enabled: bool,
+    pub version: i64,
+}
+
 /// A rule extracted from a document, before it has an identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetworkRuleSeed {
@@ -402,6 +939,8 @@ pub struct NetworkRuleSeed {
     pub methods: Vec<String>,
     pub binaries: Vec<String>,
     pub enforcement: Enforcement,
+    /// The same conditions in matcher form, built with `matchers_from_flat`.
+    pub matchers: Vec<Matcher>,
 }
 
 #[cfg(test)]
@@ -506,5 +1045,179 @@ mod tests {
     fn audit_enforcement_does_not_block() {
         assert!(!Enforcement::Audit.blocks());
         assert!(Enforcement::Enforced.blocks());
+    }
+
+    // ---------------------------------------------------------------
+    // Matchers
+    // ---------------------------------------------------------------
+
+    fn subject<'a>(
+        host: &'a str,
+        port: i32,
+        protocol: Option<&'a str>,
+        method: Option<&'a str>,
+    ) -> MatchSubject<'a> {
+        MatchSubject {
+            host,
+            port,
+            protocol,
+            method,
+            binary: None,
+        }
+    }
+
+    #[test]
+    fn a_host_matcher_matches_its_own_name_and_no_other() {
+        let matcher = Matcher::new(MatcherKind::Host, Some("api.example.com".into()))
+            .expect("valid");
+        assert!(matcher.matches(&subject("api.example.com", 443, None, None)));
+        assert!(!matcher.matches(&subject("api2.example.com", 443, None, None)));
+    }
+
+    #[test]
+    fn a_suffix_matcher_covers_subdomains_but_not_lookalikes() {
+        let matcher = Matcher::new(MatcherKind::HostSuffix, Some(".example.com".into()))
+            .expect("valid");
+        assert!(matcher.matches(&subject("api.example.com", 443, None, None)));
+        assert!(matcher.matches(&subject("example.com", 443, None, None)));
+        assert!(!matcher.matches(&subject("notexample.com", 443, None, None)));
+    }
+
+    #[test]
+    fn a_cidr_matcher_takes_a_literal_address_and_refuses_a_name() {
+        let matcher = Matcher::new(MatcherKind::Cidr, Some("10.0.0.0/8".into()))
+            .expect("valid");
+        assert!(matcher.matches(&subject("10.42.1.7", 443, None, None)));
+        assert!(!matcher.matches(&subject("192.168.0.1", 443, None, None)));
+        // A name cannot be inside a prefix; that is the honest answer.
+        assert!(!matcher.matches(&subject("example.com", 443, None, None)));
+    }
+
+    #[test]
+    fn a_port_matcher_takes_one_port_and_a_range() {
+        let one = Matcher::new(MatcherKind::Port, Some("443".into())).expect("valid");
+        assert!(one.matches(&subject("example.com", 443, None, None)));
+        assert!(!one.matches(&subject("example.com", 8443, None, None)));
+
+        let range = Matcher::new(MatcherKind::Port, Some("8000-8100".into()))
+            .expect("valid");
+        assert!(range.matches(&subject("example.com", 8000, None, None)));
+        assert!(range.matches(&subject("example.com", 8100, None, None)));
+        assert!(!range.matches(&subject("example.com", 8101, None, None)));
+    }
+
+    #[test]
+    fn a_protocol_matcher_keeps_the_wildcards_the_vocabulary_had() {
+        let http = Matcher::new(MatcherKind::Protocol, Some("http".into())).expect("valid");
+        assert!(http.matches(&subject("example.com", 443, Some("https"), None)));
+        let tcp = Matcher::new(MatcherKind::Protocol, Some("tcp".into())).expect("valid");
+        assert!(tcp.matches(&subject("example.com", 1234, Some("anything"), None)));
+    }
+
+    #[test]
+    fn a_method_matcher_is_case_insensitive_and_needs_a_method() {
+        let matcher = Matcher::new(MatcherKind::Method, Some("POST".into())).expect("valid");
+        assert!(matcher.matches(&subject("example.com", 443, None, Some("post"))));
+        assert!(!matcher.matches(&subject("example.com", 443, None, Some("GET"))));
+        assert!(!matcher.matches(&subject("example.com", 443, None, None)));
+    }
+
+    #[test]
+    fn any_matches_everything_and_takes_no_value() {
+        let matcher = Matcher::new(MatcherKind::Any, None).expect("valid");
+        assert!(matcher.matches(&subject("anything.example", 1, None, None)));
+        assert!(Matcher::new(MatcherKind::Any, Some("no".into())).is_err());
+    }
+
+    #[test]
+    fn an_invalid_value_is_refused_at_construction() {
+        assert!(Matcher::new(MatcherKind::Cidr, Some("10.0.0.0".into())).is_err());
+        assert!(Matcher::new(MatcherKind::Port, Some("0".into())).is_err());
+        assert!(Matcher::new(MatcherKind::Port, Some("80-40".into())).is_err());
+        assert!(Matcher::new(MatcherKind::Protocol, Some("gopher".into())).is_err());
+        assert!(Matcher::new(MatcherKind::Host, Some("with space".into())).is_err());
+        assert!(Matcher::new(MatcherKind::Method, Some("GE T".into())).is_err());
+    }
+
+    #[test]
+    fn a_rule_with_matchers_is_read_by_the_decider() {
+        use crate::domain::egress::{decide, CheckRequest, CompiledPolicy};
+        let rule = NetworkRule {
+            id: Uuid::new_v4(),
+            environment_id: Uuid::nil(),
+            policy_id: None,
+            sandbox_id: None,
+            name: "suffix allow".into(),
+            action: RuleAction::Allow,
+            host: "*".into(),
+            port: None,
+            protocol: RuleProtocol::Tcp,
+            methods: vec![],
+            binaries: vec![],
+            matchers: vec![
+                Matcher::new(MatcherKind::HostSuffix, Some(".example.com".into()))
+                    .expect("valid"),
+            ],
+            enforcement: Enforcement::Enforced,
+            priority: 1,
+            enabled: true,
+            version: 1,
+        };
+        let policy = CompiledPolicy {
+            environment_id: Uuid::nil(),
+            hash: "test".into(),
+            compiled_at: Utc::now(),
+            rules: vec![rule],
+            windows: vec![],
+        };
+        let request = CheckRequest {
+            sandbox_id: Some(Uuid::nil()),
+            node_id: None,
+            host: "api.example.com".into(),
+            port: 443,
+            protocol: Some("https".into()),
+            method: Some("GET".into()),
+            path: None,
+            user_agent: None,
+            mcp_tool: None,
+            mcp_session_id: None,
+        };
+        let response = decide(&request, &policy, Utc::now());
+        assert_eq!(response.decision, crate::domain::egress::Decision::Allow);
+
+        let elsewhere = CheckRequest { host: "other.net".into(), ..request };
+        let response = decide(&elsewhere, &policy, Utc::now());
+        assert_eq!(response.decision, crate::domain::egress::Decision::Deny);
+    }
+
+    #[test]
+    fn flat_fields_derive_from_matchers_and_back() {
+        let mut rule = NetworkRule {
+            id: Uuid::new_v4(),
+            environment_id: Uuid::nil(),
+            policy_id: None,
+            sandbox_id: None,
+            name: "legacy".into(),
+            action: RuleAction::Allow,
+            host: "api.example.com".into(),
+            port: Some(8443),
+            protocol: RuleProtocol::Rest,
+            methods: vec!["GET".into()],
+            binaries: vec!["/usr/local/bin/agent".into()],
+            matchers: vec![],
+            enforcement: Enforcement::Enforced,
+            priority: 1,
+            enabled: true,
+            version: 1,
+        };
+        normalise_matchers(&mut rule);
+        assert_eq!(rule.matchers.len(), 5);
+
+        let flat = flat_from_matchers(&rule.matchers);
+        assert_eq!(flat.host, "api.example.com");
+        assert_eq!(flat.port, Some(8443));
+        assert_eq!(flat.protocol, RuleProtocol::Rest);
+        assert_eq!(flat.methods, vec!["GET".to_string()]);
+        assert_eq!(flat.binaries, vec!["/usr/local/bin/agent".to_string()]);
     }
 }

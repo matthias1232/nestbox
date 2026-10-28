@@ -38,6 +38,7 @@ use crate::domain::egress::{
 };
 use crate::domain::mcp::McpToolCall;
 use crate::domain::policy::{Enforcement, NetworkRule, RuleAction, RuleProtocol};
+use crate::store::postgres::policies::read_matchers;
 use crate::error::StoreError;
 
 /// The largest page this module returns, whatever the caller asks for.
@@ -741,7 +742,7 @@ pub async fn effective_rules(
     let rows = sqlx::query(
         "SELECT r.id, r.environment_id, r.policy_id, r.sandbox_id, r.name,
                 r.action, r.host, r.port, r.protocol, r.methods, r.binaries,
-                r.enforcement, r.priority, r.enabled, r.version,
+                r.matchers, r.enforcement, r.priority, r.enabled, r.version,
                 p.name AS policy_name, p.scope AS policy_scope
            FROM network_rules r
            LEFT JOIN policies p ON p.id = r.policy_id
@@ -787,6 +788,7 @@ pub async fn effective_rules(
                 protocol,
                 methods: row.try_get("methods")?,
                 binaries: row.try_get("binaries")?,
+                matchers: read_matchers(&row)?,
                 enforcement,
                 priority: row.try_get("priority")?,
                 enabled: row.try_get("enabled")?,

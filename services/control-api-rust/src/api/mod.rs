@@ -195,6 +195,17 @@ pub fn router(state: AppState) -> Router {
             get(policies::list_rules).post(policies::create_rule),
         )
         .route("/api/v1/network-rules/{id}", delete(policies::delete_rule))
+        // DNS rules: which names the proxy may resolve.
+        .route(
+            "/api/v1/dns-rules",
+            get(policies::list_dns_rules).post(policies::create_dns_rule),
+        )
+        .route("/api/v1/dns-rules/{id}", delete(policies::delete_dns_rule))
+        // How deeply one sandbox is observed on the way out.
+        .route(
+            "/api/v1/sandboxes/{id}/egress-mode",
+            get(policies::get_egress_mode).put(policies::put_egress_mode),
+        )
         // Rule drafts and temporary windows
         .route(
             "/api/v1/rule-drafts",

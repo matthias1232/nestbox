@@ -152,6 +152,80 @@ async fn insert_rule(
     .expect("insert rule")
 }
 
+/// Insert a rule in matcher form, the shape the console sends.
+///
+/// The flat columns are filled from the matchers by the insert, so this also
+/// proves the derived host is written and the decider reads the matchers.
+async fn insert_matcher_rule(
+    pool: &sqlx::PgPool,
+    sandbox_id: Uuid,
+    kind: &str,
+    value: &str,
+) -> Uuid {
+    sqlx::query_scalar(
+        "INSERT INTO network_rules
+            (environment_id, sandbox_id, name, action, host, port, protocol,
+             enforcement, priority, matchers)
+         VALUES ($1, $2, $3, 'allow', $4, NULL, 'tcp', 'enforced', 10, $5::jsonb)
+         RETURNING id",
+    )
+    .bind(environment_id())
+    .bind(sandbox_id)
+    .bind(format!("{kind} {value}"))
+    .bind("*")
+    .bind(serde_json::json!([{ "kind": kind, "value": value }]).to_string())
+    .fetch_one(pool)
+    .await
+    .expect("insert matcher rule")
+}
+
+/// A suffix matcher in the database decides, not the flat column.
+///
+/// The rule says `.example.com`; the flat host is `*`, which the legacy reader
+/// would read as "anything". The decision proves the matchers are what the
+/// proxy's requests are judged against.
+#[tokio::test]
+async fn a_suffix_matcher_allows_the_subdomain_and_denies_the_lookalike() {
+    let Some(pool) = connect().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+    let dir = secret_dir();
+    let ctx = context(&pool, &dir);
+    let sandbox_id = sandbox(&pool).await;
+    insert_matcher_rule(&pool, sandbox_id, "host_suffix", ".example.com").await;
+
+    let allowed = check(&ctx, sandbox_id, "api.example.com", 443).await;
+    assert_eq!(allowed.response.decision, Decision::Allow);
+
+    let refused = check(&ctx, sandbox_id, "notexample.com", 443).await;
+    assert_eq!(refused.response.decision, Decision::Deny);
+    assert_eq!(refused.response.reason, DecisionReason::DefaultDeny);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A legacy rule written into the flat columns keeps meaning what it meant.
+///
+/// The row carries no matchers; the reader derives them from the flat fields,
+/// which is the same translation migration 0032 did once.
+#[tokio::test]
+async fn a_flat_rule_without_matchers_still_decides_the_same_way() {
+    let Some(pool) = connect().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+    let dir = secret_dir();
+    let ctx = context(&pool, &dir);
+    let sandbox_id = sandbox(&pool).await;
+    insert_rule(&pool, sandbox_id, "example.com", Some(443), "allow", "enforced").await;
+
+    let allowed = check(&ctx, sandbox_id, "example.com", 443).await;
+    assert_eq!(allowed.response.decision, Decision::Allow);
+    let refused = check(&ctx, sandbox_id, "other.com", 443).await;
+    assert_eq!(refused.response.decision, Decision::Deny);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 async fn open_window(pool: &sqlx::PgPool, sandbox_id: Uuid, minutes: i64) -> Uuid {
     sqlx::query_scalar(
         "INSERT INTO traffic_windows

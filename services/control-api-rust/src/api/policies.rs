@@ -177,6 +177,80 @@ pub async fn delete_rule(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// All DNS rules.
+pub async fn list_dns_rules(
+    State(state): State<AppState>,
+    auth: Auth,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let rules = policy_service::list_dns_rules(&state.services, &auth.principal).await?;
+    Ok(Json(serde_json::json!({ "items": rules })))
+}
+
+/// Create a DNS rule.
+pub async fn create_dns_rule(
+    State(state): State<AppState>,
+    auth: Auth,
+    Json(mut rule): Json<crate::domain::policy::DnsRule>,
+) -> Result<(StatusCode, Json<crate::domain::policy::DnsRule>), ApiError> {
+    // Same rule as the network rule: the database assigns the identity.
+    rule.id = Uuid::nil();
+    let created = policy_service::create_dns_rule(&state.services, &auth.principal, rule).await?;
+    Ok((StatusCode::CREATED, Json(created)))
+}
+
+/// Delete a DNS rule.
+pub async fn delete_dns_rule(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    policy_service::delete_dns_rule(&state.services, &auth.principal, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// One sandbox's egress mode.
+pub async fn get_egress_mode(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<crate::domain::policy::EgressModeSetting>, ApiError> {
+    let setting = policy_service::egress_mode(&state.services, &auth.principal, id).await?;
+    Ok(Json(setting))
+}
+
+/// The body of an egress-mode change.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct EgressModeRequest {
+    /// `forward_proxy`, `transparent`, or `hybrid`.
+    pub mode: String,
+    /// Locator for the sandbox-scoped trust CA, when TLS is to be read.
+    #[serde(default)]
+    pub trust_ca_ref: Option<String>,
+}
+
+/// Set one sandbox's egress mode.
+pub async fn put_egress_mode(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<EgressModeRequest>,
+) -> Result<Json<crate::domain::policy::EgressModeSetting>, ApiError> {
+    let mode = crate::domain::policy::EgressMode::parse(&body.mode).ok_or_else(|| {
+        ApiError::validation(
+            "An egress mode is forward_proxy, transparent, or hybrid.",
+        )
+    })?;
+    let setting = policy_service::set_egress_mode(
+        &state.services,
+        &auth.principal,
+        id,
+        mode,
+        body.trust_ca_ref,
+    )
+    .await?;
+    Ok(Json(setting))
+}
+
 /// Pending rule drafts.
 pub async fn list_drafts(
     State(state): State<AppState>,

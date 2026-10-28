@@ -9,8 +9,9 @@
 //! The order is the rule:
 //!
 //! 1. an open traffic window for the sandbox or the environment → allow;
-//! 2. the first enabled rule, by ascending priority, whose host glob, port,
-//!    protocol, and method match → its action (or `audit` when the rule is
+//! 2. the first enabled rule, by ascending priority, whose matchers (host,
+//!    suffix, CIDR, port range, protocol, method, binary) all match → its
+//!    action (or `audit` when the rule is
 //!    audit-only);
 //! 3. nothing matched → deny.
 //!
@@ -22,7 +23,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use super::policy::{Enforcement, NetworkRule, RuleAction, RuleProtocol};
+use super::policy::{
+    Enforcement, MatchSubject, NetworkRule, RuleAction, RuleProtocol,
+};
 
 /// What the proxy asks: who wants to reach what.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -217,6 +220,22 @@ pub fn decide(
 /// Whether one rule applies to one request. Host is a glob; port, protocol, and
 /// method are exact when the rule states them and wildcards when it does not.
 fn rule_matches(rule: &NetworkRule, request: &CheckRequest) -> bool {
+    // The matcher form is authoritative since migration 0032. A rule that
+    // arrives without matchers (a legacy caller, an old row) is read through
+    // the flat fields it was written from, so both shapes mean the same thing.
+    if !rule.matchers.is_empty() {
+        let subject = MatchSubject {
+            host: &request.host,
+            port: request.port,
+            protocol: request.protocol.as_deref(),
+            method: request.method.as_deref(),
+            // The executor is not part of the wire request yet; a binary rule
+            // does not match rather than matching on a guess.
+            binary: None,
+        };
+        return rule.matchers.iter().all(|matcher| matcher.matches(&subject));
+    }
+
     if !host_glob_matches(&rule.host, &request.host) {
         return false;
     }
@@ -395,6 +414,7 @@ mod tests {
             protocol: RuleProtocol::Tcp,
             methods: vec![],
             binaries: vec![],
+            matchers: vec![],
             enforcement: Enforcement::Enforced,
             priority,
             enabled: true,
