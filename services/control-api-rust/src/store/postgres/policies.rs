@@ -323,6 +323,51 @@ pub async fn delete_rule(scope: &mut TenantScope<'_>, id: Uuid) -> Result<(), St
     }
 }
 
+/// A stable hash of a compiled rule set.
+///
+/// "Deployed" is `nodes.policy_hash_reported == policies.compiled_hash`, so the
+/// hash has to change when, and only when, enforcement changes. It is therefore
+/// built over the fields a rule is enforced by — id, action, host, port,
+/// protocol, methods, enforcement, priority, enabled, sandbox scope, version —
+/// and not over presentation (a rename does not need a redeploy) or over
+/// windows (they are time-bounded and read per decision, so hashing them would
+/// make the badge flicker while nothing about enforcement changed).
+///
+/// The rules are sorted first, so the same set hashes the same whatever order
+/// the query returned, and the fields are separated by a byte that cannot occur
+/// in a host or a name.
+pub fn compiled_hash(rules: &[NetworkRule]) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut ordered: Vec<&NetworkRule> = rules.iter().collect();
+    ordered.sort_by_key(|rule| (rule.priority, rule.id));
+
+    let mut canonical = String::new();
+    for rule in ordered {
+        canonical.push_str(&format!(
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}\n",
+            rule.id,
+            rule.action.as_str(),
+            rule.host.to_ascii_lowercase(),
+            rule.port.map(|port| port.to_string()).unwrap_or_default(),
+            rule.protocol.as_str(),
+            rule.methods.join(","),
+            rule.enforcement.as_str(),
+            rule.priority,
+            rule.enabled,
+            rule.sandbox_id.map(|id| id.to_string()).unwrap_or_default(),
+            rule.version,
+        ));
+    }
+
+    let digest = Sha256::digest(canonical.as_bytes());
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    hex
+}
+
 /// A rule draft awaiting a decision.
 pub struct DraftRecord {
     pub id: Uuid,
@@ -522,3 +567,98 @@ pub async fn expire_windows(pool: &sqlx::PgPool) -> Result<u64, StoreError> {
     .rows_affected();
     Ok(affected)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rule(host: &str, action: RuleAction, priority: i32) -> NetworkRule {
+        NetworkRule {
+            id: Uuid::nil(),
+            environment_id: Uuid::nil(),
+            policy_id: None,
+            sandbox_id: None,
+            name: "test".into(),
+            action,
+            host: host.into(),
+            port: None,
+            protocol: RuleProtocol::Rest,
+            methods: Vec::new(),
+            binaries: Vec::new(),
+            enforcement: Enforcement::Enforced,
+            priority,
+            enabled: true,
+            version: 1,
+        }
+    }
+
+    #[test]
+    fn the_same_rule_set_hashes_the_same_whatever_the_order() {
+        let a = rule("example.com", RuleAction::Allow, 10);
+        let b = rule("api.example.com", RuleAction::Deny, 5);
+        assert_eq!(
+            compiled_hash(&[a.clone(), b.clone()]),
+            compiled_hash(&[b, a])
+        );
+    }
+
+    #[test]
+    fn every_change_to_a_rule_changes_the_hash() {
+        let base = rule("example.com", RuleAction::Allow, 10);
+        let original = compiled_hash(std::slice::from_ref(&base));
+
+        let mut renamed = base.clone();
+        renamed.name = "another name".into();
+        assert_eq!(
+            compiled_hash(&[renamed]),
+            original,
+            "a rename is not an enforcement change and must not force a redeploy"
+        );
+
+        let mut host = base.clone();
+        host.host = "other.example.com".into();
+        assert_ne!(compiled_hash(&[host]), original);
+
+        let mut action = base.clone();
+        action.action = RuleAction::Deny;
+        assert_ne!(compiled_hash(&[action]), original);
+
+        let mut port = base.clone();
+        port.port = Some(443);
+        assert_ne!(compiled_hash(&[port]), original);
+
+        let mut priority = base.clone();
+        priority.priority = 11;
+        assert_ne!(compiled_hash(&[priority]), original);
+
+        let mut disabled = base.clone();
+        disabled.enabled = false;
+        assert_ne!(compiled_hash(&[disabled]), original);
+
+        let mut audit = base.clone();
+        audit.enforcement = Enforcement::Audit;
+        assert_ne!(compiled_hash(&[audit]), original);
+
+        let mut methods = base.clone();
+        methods.methods = vec!["GET".into()];
+        assert_ne!(compiled_hash(&[methods]), original);
+
+        let mut scoped = base.clone();
+        scoped.sandbox_id = Some(Uuid::nil());
+        assert_ne!(compiled_hash(&[scoped]), original);
+
+        assert_ne!(
+            compiled_hash(&[base.clone(), rule("a.b", RuleAction::Allow, 30)]),
+            original,
+            "adding a rule changes the set"
+        );
+    }
+
+    #[test]
+    fn the_hash_is_hex_and_long_enough_to_not_collide_by_accident() {
+        let hash = compiled_hash(&[rule("example.com", RuleAction::Allow, 1)]);
+        assert_eq!(hash.len(), 64);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+}
+

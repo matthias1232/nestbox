@@ -1,15 +1,18 @@
 //! Policy, rule, draft, and traffic-window endpoints.
 
 use axum::Json;
-use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::extract::{OriginalUri, Path, Query, State};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
+use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::api::principal::Auth;
+use crate::domain::egress::{CheckRequest, Decision};
 use crate::domain::policy::Policy;
 use crate::error::ApiError;
+use crate::security::node_token;
 use crate::services::policy_service::{self, PolicyDiff, PolicySaveResult};
 use crate::state::AppState;
 
@@ -305,15 +308,252 @@ pub async fn close_window(
 /// HTTP filter forwards a request that keeps the original method and appends the
 /// original path to `path_prefix`; it copies only the headers it is configured
 /// to copy. So the route accepts any method, and this handler reads
-/// `x-nestbox-sandbox`, the authority, and the original path. A decider that
-/// required a POST and a body would refuse every real request.
+/// `x-nestbox-sandbox`, the authority, and the original path from the route
+/// suffix. A decider that required a POST and a body would refuse every real
+/// request.
 ///
-/// The `feat/policy-decider` package fills the body; until then the proxy has
-/// nothing to ask, and a stub answering 501 is a deny because Envoy treats a
-/// non-200 authorization response as a refusal.
+/// The status code carries the decision, because that is what the filter reads:
+/// `200` for anything that may proceed (`allow` and `audit` differ only in the
+/// header, and in whether the proxy logs it as allowed or as an audit hit), and
+/// `403` for `deny`. Every answer also repeats the decision in
+/// `x-nestbox-decision`, with the reason in `x-nestbox-reason`, so the proxy's
+/// access log can record why without parsing the body.
+///
+/// Known gap, in `api/mod.rs` rather than here: Envoy appends the original path
+/// to `/api/v1/internal/policy/check`, so a request for `/` arrives as
+/// `/api/v1/internal/policy/check/`, and the registered wildcard route does not
+/// match an empty suffix. This handler already treats an empty suffix as `/`;
+/// the route needs one more entry (owned by the router, not this file).
 pub async fn internal_check(
-    State(_state): State<AppState>,
-    _headers: axum::http::HeaderMap,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::not_implemented("POST /internal/policy/check"))
+    State(state): State<AppState>,
+    method: Method,
+    OriginalUri(original): OriginalUri,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    // The node identity and its token are checked together: a body or a header
+    // that names a node is a claim, and the token is what makes it true.
+    let Some(node_id) = header_value(&headers, "x-nestbox-node")
+        .and_then(|value| Uuid::parse_str(value.trim()).ok())
+    else {
+        return Err(ApiError::unauthenticated(
+            node_token::NodeTokenError::Missing.message(),
+        ));
+    };
+
+    let presented = bearer_token(&headers)
+        .or_else(|| header_value(&headers, "x-nestbox-node-token"));
+    let Some(presented) = presented else {
+        return Err(ApiError::unauthenticated(
+            node_token::NodeTokenError::Missing.message(),
+        ));
+    };
+
+    policy_service::authenticate_node(&state.services, node_id, &presented).await?;
+
+    let authority = header_value(&headers, ":authority")
+        .or_else(|| header_value(&headers, "host"))
+        .unwrap_or_default();
+    let (host, authority_port) = split_authority(
+        &header_value(&headers, "x-nestbox-host")
+            .or_else(|| header_value(&headers, "x-forwarded-host"))
+            .unwrap_or(authority),
+    );
+    let port = header_value(&headers, "x-nestbox-port")
+        .and_then(|value| value.trim().parse::<i32>().ok())
+        .or(authority_port)
+        .unwrap_or(443);
+    let protocol = protocol_of(&headers, port);
+
+    if host.trim().is_empty() {
+        return Err(ApiError::validation(
+            "The check needs the host the sandbox is reaching.",
+        ));
+    }
+
+    let request = CheckRequest {
+        sandbox_id: header_value(&headers, "x-nestbox-sandbox")
+            .or_else(|| header_value(&headers, "x-nestbox-sandbox-id"))
+            .and_then(|value| Uuid::parse_str(value.trim()).ok()),
+        node_id: Some(node_id),
+        host,
+        port,
+        protocol: Some(protocol),
+        method: Some(
+            header_value(&headers, "x-nestbox-method")
+                .unwrap_or_else(|| method.as_str().to_string()),
+        ),
+        path: Some(original_path(&headers, &original)),
+        user_agent: header_value(&headers, "user-agent"),
+        mcp_tool: header_value(&headers, "x-nestbox-mcp-tool")
+            .or_else(|| header_value(&headers, "mcp-tool")),
+        mcp_session_id: header_value(&headers, "mcp-session-id"),
+    };
+
+    let outcome = policy_service::check(
+        &state.services,
+        policy_service::CheckInput {
+            node_id,
+            request,
+            // The proxy only calls us when it has no cached answer, so a call is
+            // a cache miss unless the proxy says it is revalidating one.
+            cache_hit: header_value(&headers, "x-nestbox-cache-hit")
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case("true")),
+            reported_hash: header_value(&headers, "x-nestbox-policy-hash")
+                .filter(|value| !value.trim().is_empty()),
+        },
+    )
+    .await?;
+
+    let response = &outcome.response;
+    let status = if response.decision == Decision::Deny {
+        StatusCode::FORBIDDEN
+    } else {
+        StatusCode::OK
+    };
+
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(
+        "x-nestbox-decision",
+        HeaderValue::from_static(response.decision.as_str()),
+    );
+    response_headers.insert(
+        "x-nestbox-reason",
+        HeaderValue::from_static(response.reason.as_str()),
+    );
+    if let Some(rule_id) = response.rule_id {
+        insert_header(&mut response_headers, "x-nestbox-rule-id", &rule_id.to_string());
+    }
+    if let Some(window_id) = response.window_id {
+        insert_header(
+            &mut response_headers,
+            "x-nestbox-window-id",
+            &window_id.to_string(),
+        );
+    }
+    insert_header(
+        &mut response_headers,
+        "x-nestbox-policy-hash",
+        &response.policy_hash,
+    );
+    insert_header(
+        &mut response_headers,
+        "x-nestbox-cache-ttl",
+        &response.cache_ttl_seconds.to_string(),
+    );
+    if outcome.cache_hit {
+        response_headers.insert("x-nestbox-cache-hit", HeaderValue::from_static("true"));
+    }
+
+    Ok((status, response_headers, Json(response)).into_response())
 }
+
+/// The route prefix the proxy appends the original path to.
+const CHECK_PREFIX: &str = "/api/v1/internal/policy/check";
+
+/// One request header as a string, if present and printable.
+fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+}
+
+/// The token from `Authorization: Bearer …` or the published `Token` form.
+fn bearer_token(headers: &HeaderMap) -> Option<String> {
+    let raw = header_value(headers, "authorization")?;
+    let (scheme, token) = raw.split_once(' ')?;
+    if scheme.eq_ignore_ascii_case("bearer") || scheme.eq_ignore_ascii_case("token") {
+        Some(token.trim().to_string())
+    } else {
+        None
+    }
+}
+
+/// Insert a header, ignoring a value that is not printable ASCII.
+///
+/// The values here are a UUID, a hex hash, and a number, so this cannot fail in
+/// practice; it stays total because a header must never be the reason a decision
+/// is dropped.
+fn insert_header(headers: &mut HeaderMap, name: &'static str, value: &str) {
+    if let Ok(value) = HeaderValue::from_str(value) {
+        headers.insert(name, value);
+    }
+}
+
+/// `host`, and the port if the authority carried one.
+///
+/// Bare `host:port`, bracketed IPv6 `[::1]:8443`, and a host with no port are
+/// all accepted; anything else is treated as a host without a port, which the
+/// caller then completes with the protocol default.
+fn split_authority(raw: &str) -> (String, Option<i32>) {
+    let raw = raw.trim();
+    if let Some((inside, after)) = raw
+        .strip_prefix('[')
+        .and_then(|rest| rest.split_once(']'))
+    {
+        let port = after
+            .strip_prefix(':')
+            .and_then(|value| value.parse::<i32>().ok());
+        return (inside.to_string(), port);
+    }
+    match raw.rsplit_once(':') {
+        Some((host, port))
+            if !host.is_empty()
+                && !port.is_empty()
+                && port.chars().all(|c| c.is_ascii_digit()) =>
+        {
+            (host.to_string(), port.parse::<i32>().ok())
+        }
+        _ => (raw.to_string(), None),
+    }
+}
+
+/// The wire protocol, from the proxy if it says, otherwise from the request.
+///
+/// This is an HTTP forward proxy: what reaches us is a request, so the fallback
+/// is `https` on 443 and `http` on everything else — never `tcp`, which would
+/// silently stop a `rest` rule from matching a service on a non-standard port.
+/// The proxy says `tcp` when it forwards a `CONNECT` it did not terminate.
+fn protocol_of(headers: &HeaderMap, port: i32) -> String {
+    if let Some(value) = header_value(headers, "x-nestbox-protocol")
+        .or_else(|| header_value(headers, "x-forwarded-proto"))
+    {
+        let value = value.trim().to_ascii_lowercase();
+        if !value.is_empty() {
+            return value;
+        }
+    }
+    if port == 443 {
+        "https".to_string()
+    } else {
+        "http".to_string()
+    }
+}
+
+/// The path the sandbox asked for.
+///
+/// Prefers an explicit header, then `:path`, and finally the route suffix: if
+/// Envoy appended `/v1/chat/completions`, that is the original path, because the
+/// prefix is ours.
+fn original_path(headers: &HeaderMap, original: &axum::http::Uri) -> String {
+    let explicit = header_value(headers, "x-nestbox-path")
+        .or_else(|| header_value(headers, "x-envoy-original-path"))
+        .or_else(|| header_value(headers, ":path"))
+        .filter(|path| !path.trim().is_empty());
+    if let Some(path) = explicit {
+        return path;
+    }
+
+    let suffix = original.path().strip_prefix(CHECK_PREFIX).unwrap_or("");
+    let mut path = if suffix.is_empty() {
+        "/".to_string()
+    } else {
+        suffix.to_string()
+    };
+    if let Some(query) = original.query() {
+        path.push('?');
+        path.push_str(query);
+    }
+    path
+}
+

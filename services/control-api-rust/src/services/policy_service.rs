@@ -1,15 +1,25 @@
 //! Policy validation, change semantics, rules, and rule drafts.
+//!
+//! Also the egress decider (`check`): the one place that answers whether one
+//! outbound request from one sandbox may proceed. It is here rather than in the
+//! proxy so there is one rule set, not two (ADR 0001, 0013, 0022).
 
+use chrono::Utc;
 use uuid::Uuid;
 
 use super::{require, ServiceContext};
 use crate::domain::auth::{Permission, Principal};
+use crate::domain::egress::{
+    decide, CheckRequest, CheckResponse, CompiledPolicy, Decision, DecisionReason,
+};
 use crate::domain::policy::{
     apply_outcome, rules_from_document, validate_document, ApplyOutcome, NetworkRule, Policy,
     PolicyScope, PolicySection,
 };
 use crate::error::{ApiError, ErrorCode};
+use crate::security::node_token;
 use crate::store::TenantScope;
+use crate::store::postgres::egress as egress_store;
 use crate::store::postgres::policies as store;
 use crate::store::postgres::sandboxes as sandbox_store;
 
@@ -559,3 +569,232 @@ pub async fn rules_for_sandbox(
     scope.commit().await.map_err(ApiError::from)?;
     Ok(rules)
 }
+
+// ---------------------------------------------------------------------------
+// The egress decider
+// ---------------------------------------------------------------------------
+
+/// What the proxy asked, and what it told us about itself.
+///
+/// The token is not here: it is verified before a request reaches `check`, so a
+/// decision can never be taken for a caller that has not been authenticated.
+pub struct CheckInput {
+    /// The node that is asking, from its token. A decision is only given about
+    /// a sandbox that runs on this node.
+    pub node_id: Uuid,
+    /// The request as the proxy saw it.
+    pub request: CheckRequest,
+    /// Whether the proxy says it answered this from its own cache. We only see
+    /// the calls it did not cache, so this is `false` unless it says otherwise;
+    /// recording it keeps the column honest instead of always writing `false`.
+    pub cache_hit: bool,
+    /// The hash of the rule set the proxy says it is enforcing. Written to
+    /// `nodes.policy_hash_reported`, which is what the console compares against
+    /// `policy_compilations.hash` to show "not deployed".
+    pub reported_hash: Option<String>,
+}
+
+/// One decision, with the rule set it came from.
+pub struct CheckOutcome {
+    pub response: CheckResponse,
+    pub cache_hit: bool,
+}
+
+/// Verify the bearer token a node presents.
+///
+/// A service function rather than a handler step so the check cannot be wired to
+/// a route that forgets it, and so the store lookup and the file read happen
+/// behind one refusal message. Every failure is a 401: a caller must not learn
+/// whether a node exists, has a token, or merely presented the wrong one.
+pub async fn authenticate_node(
+    ctx: &ServiceContext,
+    node_id: Uuid,
+    presented: &str,
+) -> Result<(), ApiError> {
+    let locator = egress_store::node_token_locator(&ctx.pool, node_id)
+        .await
+        .map_err(ApiError::from)?;
+
+    let Some(locator) = locator else {
+        tracing::warn!(%node_id, "policy check from a node without a token locator");
+        return Err(node_token::NodeTokenError::NotConfigured.to_api());
+    };
+
+    node_token::verify(&locator, &ctx.secret_dir, presented).map_err(|error| {
+        tracing::warn!(%node_id, reason = ?error, "node token refused");
+        error.to_api()
+    })
+}
+
+/// Decide one egress request and record the decision.
+///
+/// The order is the rule (see `domain::egress`): an open window allows, then the
+/// first matching rule by ascending priority decides, and nothing matching
+/// denies. The read of rules and windows, the compilation record, and the
+/// evidence row share one transaction, so the row the operator sees later
+/// describes the rule set that was actually applied.
+///
+/// Two cases never reach the rule set, because there is no honest answer to
+/// give: a request without a sandbox (the proxy could not map the connection)
+/// and a request about a sandbox on another node. Both are refused with
+/// `default_deny` and are not written to `policy_checks`, which has no
+/// environment to be scoped to — the warning in the log is the evidence.
+pub async fn check(ctx: &ServiceContext, input: CheckInput) -> Result<CheckOutcome, ApiError> {
+    let request = input.request;
+    let cache_hit = input.cache_hit;
+
+    if request.host.trim().is_empty() {
+        return Ok(CheckOutcome {
+            response: refusal(
+                "The proxy sent no host, so no rule can be matched.".to_string(),
+            ),
+            cache_hit,
+        });
+    }
+
+    let Some(sandbox_id) = request.sandbox_id else {
+        return Ok(CheckOutcome {
+            response: refusal(
+                "The proxy did not identify a sandbox, so no window or rule applies.".to_string(),
+            ),
+            cache_hit,
+        });
+    };
+
+    let Some(owner) = egress_store::sandbox_scope(&ctx.pool, sandbox_id)
+        .await
+        .map_err(ApiError::from)?
+    else {
+        tracing::warn!(%sandbox_id, %input.node_id, "policy check for an unknown sandbox");
+        return Ok(CheckOutcome {
+            response: refusal("The sandbox is not known to this control plane.".to_string()),
+            cache_hit,
+        });
+    };
+
+    if owner.node_id != input.node_id {
+        tracing::warn!(
+            %sandbox_id,
+            asking_node = %input.node_id,
+            owning_node = %owner.node_id,
+            "policy check from a node that does not run the sandbox"
+        );
+        return Ok(CheckOutcome {
+            response: refusal("The sandbox does not run on the node that asked.".to_string()),
+            cache_hit,
+        });
+    }
+
+    let mut scope = TenantScope::begin(&ctx.pool, owner.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+
+    let rules = store::list_rules(&mut scope).await.map_err(ApiError::from)?;
+    let windows = egress_store::open_windows(&mut scope, Some(sandbox_id))
+        .await
+        .map_err(ApiError::from)?;
+    let hash = store::compiled_hash(&rules);
+
+    let changed = egress_store::record_compilation(
+        &mut scope,
+        &hash,
+        rules.len() as i64,
+        windows.len() as i64,
+    )
+    .await
+    .map_err(ApiError::from)?;
+    if changed {
+        tracing::info!(
+            environment_id = %owner.environment_id,
+            hash = %hash,
+            rules = rules.len(),
+            "compiled a new egress rule set"
+        );
+    }
+
+    let now = Utc::now();
+    let policy = CompiledPolicy {
+        environment_id: owner.environment_id,
+        hash: hash.clone(),
+        compiled_at: now,
+        rules,
+        windows,
+    };
+    let response = decide(&request, &policy, now);
+
+    egress_store::record_decision(
+        &mut scope,
+        egress_store::NewDecision {
+            sandbox_id: Some(sandbox_id),
+            node_id: Some(input.node_id),
+            ts: now,
+            host: &request.host,
+            port: request.port,
+            protocol: request.protocol.as_deref().unwrap_or("tcp"),
+            method: request.method.as_deref(),
+            path: request.path.as_deref(),
+            decision: response.decision.as_str(),
+            reason: response.reason.as_str(),
+            rule_id: response.rule_id,
+            window_id: response.window_id,
+            cache_hit,
+        },
+    )
+    .await
+    .map_err(ApiError::from)?;
+
+    // The node reports what it enforces. Writing it on every call is what makes
+    // a node that returns to the current rule set green again; the update only
+    // touches a row whose value actually differs, so `reported_at` still means
+    // "when this node changed what it enforces".
+    if let Some(reported) = input.reported_hash.as_deref() {
+        egress_store::record_reported_hash(&mut scope, input.node_id, reported)
+            .await
+            .map_err(ApiError::from)?;
+    }
+
+    scope.commit().await.map_err(ApiError::from)?;
+
+    Ok(CheckOutcome {
+        response,
+        cache_hit,
+    })
+}
+
+/// A refusal that came from the input rather than from a rule set.
+///
+/// `policy_hash` is empty because no rule set was consulted, and the cache TTL
+/// is zero: caching "I could not tell" would pin a mistake for as long as the
+/// proxy's TTL, and the sandbox may legitimately appear a second later.
+fn refusal(explanation: String) -> CheckResponse {
+    CheckResponse {
+        decision: Decision::Deny,
+        reason: DecisionReason::DefaultDeny,
+        rule_id: None,
+        window_id: None,
+        explanation,
+        policy_hash: String::new(),
+        cache_ttl_seconds: 0,
+    }
+}
+
+/// Whether each node runs the rule set that is compiled now.
+///
+/// The console's "deployed" badge is this call, not its own comparison: two
+/// hashes read at different times can look equal while a compile happened in
+/// between.
+pub async fn deployment(
+    ctx: &ServiceContext,
+    principal: &Principal,
+) -> Result<egress_store::PolicyDeployment, ApiError> {
+    require(principal, Permission::PolicyRead)?;
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let deployment = egress_store::deployment(&mut scope)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(deployment)
+}
+

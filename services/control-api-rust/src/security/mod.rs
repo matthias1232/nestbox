@@ -4,6 +4,7 @@
 //! weakened in one module and remembered in another.
 
 pub mod headers;
+pub mod node_token;
 pub mod password;
 pub mod redaction;
 pub mod secrets;

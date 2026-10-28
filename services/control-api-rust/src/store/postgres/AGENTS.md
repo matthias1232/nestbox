@@ -24,7 +24,8 @@ the codebase where SQL appears.
 | `mod.rs` | Re-exports and shared row helpers |
 | `sandboxes.rs` | Sandbox list, read, insert, status change, delete |
 | `auth.rs` | Users, sessions, API tokens, scopes |
-| `policies.rs` | Policy documents, versions, network rules, drafts |
+| `policies.rs` | Policy documents, versions, network rules, drafts, the compiled rule-set hash |
+| `egress.rs` | Compilation hash record, decisions, open windows, node token locator, deployment comparison |
 | `telemetry.rs` | Event insert, query, partition maintenance |
 | `gateways.rs` | Gateways, supervisors, sync state |
 | `models.rs` | Model catalog, hardware profiles, inference rows, the catalog-sync upsert |

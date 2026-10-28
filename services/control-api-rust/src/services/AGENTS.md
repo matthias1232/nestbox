@@ -34,6 +34,29 @@ reading both.
 - Rules that are pure (may this status transition?) live in `domain` so they can
   be unit-tested without a database. The service orchestrates.
 
+## The egress decider
+
+`policy_service::check` is the one place that answers whether an outbound request
+from a sandbox may proceed. The pure rule (`domain::egress::decide`) stays in the
+domain; the service loads what it needs and writes what it decided. Four rules
+shape it:
+
+1. **The caller is a node, not a user.** `authenticate_node` runs first, and
+   `check` is never reachable without it. A node may only ask about a sandbox
+   that runs on that node; the sandbox's `node_id` is compared to the asking
+   node, and a mismatch is a deny.
+2. **The tenant comes from the sandbox.** A node request carries no environment,
+   so `store::postgres::egress::sandbox_scope` resolves it before a scope exists.
+   That lookup walks the environments table and asks each candidate through a
+   scoped transaction — no privileged read, so row-level security stays in force.
+3. **One transaction, one truth.** Rules, windows, the compilation record, and
+   the evidence row are read and written together. The row an operator sees later
+   therefore describes the rule set that was actually applied.
+4. **Fail closed, and say why.** A request without a sandbox, for an unknown
+   sandbox, or from the wrong node is a deny with `default_deny`, an empty policy
+   hash, and a cache TTL of zero; a database failure is a 5xx, which the proxy's
+   `ext_authz` filter turns into a refusal on its own.
+
 ## Files
 
 | File | Responsibility |
@@ -43,7 +66,7 @@ reading both.
 | `sandbox_service.rs` | Lifecycle, placement, bulk actions |
 | `provider_service.rs` | Provider profiles with their probe status, the pending profile an install creates, the in-use check on delete, and the reachable-only inference environment a sandbox receives |
 | `agent_service.rs` | Agents inside a sandbox: which packs may join, homes and their persistence, the supervisor command |
-| `policy_service.rs` | Validation, diff, scope rules, global override |
+| `policy_service.rs` | Validation, diff, scope rules, global override, and the egress decider (`check`: windows, rules, one evidence row; `authenticate_node`; `deployment`) |
 | `telemetry_service.rs` | Ingest, live publish, history queries |
 | `model_service.rs` | Hardware probing through a node's runner (CPU, RAM, GPU, unified pool), fit against a node's free budget, facets, catalog filters, installs and their reservations |
 | `node_service.rs` | The nodes list, one node with its budget, a node's sandboxes, name-or-id resolution, display rename |

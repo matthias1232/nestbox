@@ -35,7 +35,7 @@ The architecture test enforces the last two.
 | `auth.rs` | Login, logout, identity |
 | `system.rs` | Health, readiness, runtime, OpenAPI, environments, audit |
 | `sandboxes.rs` | Sandbox list, detail, create, actions, logs, exec |
-| `policies.rs` | Policies, rules, drafts, traffic windows |
+| `policies.rs` | Policies, rules, drafts, traffic windows, and the node-token egress check (`feat/policy-decider`) |
 | `telemetry.rs` | History, facets, ingest |
 | `events.rs` | SSE streams |
 | `cluster.rs` | Gateways, supervisors |
