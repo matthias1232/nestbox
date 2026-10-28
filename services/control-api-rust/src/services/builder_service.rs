@@ -852,6 +852,9 @@ pub async fn instantiate(
     environment.extend(crate::services::sandbox_service::egress_environment(
         &crate::services::sandbox_service::egress_proxy_url(),
     ));
+    // The model on this node is on the runtime network; proxying it would turn
+    // a local call into a denied egress request.
+    crate::services::sandbox_service::add_inference_bypass_vec(&mut environment);
 
     let runtime_spec = SandboxSpec {
         name: sandbox.name.clone(),

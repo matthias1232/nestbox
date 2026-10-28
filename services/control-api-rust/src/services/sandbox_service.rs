@@ -9,6 +9,8 @@
 //! * A bulk action over more than one sandbox becomes a job, so partial failure
 //!   is attributable and the request does not hold a connection for minutes.
 
+use std::collections::BTreeMap;
+
 use uuid::Uuid;
 
 use super::pack_service;
@@ -272,6 +274,53 @@ pub fn egress_proxy_url() -> String {
     }
 }
 
+/// Keep the inference endpoint out of the proxy.
+///
+/// The provider a sandbox is given may be a model on its own node
+/// (`http://model-<key>:8080/v1`). That address is on the runtime network and
+/// must not be proxied: through the proxy it is an egress request without a
+/// rule, and the agent reports the refusal as a rejected API key — a wrong
+/// diagnosis of a correct default-deny. The host is read from the environment
+/// the sandbox was already given, so the two cannot disagree.
+pub fn add_inference_bypass(environment: &mut BTreeMap<String, String>) {
+    let Some(base) = environment.get("OPENAI_BASE_URL").cloned() else {
+        return;
+    };
+    let host = base
+        .split("://")
+        .nth(1)
+        .unwrap_or(&base)
+        .split(['/', ':'])
+        .next()
+        .unwrap_or("")
+        .to_string();
+    if host.is_empty() {
+        return;
+    }
+    for key in ["NO_PROXY", "no_proxy"] {
+        let current = environment.get(key).cloned().unwrap_or_default();
+        if current.split(',').any(|part| part == host) {
+            continue;
+        }
+        let value = if current.is_empty() {
+            host.clone()
+        } else {
+            format!("{current},{host}")
+        };
+        environment.insert(key.to_string(), value);
+    }
+}
+
+/// The same bypass for the vector the runtime spec carries.
+///
+/// Sorted and deduplicated by the map, so two creates of the same sandbox send
+/// the same environment.
+pub fn add_inference_bypass_vec(environment: &mut Vec<(String, String)>) {
+    let mut map: BTreeMap<String, String> = environment.iter().cloned().collect();
+    add_inference_bypass(&mut map);
+    *environment = map.into_iter().collect();
+}
+
 /// The host part of a proxy URL, for the bypass list.
 fn proxy_host(proxy: &str) -> &str {
     proxy
@@ -485,6 +534,7 @@ pub async fn create(
     // answers no external name. With it, each request still needs a rule: the
     // environment is a convenience for tools, not a permission.
     environment.extend(egress_environment(&egress_proxy));
+    add_inference_bypass_vec(&mut environment);
 
     let runtime_spec = SandboxSpec {
         name: sandbox.name.clone(),
@@ -841,6 +891,26 @@ mod tests {
         assert!(pack_needs_inference("hermes"));
         assert!(!pack_needs_inference("ubuntu-dev"));
         assert!(!pack_needs_inference("openclaw"));
+    }
+
+    #[test]
+    fn the_inference_host_is_kept_out_of_the_proxy() {
+        use std::collections::BTreeMap;
+        let mut environment: BTreeMap<String, String> = [
+            ("OPENAI_BASE_URL".to_string(), "http://model-qwen3-1-7b:8080/v1".to_string()),
+            ("NO_PROXY".to_string(), "localhost,egress-proxy".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        add_inference_bypass(&mut environment);
+        assert_eq!(
+            environment.get("NO_PROXY").map(String::as_str),
+            Some("localhost,egress-proxy,model-qwen3-1-7b")
+        );
+        assert_eq!(
+            environment.get("no_proxy").map(String::as_str),
+            Some("model-qwen3-1-7b")
+        );
     }
 
     #[test]
