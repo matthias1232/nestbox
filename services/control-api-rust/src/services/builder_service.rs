@@ -399,6 +399,61 @@ pub async fn build(
 ///
 /// Public so the job can be run from a test without going through an HTTP
 /// request and a detached task.
+/// Settle the builds a restart interrupted.
+///
+/// A build runs in a detached task, so a control-plane restart kills it while
+/// the recipe still says `building` and the job says `running`. Nothing will
+/// ever finish either, and the console would show a progress that never moves.
+/// The boot calls this, records the reason on both rows, and lets the operator
+/// queue the build again — a build is idempotent, it reuses an image whose
+/// content hash already exists.
+pub async fn settle_interrupted(ctx: &ServiceContext) -> Result<u64, ApiError> {
+    // `environments` has no row-level policy by design (ADR 0004): the login path
+    // must list them before a scope exists. A boot routine is the same kind of
+    // cross-tenant maintenance, and it writes only within each scope below.
+    let environments: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM environments")
+        .fetch_all(&ctx.pool)
+        .await
+        .map_err(|error| ApiError::from(StoreError::Database(error)))?;
+
+    let message = "The control plane restarted before the build finished. Build the recipe again.";
+    let mut settled = 0;
+
+    for environment_id in environments {
+        let mut scope = TenantScope::begin(&ctx.pool, environment_id)
+            .await
+            .map_err(ApiError::from)?;
+
+        let recipes = sqlx::query(
+            "UPDATE recipes
+                SET state = 'failed', build_error = $2, updated_at = now()
+              WHERE environment_id = $1 AND state = 'building'",
+        )
+        .bind(environment_id)
+        .bind(message)
+        .execute(scope.connection())
+        .await
+        .map_err(|error| ApiError::from(StoreError::Database(error)))?
+        .rows_affected();
+
+        sqlx::query(
+            "UPDATE jobs
+                SET status = 'failed', error = $2, finished_at = now(), updated_at = now()
+              WHERE environment_id = $1 AND kind = 'recipe_build' AND status = 'running'",
+        )
+        .bind(environment_id)
+        .bind(message)
+        .execute(scope.connection())
+        .await
+        .map_err(|error| ApiError::from(StoreError::Database(error)))?;
+
+        scope.commit().await.map_err(ApiError::from)?;
+        settled += recipes;
+    }
+
+    Ok(settled)
+}
+
 pub async fn run_build(
     ctx: &ServiceContext,
     environment_id: Uuid,

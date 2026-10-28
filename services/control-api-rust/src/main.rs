@@ -57,6 +57,15 @@ async fn main() {
 
     let state = AppState::new(config.clone(), runtime, pool);
 
+    // A build that was running when the process died leaves its recipe
+    // `building` and its job `running`. Neither will ever finish, so they are
+    // settled before the first request can see them.
+    match crate::services::builder_service::settle_interrupted(&state.services).await {
+        Ok(0) => {}
+        Ok(settled) => tracing::info!(settled, "settled builds interrupted by a restart"),
+        Err(error) => tracing::warn!(code = error.code.0, "could not settle interrupted builds"),
+    }
+
     let listener = match tokio::net::TcpListener::bind(&config.listen_addr).await {
         Ok(listener) => listener,
         Err(error) => {
