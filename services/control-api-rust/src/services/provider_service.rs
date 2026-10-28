@@ -455,8 +455,8 @@ pub async fn inference_environment(
     }
     environment.insert("HERMES_PROVIDER".to_string(), "openai".to_string());
 
-    if let Some(locator) = profile.secret_ref.as_deref() {
-        match secrets::resolve(locator, &ctx.secret_dir) {
+    match profile.secret_ref.as_deref() {
+        Some(locator) => match secrets::resolve(locator, &ctx.secret_dir) {
             Ok(value) => {
                 environment.insert("OPENAI_API_KEY".to_string(), value);
             }
@@ -468,6 +468,14 @@ pub async fn inference_environment(
                     "provider credential could not be resolved; sandbox gets no inference key"
                 );
             }
+        },
+        None => {
+            // A model server on this node has no credential, but an OpenAI
+            // client refuses to start without a value: Hermes says "not
+            // connected to any AI provider" before it sends a request. The
+            // placeholder is not a secret and cannot be one; the server it
+            // reaches ignores it.
+            environment.insert("OPENAI_API_KEY".to_string(), "local".to_string());
         }
     }
 
