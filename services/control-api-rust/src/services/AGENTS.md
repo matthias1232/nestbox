@@ -55,7 +55,7 @@ reading both.
 | `metrics_service.rs` | Sample ingest, ranged query, rollup, retention (`feat/sandbox-metrics`) |
 | `inventory_service.rs` | Snapshot storage and age; never an environment value (`feat/sandbox-metrics`) |
 | `access_service.rs` | SSH key pair as a file with a locator, port pool, sessions (`feat/sandbox-access`) |
-| `mcp_service.rs` | Registry, attachments, discovery through the policy check (`feat/mcp-registry`) |
+| `mcp_service.rs` | Registry validation, attachments, discovery from inside the sandbox |
 | `persist_service.rs` | Persistent roots: derived host paths, mounts, the one-read-write rule, honest usage |
 
 ## Probing a node
@@ -120,6 +120,36 @@ the signatures.
 - **The catalogs are read through the store, not `pack_service`.** Both read the
   same rows; going through `pack_service` is the cleaner layering and changes
   nothing about the recipes.
+
+## The MCP layer
+
+`mcp_service.rs` keeps three decisions that look small and are not.
+
+1. **Discovery runs inside the sandbox.** `tools/list` is an outbound request,
+   so it is made by a probe executed through `ctx.runtime.exec`, not by the
+   control plane. The control plane is on the host network: a request from here
+   would bypass the sandbox's proxy, its rules, and the identity the policy is
+   written against. A discovery path that skipped the rule check would be an
+   egress hole with a friendly name (ADR 0026).
+2. **A failed discovery is an attachment state, not a 5xx.** The row becomes
+   `status=error` with `last_error`, and the response is the row. Request errors
+   stay request errors: unknown sandbox 404, stopped sandbox 409, `stdio` server
+   422. Returning 5xx would leave the row claiming the previous, optimistic
+   state, which is the failure mode the column exists to prevent.
+3. **Transport is validated as a pair with endpoint/command.** A `stdio` server
+   with an endpoint, an `http` server without one, or a stdio server claiming
+   `oauth` is a 422 naming the combination. The database CHECK constraints agree,
+   but they cannot produce a sentence a user can act on.
+
+A credential never enters this layer: `env_slots` holds variable **names**, the
+probe reads the value inside the container, and `mcp_tool_calls` arguments and
+results are redacted in the store on the way in.
+
+The probe speaks the `2025-06-18` handshake (`initialize`, then `tools/list`).
+A server that only offers the stateless `2026-07-28` discovery is recorded as an
+error naming its refusal; it is not silently retried with a second protocol,
+because two handshakes would make "discovery failed" ambiguous. Extend the probe
+when there is a server that needs it, not before.
 
 ## Extending this module
 

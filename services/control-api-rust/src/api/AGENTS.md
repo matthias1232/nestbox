@@ -51,7 +51,7 @@ The architecture test enforces the last two.
 | `inventory.rs` | Snapshot and refresh (`feat/sandbox-metrics`) |
 | `access.rs` | SSH key, one-time download, rotation, ports, sessions (`feat/sandbox-access`) |
 | `traffic.rs` | Traffic rows, one body, map edges, effective policies, MCP calls (`feat/live-traffic`) |
-| `mcp.rs` | MCP registry and sandbox attachments (`feat/mcp-registry`) |
+| `mcp.rs` | MCP registry and sandbox attachments, and the discovery trigger |
 | `sandboxes_terminal.rs` | The terminal WebSocket (`feat/terminal`) |
 | `topology.rs` | The cluster graph and its live edges (`feat/live-traffic`) |
 
