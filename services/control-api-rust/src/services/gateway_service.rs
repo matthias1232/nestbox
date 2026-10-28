@@ -318,6 +318,9 @@ pub async fn topology(
     let sandboxes = crate::store::postgres::sandboxes::topology_rows(&mut scope)
         .await
         .map_err(ApiError::from)?;
+    let supervisors = store::list_supervisors(&mut scope)
+        .await
+        .map_err(ApiError::from)?;
     let clustered = crate::store::postgres::environments::list_clusters(&mut scope)
         .await
         .map_err(ApiError::from)?;
@@ -333,6 +336,31 @@ pub async fn topology(
             "name": cluster.name,
             "status": "running",
         }));
+    }
+
+    // A registered supervisor is a node of its own: it is what the operator
+    // created to watch a sandbox, and the graph should show the thing they made
+    // rather than only the cluster it belongs to.
+    for supervisor in &supervisors {
+        nodes.push(serde_json::json!({
+            "id": supervisor.id,
+            "kind": "supervisor",
+            "name": supervisor.name,
+            "status": supervisor.status.as_str(),
+            "sandbox_id": supervisor.sandbox_id,
+        }));
+        edges.push(serde_json::json!({
+            "from": supervisor.gateway_id,
+            "to": supervisor.id,
+            "kind": "hosts",
+        }));
+        if let Some(sandbox_id) = supervisor.sandbox_id {
+            edges.push(serde_json::json!({
+                "from": supervisor.id,
+                "to": sandbox_id,
+                "kind": "hosts",
+            }));
+        }
     }
 
     for gateway in &gateways {
