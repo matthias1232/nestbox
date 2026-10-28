@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use uuid::Uuid;
 
 use super::pack_service;
+use super::policy_service;
 use super::{require, ServiceContext};
 use crate::domain::auth::{Permission, Principal};
 use crate::domain::pagination::{ListParams, Page};
@@ -539,6 +540,13 @@ pub async fn create(
     .map_err(ApiError::from)?;
 
     scope.commit().await.map_err(ApiError::from)?;
+
+    // A sandbox starts with the best-practice policy, named so the operator can
+    // see what it is and replace it. This is deliberately after the commit and
+    // best-effort: a missing preset leaves a sandbox without a policy, which is
+    // exactly what every sandbox had before this feature, and failing the create
+    // over it would trade a working sandbox for a tidy one.
+    policy_service::apply_safe_defaults(ctx, principal.environment_id, sandbox.id).await;
 
     // Now ask the runtime. A failure here is recorded on the row, so the console
     // shows a failed sandbox instead of nothing at all.

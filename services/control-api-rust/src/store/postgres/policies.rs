@@ -5,8 +5,8 @@ use uuid::Uuid;
 
 use super::super::TenantScope;
 use crate::domain::policy::{
-    Enforcement, DnsRule, EgressMode, EgressModeSetting, Matcher, NetworkRule, Policy, PolicyScope,
-    RuleAction, RuleProtocol,
+    DnsRule, EgressMode, EgressModeSetting, Enforcement, Matcher, NetworkRule, Policy,
+    PolicyAssignment, PolicyScope, PolicyTemplate, RuleAction, RuleProtocol,
 };
 use crate::error::StoreError;
 
@@ -561,6 +561,181 @@ pub async fn set_egress_mode(
         enabled: row.try_get("enabled")?,
         version: row.try_get("version")?,
     })
+}
+
+/// All policy templates of this environment, the preset library.
+///
+/// Templates are data (ADR 0020): a preset is a document, not code, so an
+/// operator can edit one and the change needs no deploy.
+pub async fn list_templates(
+    scope: &mut TenantScope<'_>,
+) -> Result<Vec<PolicyTemplate>, StoreError> {
+    let rows = sqlx::query(
+        "SELECT id, environment_id, name, description, spec, version
+           FROM policy_templates
+          WHERE environment_id = $1
+          ORDER BY name",
+    )
+    .bind(scope.environment_id())
+    .fetch_all(scope.connection())
+    .await?;
+    rows.iter().map(row_to_template).collect()
+}
+
+/// One template by id.
+pub async fn get_template(
+    scope: &mut TenantScope<'_>,
+    id: Uuid,
+) -> Result<PolicyTemplate, StoreError> {
+    let row = sqlx::query(
+        "SELECT id, environment_id, name, description, spec, version
+           FROM policy_templates
+          WHERE environment_id = $1 AND id = $2",
+    )
+    .bind(scope.environment_id())
+    .bind(id)
+    .fetch_optional(scope.connection())
+    .await?
+    .ok_or(StoreError::NotFound)?;
+    row_to_template(&row)
+}
+
+fn row_to_template(row: &sqlx::postgres::PgRow) -> Result<PolicyTemplate, StoreError> {
+    Ok(PolicyTemplate {
+        id: row.try_get("id")?,
+        environment_id: row.try_get("environment_id")?,
+        name: row.try_get("name")?,
+        description: row.try_get("description")?,
+        spec: row.try_get("spec")?,
+        version: row.try_get("version")?,
+    })
+}
+
+/// Insert a template. Used by the seeds and by an operator saving their own.
+pub async fn insert_template(
+    scope: &mut TenantScope<'_>,
+    name: &str,
+    description: &str,
+    spec: &serde_json::Value,
+) -> Result<PolicyTemplate, StoreError> {
+    let row = sqlx::query(
+        "INSERT INTO policy_templates (environment_id, name, description, spec)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (environment_id, name) DO UPDATE
+            SET description = EXCLUDED.description,
+                spec = EXCLUDED.spec,
+                version = policy_templates.version + 1,
+                updated_at = now()
+         RETURNING id, environment_id, name, description, spec, version",
+    )
+    .bind(scope.environment_id())
+    .bind(name)
+    .bind(description)
+    .bind(spec)
+    .fetch_one(scope.connection())
+    .await?;
+    row_to_template(&row)
+}
+
+/// The policy assigned to one sandbox, with what has been applied.
+pub async fn assignment_for_sandbox(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+) -> Result<Option<PolicyAssignment>, StoreError> {
+    let row = sqlx::query(
+        "SELECT sp.sandbox_id, sp.policy_id, sp.desired_version, sp.applied_version,
+                sp.applied_at, p.name AS policy_name, p.scope AS policy_scope
+           FROM sandbox_policies sp
+           JOIN policies p ON p.id = sp.policy_id
+          WHERE sp.sandbox_id = $1
+          ORDER BY sp.precedence
+          LIMIT 1",
+    )
+    .bind(sandbox_id)
+    .fetch_optional(scope.connection())
+    .await?;
+    let Some(row) = row else { return Ok(None) };
+    let scope_raw: String = row.try_get("policy_scope")?;
+    Ok(Some(PolicyAssignment {
+        sandbox_id: row.try_get("sandbox_id")?,
+        policy_id: row.try_get("policy_id")?,
+        policy_name: row.try_get("policy_name")?,
+        policy_scope: PolicyScope::parse(&scope_raw).unwrap_or(PolicyScope::Sandbox),
+        desired_version: row.try_get("desired_version")?,
+        applied_version: row.try_get("applied_version")?,
+        applied_at: row.try_get("applied_at")?,
+    }))
+}
+
+/// Assign a policy to a sandbox.
+///
+/// A sandbox carries one assignment, so the old row goes first and the new one
+/// is inserted; a re-assignment is changing the assignment, not a conflict. The
+/// answer carries the policy's name, because every caller shows it next to the
+/// sandbox and a second lookup in each of them is where the empty names come
+/// from.
+pub async fn assign_policy(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+    policy_id: Uuid,
+) -> Result<PolicyAssignment, StoreError> {
+    sqlx::query("DELETE FROM sandbox_policies WHERE sandbox_id = $1")
+        .bind(sandbox_id)
+        .execute(scope.connection())
+        .await?;
+    // An id outside this environment matches no row, so nothing is inserted and
+    // `fetch_one` refuses it. Reading the assignment back names the policy and
+    // cannot disagree with what was written.
+    sqlx::query(
+        "INSERT INTO sandbox_policies (sandbox_id, policy_id, desired_version)
+         SELECT $2, p.id, p.version FROM policies p
+          WHERE p.id = $3 AND p.environment_id = $1
+         RETURNING sandbox_id",
+    )
+    .bind(scope.environment_id())
+    .bind(sandbox_id)
+    .bind(policy_id)
+    .fetch_one(scope.connection())
+    .await?;
+
+    assignment_for_sandbox(scope, sandbox_id)
+        .await?
+        .ok_or(StoreError::NotFound)
+}
+
+/// Remove a sandbox's policy assignment.
+pub async fn unassign_policy(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+) -> Result<(), StoreError> {
+    let affected =
+        sqlx::query("DELETE FROM sandbox_policies WHERE sandbox_id = $1")
+            .bind(sandbox_id)
+            .execute(scope.connection())
+            .await?
+            .rows_affected();
+    let _ = affected;
+    Ok(())
+}
+
+/// One policy in the environment that carries a name, for the seed the sandbox
+/// creation path looks up.
+pub async fn get_policy_by_name(
+    scope: &mut TenantScope<'_>,
+    name: &str,
+) -> Result<Option<Policy>, StoreError> {
+    let row = sqlx::query(&format!(
+        "SELECT {POLICY_COLUMNS} FROM policies
+          WHERE environment_id = $1 AND name = $2 AND scope = 'sandbox' LIMIT 1"
+    ))
+    .bind(scope.environment_id())
+    .bind(name)
+    .fetch_optional(scope.connection())
+    .await?;
+    match row {
+        Some(row) => Ok(Some(row_to_policy(&row)?)),
+        None => Ok(None),
+    }
 }
 
 /// Pending drafts, for the approval queue.

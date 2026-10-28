@@ -54,9 +54,11 @@ WITH built AS (
              , unnest(methods) WITH ORDINALITY AS m(method, ord)
         UNION ALL
         SELECT id, 100 + ord,
-               jsonb_build_object('kind', 'binary', 'value', binary)
+               -- `binary` is a reserved word in PostgreSQL, so the ordinality
+               -- alias is `exe`; the matcher kind keeps the vocabulary name.
+               jsonb_build_object('kind', 'binary', 'value', exe)
           FROM network_rules
-             , unnest(binaries) WITH ORDINALITY AS b(binary, ord)
+             , unnest(binaries) WITH ORDINALITY AS b(exe, ord)
       ) AS parts
      GROUP BY id
 )

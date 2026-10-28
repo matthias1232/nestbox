@@ -218,6 +218,127 @@ pub async fn get_egress_mode(
     Ok(Json(setting))
 }
 
+// ---------------------------------------------------------------------------
+// Presets, the document schema, and the policy of one sandbox
+// ---------------------------------------------------------------------------
+
+/// The preset library.
+pub async fn list_templates(
+    State(state): State<AppState>,
+    auth: Auth,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let templates = policy_service::list_templates(&state.services, &auth.principal).await?;
+    Ok(Json(serde_json::json!({ "items": templates })))
+}
+
+/// The body of an operator's own preset.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct CreateTemplateRequest {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    /// The document the preset produces; validated like every save.
+    pub spec: serde_json::Value,
+}
+
+/// Save a preset.
+pub async fn create_template(
+    State(state): State<AppState>,
+    auth: Auth,
+    Json(body): Json<CreateTemplateRequest>,
+) -> Result<(StatusCode, Json<crate::domain::policy::PolicyTemplate>), ApiError> {
+    let template = policy_service::create_template(
+        &state.services,
+        &auth.principal,
+        &body.name,
+        &body.description,
+        &body.spec,
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(template)))
+}
+
+/// The body of an instantiation: which sandbox receives the new policy.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct InstantiateRequest {
+    /// The sandbox the new policy is assigned to, when it should be applied at
+    /// once. Omitted means the policy is created and left unassigned.
+    #[serde(default)]
+    pub assign_to: Option<Uuid>,
+}
+
+/// Turn a preset into a policy.
+pub async fn instantiate_template(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<InstantiateRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let result = policy_service::instantiate_template(
+        &state.services,
+        &auth.principal,
+        id,
+        body.assign_to,
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(result)))
+}
+
+/// The document schema the console's editor renders from.
+pub async fn schema(
+    State(state): State<AppState>,
+    auth: Auth,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let schema = policy_service::policy_schema(&state.services, &auth.principal)?;
+    Ok(Json(schema))
+}
+
+/// The body of an assignment.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct AssignPolicyRequest {
+    pub policy_id: Uuid,
+}
+
+/// Which policy a sandbox carries.
+pub async fn get_sandbox_policy(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let assignment =
+        policy_service::policy_of_sandbox(&state.services, &auth.principal, id).await?;
+    Ok(Json(serde_json::json!({ "assignment": assignment })))
+}
+
+/// Assign a policy to a sandbox, replacing the one it had.
+pub async fn put_sandbox_policy(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<AssignPolicyRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let result = policy_service::assign_policy_to_sandbox(
+        &state.services,
+        &auth.principal,
+        id,
+        body.policy_id,
+    )
+    .await?;
+    Ok(Json(result))
+}
+
+/// Remove a sandbox's policy assignment.
+pub async fn delete_sandbox_policy(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let result =
+        policy_service::unassign_policy_from_sandbox(&state.services, &auth.principal, id)
+            .await?;
+    Ok(Json(result))
+}
+
 /// The body of an egress-mode change.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct EgressModeRequest {

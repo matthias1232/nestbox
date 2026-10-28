@@ -857,6 +857,17 @@ pub async fn instantiate(
     .await?;
     scope.commit().await.map_err(ApiError::from)?;
 
+    // Same default as a plain sandbox: a recipe sandbox also starts on the
+    // best-practice policy, and the operator replaces it the same way. A recipe
+    // that shipped its own policy would be the caller naming one; today it does
+    // not, so the default applies.
+    crate::services::policy_service::apply_safe_defaults(
+        ctx,
+        principal.environment_id,
+        sandbox.id,
+    )
+    .await;
+
     // A pack that talks to a model needs the endpoint and the credential in its
     // environment; the credential is resolved at use and never stored.
     let mut environment = if crate::services::sandbox_service::pack_needs_inference(&sandbox.pack_key)

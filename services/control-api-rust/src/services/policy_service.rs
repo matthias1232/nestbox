@@ -14,7 +14,8 @@ use crate::domain::egress::{
 };
 use crate::domain::policy::{
     apply_outcome, rules_from_document, validate_document, ApplyOutcome, DnsRule, EgressMode,
-    EgressModeSetting, Matcher, NetworkRule, Policy, PolicyScope, PolicySection,
+    EgressModeSetting, Matcher, NetworkRule, Policy, PolicyAssignment, PolicyScope, PolicySection,
+    PolicyTemplate,
 };
 use crate::error::{ApiError, ErrorCode};
 use crate::security::node_token;
@@ -690,6 +691,307 @@ pub async fn set_egress_mode(
     .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
     Ok(setting)
+}
+
+/// The name of the policy a new sandbox gets when nobody names one.
+///
+/// This is the "safe defaults" promise, stated once: a sandbox starts with a
+/// policy that denies what it does not need, and the operator can see it by
+/// name and replace it by assigning another policy.
+pub const SAFE_DEFAULTS_POLICY_NAME: &str = "Safe defaults (best practice)";
+
+/// Apply a preset: turn its document into a policy, named after the template.
+///
+/// The document is validated like every save, so a template an operator edited
+/// badly is refused with the same sentence any hand-written document gets. An
+/// optional sandbox receives the new policy instead of its current one.
+///
+/// Applying a preset twice is not an error and not a second policy: a policy
+/// with that name and that exact document is reused, which is what makes
+/// "apply the safe defaults" idempotent. A name that is taken by a *different*
+/// document gets a counted suffix, so the operator sees their second copy
+/// instead of a 409 they cannot act on.
+pub async fn instantiate_template(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    template_id: Uuid,
+    assign_to: Option<Uuid>,
+) -> Result<serde_json::Value, ApiError> {
+    require(principal, Permission::PolicyWrite)?;
+
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let template = store::get_template(&mut scope, template_id)
+        .await
+        .map_err(ApiError::from)?;
+    let sections = validate_document(&template.spec).map_err(policy_error)?;
+
+    let (name, existing) = policy_name_for(&mut scope, &template.name, &template.spec)
+        .await
+        .map_err(ApiError::from)?;
+    let reused = existing.is_some();
+    let policy = match existing {
+        Some(policy) => policy,
+        None => store::insert(
+            &mut scope,
+            &name,
+            PolicyScope::Sandbox,
+            &template.spec,
+            Some(principal.user_id),
+        )
+        .await
+        .map_err(ApiError::from)?,
+    };
+    let assignment = match assign_to {
+        Some(sandbox_id) => {
+            let sandbox = sandbox_store::get(&mut scope, sandbox_id)
+                .await
+                .map_err(ApiError::from)?;
+            Some(
+                store::assign_policy(&mut scope, sandbox.id, policy.id)
+                    .await
+                    .map_err(ApiError::from)?,
+            )
+        }
+        None => None,
+    };
+    scope.commit().await.map_err(ApiError::from)?;
+
+    Ok(serde_json::json!({
+        "policy": policy,
+        "template": template.name,
+        "outcome": apply_outcome(&sections, false),
+        "sections": sections.iter().map(|s| s.as_str().to_string()).collect::<Vec<_>>(),
+        "assignment": assignment,
+        "reused": reused,
+    }))
+}
+
+/// The name a policy derived from a preset should carry, and the policy that
+/// already holds it when the document is the same.
+///
+/// A preset is applied by pressing a button, so pressing it twice must not be a
+/// conflict. The name is the preset's until something else uses it.
+async fn policy_name_for(
+    scope: &mut TenantScope<'_>,
+    base: &str,
+    spec: &serde_json::Value,
+) -> Result<(String, Option<Policy>), crate::error::StoreError> {
+    for attempt in 1..=50u32 {
+        let candidate = if attempt == 1 {
+            base.to_string()
+        } else {
+            format!("{base} ({attempt})")
+        };
+        match store::get_policy_by_name(scope, &candidate).await? {
+            None => return Ok((candidate, None)),
+            Some(policy) if policy.spec == *spec => return Ok((candidate, Some(policy))),
+            Some(_) => continue,
+        }
+    }
+    Ok((format!("{base} ({})", Uuid::new_v4()), None))
+}
+
+/// Assign a policy document to a sandbox.
+///
+/// This is how a sandbox gets away from the safe defaults: pick any policy in
+/// this environment and it applies instead.
+pub async fn assign_policy_to_sandbox(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+    policy_id: Uuid,
+) -> Result<serde_json::Value, ApiError> {
+    require(principal, Permission::PolicyWrite)?;
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let sandbox = sandbox_store::get(&mut scope, sandbox_id)
+        .await
+        .map_err(ApiError::from)?;
+    // A policy that does not exist here is a 404 before the row is written:
+    // assigning by guessed id must not attach a neighbour's policy.
+    store::get(&mut scope, policy_id).await.map_err(ApiError::from)?;
+    let assignment = store::assign_policy(&mut scope, sandbox.id, policy_id)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(serde_json::json!({ "assignment": assignment }))
+}
+
+/// Remove a sandbox's policy assignment.
+pub async fn unassign_policy_from_sandbox(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+) -> Result<serde_json::Value, ApiError> {
+    require(principal, Permission::PolicyWrite)?;
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    store::unassign_policy(&mut scope, sandbox_id)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(serde_json::json!({ "assigned": false }))
+}
+
+/// The policy assigned to one sandbox, or `null` when it has none.
+pub async fn policy_of_sandbox(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+) -> Result<Option<PolicyAssignment>, ApiError> {
+    require(principal, Permission::PolicyRead)?;
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let assignment = store::assignment_for_sandbox(&mut scope, sandbox_id)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(assignment)
+}
+
+/// All templates, the preset library the console offers.
+pub async fn list_templates(
+    ctx: &ServiceContext,
+    principal: &Principal,
+) -> Result<Vec<PolicyTemplate>, ApiError> {
+    require(principal, Permission::PolicyRead)?;
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let templates = store::list_templates(&mut scope)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(templates)
+}
+
+/// Save an operator's own preset.
+///
+/// The document is validated before the row exists: a template that cannot
+/// produce a valid policy is not stored, because a preset list that lies is
+/// worse than a short one.
+pub async fn create_template(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    name: &str,
+    description: &str,
+    spec: &serde_json::Value,
+) -> Result<PolicyTemplate, ApiError> {
+    require(principal, Permission::PolicyWrite)?;
+    if name.trim().is_empty() {
+        return Err(ApiError::validation("A template needs a name."));
+    }
+    validate_document(spec).map_err(policy_error)?;
+
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let template = store::insert_template(
+        &mut scope,
+        name.trim(),
+        description,
+        spec,
+    )
+    .await
+    .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(template)
+}
+
+/// The safe-defaults policy this environment carries, for the sandbox-create
+/// path and for the console to show what a new sandbox starts with.
+pub async fn safe_defaults(
+    ctx: &ServiceContext,
+    principal: &Principal,
+) -> Result<Option<Policy>, ApiError> {
+    require(principal, Permission::PolicyRead)?;
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let policy = store::get_policy_by_name(&mut scope, SAFE_DEFAULTS_POLICY_NAME)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(policy)
+}
+
+/// Give a sandbox its safe-defaults policy.
+///
+/// Called from the sandbox-create path. Assigning is best-effort: a sandbox
+/// that already carries an assignment is left alone (the caller named one), and
+/// a failure to assign must not fail the create, because a sandbox without a
+/// policy is the same thing it was before this feature.
+pub async fn apply_safe_defaults(
+    ctx: &ServiceContext,
+    environment_id: Uuid,
+    sandbox_id: Uuid,
+) {
+    let mut scope = match TenantScope::begin(&ctx.pool, environment_id).await {
+        Ok(scope) => scope,
+        Err(error) => {
+            tracing::warn!(
+                environment_id = %environment_id,
+                error = %error,
+                "could not open a scope for the safe-defaults assignment"
+            );
+            return;
+        }
+    };
+    let Some(policy) = store::get_policy_by_name(&mut scope, SAFE_DEFAULTS_POLICY_NAME)
+        .await
+        .map_err(ApiError::from)
+        .ok()
+        .flatten()
+    else {
+        tracing::warn!(
+            environment_id = %environment_id,
+            "no safe-defaults policy seeded; the sandbox starts without a policy"
+        );
+        return;
+    };
+    if store::assignment_for_sandbox(&mut scope, sandbox_id)
+        .await
+        .map_err(ApiError::from)
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        // The caller already chose a policy; their choice wins.
+        return;
+    }
+    if let Err(error) = store::assign_policy(&mut scope, sandbox_id, policy.id).await {
+        tracing::warn!(
+            sandbox_id = %sandbox_id,
+            error = %error,
+            "the safe-defaults assignment failed"
+        );
+        return;
+    }
+    if let Err(error) = scope.commit().await {
+        tracing::warn!(
+            sandbox_id = %sandbox_id,
+            error = %error,
+            "the safe-defaults assignment did not commit"
+        );
+    }
+}
+
+/// The document schema the console's editor renders from.
+///
+/// A schema is not tenant data, but reading it is still an authenticated act:
+/// the editor is an operator tool, so the permission is the same one that lets
+/// a caller read a policy.
+pub fn policy_schema(
+    _ctx: &ServiceContext,
+    principal: &Principal,
+) -> Result<serde_json::Value, ApiError> {
+    require(principal, Permission::PolicyRead)?;
+    Ok(crate::domain::policy::policy_schema())
 }
 
 /// Network rules attached to one sandbox.

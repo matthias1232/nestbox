@@ -39,6 +39,7 @@ Grouped by tab, all under the frozen `/api/v1/` prefix (ADR 0015):
 | Access | `GET /sandboxes/{id}/ssh-key`, `GET /sandboxes/{id}/ssh-key/download`, `POST /sandboxes/{id}/ssh-key/rotate`, `GET/POST /sandboxes/{id}/ports`, `DELETE /sandboxes/{id}/ports/{forward_id}`, `GET /sandboxes/{id}/sessions` |
 | Map | `GET /sandboxes/{id}/map`, `GET /topology` with live edges |
 | Inventory | `GET /sandboxes/{id}/inventory`, `POST /sandboxes/{id}/inventory/refresh` |
+| Policies | `GET/POST /policies`, `GET /policies/global`, `GET/PUT/DELETE /policies/{id}`, `GET /policies/{id}/diff`, `GET/POST /network-rules`, `DELETE /network-rules/{id}`, `GET/POST /dns-rules`, `DELETE /dns-rules/{id}`, `GET/PUT /sandboxes/{id}/egress-mode`, `GET /sandboxes/{id}/policy`, `PUT/DELETE /sandboxes/{id}/policy`, `GET/POST /policy-templates`, `POST /policy-templates/{id}/instantiate`, `GET /policy-schema` |
 | Node ingest | `POST /internal/policy/check`, `POST /internal/telemetry/batch`, `POST /internal/metrics/ingest` |
 
 The three `/internal/` endpoints are authenticated by a **node token**, not a

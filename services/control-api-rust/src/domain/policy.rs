@@ -692,8 +692,11 @@ impl Enforcement {
 /// Validate a policy document and report which sections it touches.
 ///
 /// Returns the sections present so the caller can decide whether a save is a
-/// live change or needs a recreation. A document with no network section is
-/// valid but touches nothing hot-reloadable.
+/// live change or needs a recreation. Every section's known fields are checked
+/// against their vocabulary, so a typo (`access: "alow"`) is a refusal with the
+/// reason and not a document the runtime silently ignores. Unknown fields are
+/// left alone on purpose: the runtime schema gains fields before this check
+/// does, and a validation that rejected them would block a working runtime.
 pub fn validate_document(spec: &serde_json::Value) -> Result<Vec<PolicySection>, PolicyError> {
     let object = spec
         .as_object()
@@ -701,7 +704,8 @@ pub fn validate_document(spec: &serde_json::Value) -> Result<Vec<PolicySection>,
 
     let mut sections = Vec::new();
     for section in PolicySection::all() {
-        if object.contains_key(section.as_str()) {
+        if let Some(value) = object.get(section.as_str()) {
+            validate_section(section, value)?;
             sections.push(section);
         }
     }
@@ -710,16 +714,360 @@ pub fn validate_document(spec: &serde_json::Value) -> Result<Vec<PolicySection>,
         return Err(PolicyError::Empty);
     }
 
-    // The network section is the only one with a shape this layer can check
-    // meaningfully without duplicating the runtime's schema. It must be an
-    // object of named policies.
-    if let Some(network) = object.get("network_policies") {
-        if !network.is_object() {
-            return Err(PolicyError::NetworkNotAnObject);
+    Ok(sections)
+}
+
+/// Validate one section against its schema.
+///
+/// Each section is a small vocabulary, and this is the one place the words are
+/// checked. The shape is what the console's form editor renders from
+/// [`policy_schema`], so a field the editor offers is a field this validates.
+fn validate_section(section: PolicySection, value: &serde_json::Value) -> Result<(), PolicyError> {
+    let object = value.as_object().ok_or_else(|| {
+        PolicyError::SectionNotAnObject {
+            section: section.as_str().to_string(),
+        }
+    })?;
+
+    match section {
+        PolicySection::NetworkPolicies => validate_network_policies(object),
+        PolicySection::FilesystemPolicy => validate_paths(object, "paths", PATH_ACCESS),
+        PolicySection::Landlock => validate_paths(object, "rules", LANDLOCK_ACCESS),
+        PolicySection::Process => validate_process(object),
+    }
+}
+
+/// The access words the filesystem section understands.
+const PATH_ACCESS: &[&str] = &["read", "write", "read_write", "exec", "none"];
+
+/// The access words the Landlock section understands.
+const LANDLOCK_ACCESS: &[&str] = &["read", "write", "exec"];
+
+/// `filesystem_policy` and `landlock` share one shape: a list of path grants.
+fn validate_paths(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    vocabulary: &[&str],
+) -> Result<(), PolicyError> {
+    let section = if key == "paths" {
+        "filesystem_policy"
+    } else {
+        "landlock"
+    };
+    let Some(entries) = object.get(key) else {
+        // An empty section is a valid statement: nothing granted.
+        return Ok(());
+    };
+    let entries = entries.as_array().ok_or_else(|| PolicyError::Section {
+        section: section.to_string(),
+        why: format!("{key} must be a list of entries"),
+    })?;
+
+    for entry in entries {
+        let entry = entry.as_object().ok_or_else(|| PolicyError::Section {
+            section: section.to_string(),
+            why: format!("every {key} entry is an object with path and access"),
+        })?;
+        let path = entry
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        if path.is_empty() || !path.starts_with('/') {
+            return Err(PolicyError::Section {
+                section: section.to_string(),
+                why: format!("every {key} entry names an absolute path, not {path:?}"),
+            });
+        }
+        let access = match entry.get("access") {
+            Some(serde_json::Value::Array(words)) => words
+                .iter()
+                .filter_map(|w| w.as_str())
+                .collect::<Vec<_>>(),
+            Some(serde_json::Value::String(word)) => vec![word.as_str()],
+            Some(_) => {
+                return Err(PolicyError::Section {
+                    section: section.to_string(),
+                    why: "access is one word or a list of words".to_string(),
+                })
+            }
+            None => return Err(PolicyError::Section {
+                section: section.to_string(),
+                why: "every entry says what access it grants".to_string(),
+            }),
+        };
+        for word in &access {
+            if !vocabulary.contains(word) {
+                return Err(PolicyError::Section {
+                    section: section.to_string(),
+                    why: format!(
+                        "access is one of {}; {word:?} is not",
+                        vocabulary.join(", ")
+                    ),
+                });
+            }
         }
     }
+    Ok(())
+}
 
-    Ok(sections)
+/// `process`: the user, the binaries, the environment, the process budget.
+fn validate_process(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), PolicyError> {
+    if let Some(user) = object.get("run_as_user") {
+        let user = user.as_str().ok_or_else(|| PolicyError::Section {
+            section: "process".to_string(),
+            why: "run_as_user is a string".to_string(),
+        })?;
+        if user.is_empty() || user.contains(' ') {
+            return Err(PolicyError::Section {
+                section: "process".to_string(),
+                why: "run_as_user is one user name".to_string(),
+            });
+        }
+    }
+    if let Some(binaries) = object.get("binaries") {
+        let binaries = binaries.as_array().ok_or_else(|| PolicyError::Section {
+            section: "process".to_string(),
+            why: "binaries is a list of executable paths".to_string(),
+        })?;
+        for binary in binaries {
+            let path = binary
+                .as_str()
+                .or_else(|| binary.get("path").and_then(|v| v.as_str()))
+                .unwrap_or_default();
+            if path.is_empty() || !path.starts_with('/') {
+                return Err(PolicyError::Section {
+                    section: "process".to_string(),
+                    why: format!("a binary is an absolute path, not {path:?}"),
+                });
+            }
+        }
+    }
+    if let Some(allow) = object.get("env_allow") {
+        let allow = allow.as_array().ok_or_else(|| PolicyError::Section {
+            section: "process".to_string(),
+            why: "env_allow is a list of variable names".to_string(),
+        })?;
+        for name in allow {
+            let name = name.as_str().unwrap_or_default();
+            if name.is_empty()
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                return Err(PolicyError::Section {
+                    section: "process".to_string(),
+                    why: format!("an environment variable is letters, digits, _, not {name:?}"),
+                });
+            }
+        }
+    }
+    if let Some(max) = object.get("max_processes") {
+        let max = max.as_i64().ok_or_else(|| PolicyError::Section {
+            section: "process".to_string(),
+            why: "max_processes is a whole number".to_string(),
+        })?;
+        if max < 1 || max > 4096 {
+            return Err(PolicyError::Section {
+                section: "process".to_string(),
+                why: "max_processes is between 1 and 4096".to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// `network_policies`: named policies, each with endpoints that carry the rule
+/// vocabulary the projection reads.
+fn validate_network_policies(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), PolicyError> {
+    for (name, policy) in object {
+        let policy = policy.as_object().ok_or_else(|| PolicyError::Section {
+            section: "network_policies".to_string(),
+            why: format!("the policy {name:?} is an object with endpoints"),
+        })?;
+        if let Some(enforcement) = policy.get("enforcement") {
+            let word = enforcement.as_str().unwrap_or_default();
+            if Enforcement::parse(word).is_none() {
+                return Err(PolicyError::Section {
+                    section: "network_policies".to_string(),
+                    why: format!("enforcement is enforced or audit, not {word:?}"),
+                });
+            }
+        }
+        let endpoints = policy.get("endpoints").ok_or_else(|| PolicyError::Section {
+            section: "network_policies".to_string(),
+            why: format!("the policy {name:?} says which endpoints it covers"),
+        })?;
+        let endpoints = endpoints.as_array().ok_or_else(|| PolicyError::Section {
+            section: "network_policies".to_string(),
+            why: format!("the endpoints of {name:?} are a list"),
+        })?;
+        for endpoint in endpoints {
+            validate_endpoint(endpoint)?;
+        }
+    }
+    Ok(())
+}
+
+/// One endpoint of a named network policy.
+fn validate_endpoint(endpoint: &serde_json::Value) -> Result<(), PolicyError> {
+    let endpoint = endpoint.as_object().ok_or_else(|| PolicyError::Section {
+        section: "network_policies".to_string(),
+        why: "every endpoint is an object".to_string(),
+    })?;
+    let host = endpoint
+        .get("host")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    if host.is_empty() || host.contains(' ') {
+        return Err(PolicyError::Section {
+            section: "network_policies".to_string(),
+            why: format!("every endpoint names a host, not {host:?}"),
+        });
+    }
+    if let Some(port) = endpoint.get("port") {
+        let port = port.as_i64().ok_or_else(|| PolicyError::Section {
+            section: "network_policies".to_string(),
+            why: "a port is a whole number".to_string(),
+        })?;
+        if !(1..=65535).contains(&port) {
+            return Err(PolicyError::Section {
+                section: "network_policies".to_string(),
+                why: "a port is between 1 and 65535".to_string(),
+            });
+        }
+    }
+    if let Some(protocol) = endpoint.get("protocol") {
+        let word = protocol.as_str().unwrap_or_default();
+        if RuleProtocol::parse(word).is_none() {
+            return Err(PolicyError::Section {
+                section: "network_policies".to_string(),
+                why: format!(
+                    "a protocol is one of rest, http, websocket, graphql, mcp, jsonrpc, tcp; not {word:?}"
+                ),
+            });
+        }
+    }
+    if let Some(access) = endpoint.get("access") {
+        let word = access.as_str().unwrap_or_default();
+        if RuleAction::parse(word).is_none() {
+            return Err(PolicyError::Section {
+                section: "network_policies".to_string(),
+                why: format!("access is allow or deny, not {word:?}"),
+            });
+        }
+    }
+    if let Some(methods) = endpoint.get("methods") {
+        let methods = methods.as_array().ok_or_else(|| PolicyError::Section {
+            section: "network_policies".to_string(),
+            why: "methods is a list of HTTP methods".to_string(),
+        })?;
+        for method in methods {
+            let word = method.as_str().unwrap_or_default();
+            if word.is_empty() || !word.chars().all(|c| c.is_ascii_alphabetic()) {
+                return Err(PolicyError::Section {
+                    section: "network_policies".to_string(),
+                    why: format!("an HTTP method is letters, not {word:?}"),
+                });
+            }
+        }
+    }
+    if let Some(binaries) = endpoint.get("binaries") {
+        let binaries = binaries.as_array().ok_or_else(|| PolicyError::Section {
+            section: "network_policies".to_string(),
+            why: "binaries is a list of executable paths".to_string(),
+        })?;
+        for binary in binaries {
+            let path = binary
+                .as_str()
+                .or_else(|| binary.get("path").and_then(|v| v.as_str()))
+                .unwrap_or_default();
+            if path.is_empty() || !path.starts_with('/') {
+                return Err(PolicyError::Section {
+                    section: "network_policies".to_string(),
+                    why: format!("a binary is an absolute path, not {path:?}"),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The document schema, for the console's editor.
+///
+/// This is data, not prose: the editor renders its fields from it, so a field
+/// the schema knows and one the editor offers cannot drift apart. Every entry
+/// carries the vocabulary the validation accepts, which is why the console can
+/// validate before it saves.
+pub fn policy_schema() -> serde_json::Value {
+    serde_json::json!({
+        "sections": [
+            {
+                "key": "filesystem_policy",
+                "title": "Filesystem",
+                "hot_reloadable": false,
+                "description": "Which paths the sandbox may read, write, or execute.",
+                "list_key": "paths",
+                "fields": [
+                    { "name": "path", "type": "string", "required": true, "example": "/workspace",
+                      "description": "An absolute path inside the sandbox." },
+                    { "name": "access", "type": "enum", "required": true,
+                      "values": PATH_ACCESS,
+                      "description": "What may happen on this path." },
+                ],
+            },
+            {
+                "key": "landlock",
+                "title": "Landlock",
+                "hot_reloadable": false,
+                "description": "Kernel-enforced path grants; the same shape as the filesystem section.",
+                "list_key": "rules",
+                "fields": [
+                    { "name": "path", "type": "string", "required": true, "example": "/home/nestbox",
+                      "description": "An absolute path inside the sandbox." },
+                    { "name": "access", "type": "enum-list", "required": true,
+                      "values": LANDLOCK_ACCESS,
+                      "description": "What may happen on this path." },
+                ],
+            },
+            {
+                "key": "process",
+                "title": "Process",
+                "hot_reloadable": false,
+                "description": "Who runs, which executables may start, and which environment variables survive.",
+                "fields": [
+                    { "name": "run_as_user", "type": "string", "required": false, "example": "sandbox" },
+                    { "name": "binaries", "type": "path-list", "required": false,
+                      "example": "/usr/local/bin/agent" },
+                    { "name": "env_allow", "type": "string-list", "required": false, "example": "PATH" },
+                    { "name": "max_processes", "type": "integer", "required": false, "min": 1, "max": 4096 },
+                ],
+            },
+            {
+                "key": "network_policies",
+                "title": "Network",
+                "hot_reloadable": true,
+                "description": "Named policies, each with the endpoints it covers. Changes reload on running sandboxes.",
+                "fields": [
+                    { "name": "enforcement", "type": "enum", "required": false,
+                      "values": ["enforced", "audit"],
+                      "description": "audit records and allows; enforced blocks." },
+                ],
+                "endpoint_fields": [
+                    { "name": "host", "type": "string", "required": true, "example": "api.example.com" },
+                    { "name": "port", "type": "integer", "required": false, "min": 1, "max": 65535 },
+                    { "name": "protocol", "type": "enum", "required": false,
+                      "values": ["rest", "http", "websocket", "graphql", "mcp", "jsonrpc", "tcp"] },
+                    { "name": "access", "type": "enum", "required": false, "values": ["allow", "deny"] },
+                    { "name": "methods", "type": "string-list", "required": false, "example": "GET" },
+                    { "name": "binaries", "type": "path-list", "required": false },
+                ],
+            },
+        ],
+    })
 }
 
 /// Decide what a save will do, given the sections it changes and whether the
@@ -747,8 +1095,6 @@ pub enum PolicyError {
     NotAnObject,
     #[error("policy document has no recognised section")]
     Empty,
-    #[error("network_policies must be an object of named policies")]
-    NetworkNotAnObject,
     #[error("matcher {kind} is not valid: {why}")]
     MatcherValue {
         kind: String,
@@ -772,7 +1118,6 @@ impl PolicyError {
         match self {
             Self::NotAnObject => "policy.not_an_object",
             Self::Empty => "policy.empty",
-            Self::NetworkNotAnObject => "policy.network_not_an_object",
             Self::MatcherValue { .. } => "policy.matcher_invalid",
             Self::Section { .. } => "policy.section_invalid",
             Self::SectionNotAnObject { .. } => "policy.section_not_an_object",
@@ -928,6 +1273,37 @@ pub struct EgressModeSetting {
     pub version: i64,
 }
 
+/// A preset in the template library.
+///
+/// Templates are data (ADR 0020): a preset is a document with a name, so an
+/// operator can edit one and the change needs no deploy.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PolicyTemplate {
+    pub id: Uuid,
+    pub environment_id: Uuid,
+    pub name: String,
+    pub description: String,
+    /// The document the template produces. Validated like every save.
+    pub spec: serde_json::Value,
+    pub version: i64,
+}
+
+/// Which policy is assigned to one sandbox, and what of it has been applied.
+///
+/// `desired_version` is what the control plane wants; `applied_version` is what
+/// the sandbox has loaded. The gap between the two is the drift the console
+/// shows.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PolicyAssignment {
+    pub sandbox_id: Uuid,
+    pub policy_id: Uuid,
+    pub policy_name: String,
+    pub policy_scope: PolicyScope,
+    pub desired_version: i64,
+    pub applied_version: Option<i64>,
+    pub applied_at: Option<DateTime<Utc>>,
+}
+
 /// A rule extracted from a document, before it has an identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetworkRuleSeed {
@@ -994,6 +1370,76 @@ mod tests {
             Err(PolicyError::NotAnObject)
         );
         assert_eq!(validate_document(&json!({})), Err(PolicyError::Empty));
+    }
+
+    #[test]
+    fn a_typo_in_a_section_word_is_refused_with_the_reason() {
+        let doc = json!({
+            "filesystem_policy": {
+                "paths": [{ "path": "/workspace", "access": "alow" }]
+            }
+        });
+        let error = validate_document(&doc).expect_err("typo");
+        assert_eq!(error.code(), "policy.section_invalid");
+        assert!(error.to_string().contains("read"), "{error}");
+    }
+
+    #[test]
+    fn every_section_vocabulary_is_checked() {
+        let landlock = json!({
+            "landlock": { "rules": [{ "path": "/home", "access": ["read", "admin"] }] }
+        });
+        assert!(validate_document(&landlock).is_err());
+
+        let process = json!({ "process": { "max_processes": 0 } });
+        assert!(validate_document(&process).is_err());
+
+        let endpoint = json!({
+            "network_policies": { "api": { "endpoints": [{ "host": "a b" }] } }
+        });
+        assert!(validate_document(&endpoint).is_err());
+
+        let action = json!({
+            "network_policies": { "api": { "endpoints": [{ "host": "a", "access": "maybe" }] } }
+        });
+        assert!(validate_document(&action).is_err());
+    }
+
+    #[test]
+    fn an_empty_section_is_a_valid_statement() {
+        let doc = json!({ "filesystem_policy": {} });
+        assert_eq!(
+            validate_document(&doc),
+            Ok(vec![PolicySection::FilesystemPolicy])
+        );
+    }
+
+    #[test]
+    fn the_schema_names_every_field_the_validation_checks() {
+        let schema = policy_schema();
+        let sections = schema["sections"].as_array().expect("sections");
+        assert_eq!(sections.len(), 4);
+        for section in sections {
+            assert!(section["key"].is_string());
+            assert!(section["title"].is_string());
+        }
+        // The access words in the schema are exactly the words the validation
+        // accepts; that is the invariant the form editor stands on.
+        let filesystem = sections
+            .iter()
+            .find(|s| s["key"] == "filesystem_policy")
+            .expect("filesystem section");
+        let values: Vec<String> = filesystem["fields"][1]["values"]
+            .as_array()
+            .expect("values")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .map(str::to_string)
+            .collect();
+        assert_eq!(
+            values,
+            PATH_ACCESS.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+        );
     }
 
     #[test]

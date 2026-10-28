@@ -189,6 +189,22 @@ pub fn router(state: AppState) -> Router {
             get(policies::get).put(policies::update).delete(policies::delete),
         )
         .route("/api/v1/policies/{id}/diff", get(policies::diff))
+        // The preset library, the editor's schema, and a sandbox's policy
+        .route(
+            "/api/v1/policy-templates",
+            get(policies::list_templates).post(policies::create_template),
+        )
+        .route(
+            "/api/v1/policy-templates/{id}/instantiate",
+            post(policies::instantiate_template),
+        )
+        .route("/api/v1/policy-schema", get(policies::schema))
+        .route(
+            "/api/v1/sandboxes/{id}/policy",
+            get(policies::get_sandbox_policy)
+                .put(policies::put_sandbox_policy)
+                .delete(policies::delete_sandbox_policy),
+        )
         // Network rules
         .route(
             "/api/v1/network-rules",
