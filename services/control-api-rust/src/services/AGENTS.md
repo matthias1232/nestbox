@@ -141,3 +141,9 @@ The idle clock measures input, not output (ADR 0023). The limits are counted
 from the open rows, so they survive a restart; the advisory lock in
 `terminal_sessions::lock_user` makes the count and the insert one decision.
 Nothing in this file may write a keystroke or a line of output anywhere.
+
+The audit detail names the session `terminal_id`, not `session_id`: the central
+redactor masks every key containing "session" (so a session cookie can never
+leak), and a masked reference reads like a redacted secret instead of a pointer.
+The row itself is in `sandbox_sessions`; `terminal_id` is the join key a reviewer
+uses to find it.

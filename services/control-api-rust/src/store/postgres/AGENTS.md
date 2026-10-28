@@ -56,4 +56,12 @@ are deliberate:
   "count, then insert" is only one decision if nothing else can insert for that
   user in between;
 * an unclosed row is ignored once it is older than a session can live, so a
-  process that died mid-session cannot consume the quota forever.
+  process that died mid-session cannot consume the quota forever;
+* `open` therefore calls `close_stale` first: the ghost is closed (reason
+  `error`, `closed_at` = the moment it was noticed) instead of being skipped
+  silently, which keeps the audit row honest about the fact that it ended.
+
+`sandbox_sessions` gets its tenant policy in `0025`, not in `0009`: 0009 runs
+once and could not see a table that arrived in 0024. Any table added later with
+an `environment_id` needs its own `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`
+plus the `tenant_isolation` policy; the catalogue walk in 0009 will not repeat.

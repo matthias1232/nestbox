@@ -270,6 +270,16 @@ pub async fn open(
         ));
     }
 
+    // Rows whose process died keep their quota slot until they age out of the
+    // count. Closing them here means the next operator frees the ghosts instead
+    // of being refused with an empty Quota tab in front of them.
+    let swept = session_store::close_stale(&mut scope, limits.stale_after())
+        .await
+        .map_err(ApiError::from)?;
+    if swept > 0 {
+        tracing::info!(closed = swept, "closed abandoned terminal sessions");
+    }
+
     // The lock makes "count, then insert" one decision for this user, so two
     // tabs opened at the same moment cannot both pass the last free slot.
     session_store::lock_user(&mut scope, principal.user_id)
@@ -331,9 +341,15 @@ pub async fn open(
             subject_id: Some(sandbox_id),
             // Identity and time. Never a keystroke, never a line of output:
             // that is the whole point of ADR 0023.
+            //
+            // The key is `terminal_id`, not `session_id`, because the central
+            // redactor masks every key containing "session" (a session cookie
+            // must never leak). A masked reference is worse than none: it looks
+            // like a secret was there. `terminal_id` survives and still names
+            // the row a reviewer can look up.
             detail: &serde_json::json!({
                 "sandbox": sandbox.name,
-                "session_id": session_id,
+                "terminal_id": session_id,
                 "user": principal.display_name,
                 "started_at": opened_at.to_rfc3339(),
             }),
@@ -511,7 +527,7 @@ async fn close_session(
             subject_id: Some(ticket.sandbox_id),
             detail: &serde_json::json!({
                 "sandbox": ticket.sandbox_name,
-                "session_id": ticket.session_id,
+                "terminal_id": ticket.session_id,
                 "reason": reason.as_str(),
                 "duration_s": duration_s,
                 "bytes_in": bytes_in,

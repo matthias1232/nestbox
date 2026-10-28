@@ -134,3 +134,37 @@ pub async fn close(
     .await?;
     Ok(())
 }
+
+/// Close the sessions that cannot still be alive, and report how many.
+///
+/// A session is closed by the process that opened it, but `kill -9`, a redeploy,
+/// or a power cut cannot. Such a row keeps its quota slot until it ages out of
+/// the count, which is why `open` calls this first: the next terminal in that
+/// environment frees the ghosts instead of refusing an operator who is looking
+/// at an empty Quota tab.
+///
+/// The reason is `error`, one of the four ADR 0023 names, because whatever
+/// happened was not a user closing a shell. `closed_at` is the moment the row
+/// was noticed, not the moment the session really ended — the duration of a
+/// swept row is "until detection". That is a recorded approximation rather than
+/// an invented precision: the alternative is leaving `closed_at` NULL forever,
+/// which claims the session is still open.
+pub async fn close_stale(
+    scope: &mut TenantScope<'_>,
+    stale_after: Duration,
+) -> Result<u64, StoreError> {
+    let result = sqlx::query(
+        "UPDATE sandbox_sessions
+            SET closed_at = now(), close_reason = 'error'
+          WHERE environment_id = $1
+            AND kind = $2
+            AND closed_at IS NULL
+            AND opened_at < now() - ($3::double precision * interval '1 second')",
+    )
+    .bind(scope.environment_id())
+    .bind(KIND_TERMINAL)
+    .bind(stale_after.as_secs_f64())
+    .execute(scope.connection())
+    .await?;
+    Ok(result.rows_affected())
+}

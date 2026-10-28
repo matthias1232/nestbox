@@ -88,4 +88,6 @@ still a handler and not a rule:
    `ClientFrame`/`ServerFrame` port, and `attach` runs the session.
 
 The close frame the console shows comes from the service; the handler only adds
-the WebSocket close.
+the WebSocket close. A refusal that happens before the upgrade is a normal HTTP
+error with the published envelope, which is why the terminal route is the one
+place in this layer where a quota is a status code rather than a frame.

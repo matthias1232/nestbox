@@ -20,7 +20,16 @@ services:
       - sh
       - -c
       - |
-        mkdir -p /data/gateway /secrets
+        mkdir -p /data/gateway /secrets /secrets/node
+        # The node token authenticates the control API to the runner's terminal
+        # endpoint. It lives in its own directory because the runner mounts that
+        # directory and must not see the database URLs next to it.
+        #
+        # Generated here rather than required from the operator: a missing file
+        # would otherwise fail `up`, and a terminal without a token must not be
+        # an option. Idempotent — an existing token is never replaced, because a
+        # replacement cuts every open terminal.
+        [ -s /secrets/node/token ] || head -c 24 /dev/urandom | base64 > /secrets/node/token
         chown -R 10001:10001 /data /secrets
         chmod 0700 /secrets
         find /secrets -type f -exec chmod 0600 {} + 2>/dev/null || true
@@ -95,12 +104,18 @@ services:
       NESTBOX_RUNTIME_NETWORK: nestbox-runtime
       NESTBOX_SECRET_DIR: /secrets
       NESTBOX_SESSION_COOKIE_SECURE: "false"
+      # The same token the runner demands on the terminal upgrade. It comes from
+      # the node directory rather than from a compose secret, because compose
+      # checks a secret file when it creates the container — before `init-data`
+      # can generate one — and a fresh appliance would fail to start.
+      NESTBOX_NODE_TOKEN_FILE: /run/secrets/token
       RUST_LOG: info,tower_http=warn
     secrets:
       - database_url
     volumes:
       - ./data/gateway:/data/gateway:ro
       - ./secrets:/secrets:ro
+      - ./secrets/node:/run/secrets:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -150,6 +165,11 @@ services:
       NESTBOX_PERSISTENT_BASE: /var/lib/nestbox/persistent
       # The host's /proc, so the hardware report describes the machine.
       NESTBOX_HOST_PROC: /host/proc
+      # The terminal upgrade is refused without this token, and the runner also
+      # sits on the sandbox network: an open endpoint there would be a shell into
+      # every neighbour. It mounts the node directory, not `secrets/`: the
+      # runner has the Docker socket and no business reading database URLs.
+      NESTBOX_NODE_TOKEN_FILE: /run/secrets/token
     volumes:
       # The only component that talks to the Docker socket. It is separate from
       # the API on purpose: a compromise of the API does not yield the host.
@@ -158,6 +178,7 @@ services:
       # so a bind source the runner validates is the path Docker mounts.
       - /var/lib/nestbox/persistent:/var/lib/nestbox/persistent
       - /proc:/host/proc:ro
+      - ./secrets/node:/run/secrets:ro
     expose:
       - "9000"
     networks:
