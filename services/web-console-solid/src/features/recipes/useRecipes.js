@@ -92,7 +92,7 @@ export function useRecipes() {
 
   async function loadNodes() {
     try {
-      setNodes(await nodesApi.list());
+      setNodes((await nodesApi.list()).items || []);
     } catch {
       // Node names are a convenience. A role without node read still sees every
       // recipe, with a short node id instead of a name.

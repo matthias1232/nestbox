@@ -63,7 +63,7 @@ export function usePersistent() {
     setLoading(true);
     clearMessages();
     try {
-      setItems((await api.list()) || []);
+      setItems((await api.list()).items || []);
     } catch (failure) {
       fail(failure);
     } finally {
@@ -74,7 +74,7 @@ export function usePersistent() {
 
   async function refresh() {
     try {
-      setItems((await api.list()) || []);
+      setItems((await api.list()).items || []);
     } catch (failure) {
       fail(failure);
     }
@@ -82,7 +82,7 @@ export function usePersistent() {
 
   async function loadNodes() {
     try {
-      setNodes(await nodesApi.list());
+      setNodes((await nodesApi.list()).items || []);
     } catch {
       // Node names are a convenience; without node read the rows show a short id.
       setNodes([]);

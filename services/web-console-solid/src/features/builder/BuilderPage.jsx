@@ -194,6 +194,19 @@ export default function BuilderPage() {
     }
   }
 
+  async function refresh() {
+    if (!saved()) return;
+    try {
+      const fresh = await recipes.get(saved().id);
+      setSaved(fresh);
+      if (fresh.state === 'built') {
+        setNotice(`Built: ${fresh.image_ref}. Create a sandbox from it when you are ready.`);
+      }
+    } catch (failure) {
+      setError(failure.message);
+    }
+  }
+
   async function build() {
     setBusy(true);
     setError(null);
@@ -239,6 +252,7 @@ export default function BuilderPage() {
           <Show when={saved()}>
             <span class="muted small">rev {saved().revision}</span>
             <StatusBadge status={saved().state} />
+            <button class="secondary" onClick={refresh} disabled={busy()}>Refresh</button>
           </Show>
         </div>
       </header>

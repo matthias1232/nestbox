@@ -49,7 +49,7 @@ export function useCreateSandbox() {
       // Default to the local node, then to the first one: the same placement a
       // request without `node` gets, so the visible choice matches the actual
       // one.
-      const items = nodeAnswer.value || [];
+      const items = nodeAnswer.value.items || [];
       setNodes(items);
       const preferred = items.find((node) => node.is_local) || items[0];
       if (preferred) setForm({ ...form(), node: preferred.name });
