@@ -188,6 +188,15 @@ class PtySocket:
     def __init__(self, raw: Any) -> None:
         self._raw = raw
         self._socket = getattr(raw, "_sock", raw)
+        # docker-py's client carries a 60 s timeout into the hijacked socket.
+        # Left in place, `recv` raises after one minute of silence and the pump
+        # reads that as the shell exiting, so an idle terminal would die after a
+        # minute no matter what the idle policy says. Blocking is what a PTY
+        # needs: there is nothing to time out, the session ends when a side ends
+        # it.
+        clearer = getattr(self._socket, "settimeout", None)
+        if clearer is not None:
+            clearer(None)
 
     def read(self, size: int = READ_CHUNK) -> bytes:
         """Block until bytes arrive; empty bytes mean the stream ended."""
@@ -267,6 +276,11 @@ async def pump(
         while True:
             try:
                 chunk = await asyncio.to_thread(pty.read, READ_CHUNK)
+            except TimeoutError:
+                # A socket that brought its own timeout is not a closed shell.
+                # `PtySocket` clears one, so this is a second line rather than
+                # the mechanism.
+                continue
             except (OSError, ValueError):
                 chunk = b""
             if not chunk:

@@ -54,6 +54,10 @@ Three rules hold it together:
    the next chunk.
 2. **The PTY is closed on every path**, including the idle timeout and a browser
    that vanishes. Closing it is also what releases the blocked read.
+   `PtySocket` also clears the 60 s timeout docker-py leaves on the hijacked
+   exec socket: left in place, `recv` raises after a minute of silence, the pump
+   reads that as the shell exiting, and every idle terminal dies after sixty
+   seconds regardless of the idle policy. A read timeout is never EOF.
 3. **Nothing is logged or recorded.** The control API keeps who/when/how long
    (ADR 0023); a keystroke in a log line here would undo that.
 

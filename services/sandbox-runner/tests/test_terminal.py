@@ -222,6 +222,33 @@ class IdleTimeoutTests(unittest.TestCase):
         os.environ.pop("NESTBOX_TERMINAL_IDLE_SECONDS", None)
 
 
+class SocketTimeoutTests(unittest.TestCase):
+    """docker-py hands the exec socket a 60 s timeout; it must not survive."""
+
+    class Raw:
+        def __init__(self) -> None:
+            self.timeout = 60.0
+            self.written = []
+
+        def settimeout(self, value) -> None:
+            self.timeout = value
+
+        def recv(self, size: int) -> bytes:
+            return b""
+
+        def sendall(self, data: bytes) -> None:
+            self.written.append(data)
+
+        def close(self) -> None:
+            pass
+
+    def test_the_timeout_is_cleared(self) -> None:
+        raw = self.Raw()
+        socket = types.SimpleNamespace(_sock=raw)
+        tm.PtySocket(socket)
+        self.assertIsNone(raw.timeout)
+
+
 class PumpTests(unittest.IsolatedAsyncioTestCase):
     async def run_pump(self, coroutine, pty: FakePty):
         """Await the pump and then unblock the reader thread.
@@ -314,6 +341,32 @@ class PumpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reason, "sandbox_stopped")
         # What reached the browser before the stream ended is kept.
         self.assertEqual(socket.output(), "bye")
+
+    async def test_a_read_timeout_is_not_the_end_of_the_shell(self) -> None:
+        # A socket that brought its own timeout raises instead of blocking.
+        # That is not an exited shell, so the pump keeps waiting.
+        socket, pty = FakeWebSocket(), FakePty()
+
+        class Impatient(FakePty):
+            def __init__(self) -> None:
+                super().__init__()
+                self.raised = False
+
+            def read(self, size: int = 8192) -> bytes:
+                if not self.raised:
+                    self.raised = True
+                    raise TimeoutError("timed out")
+                return super().read(size)
+
+        impatient = Impatient()
+        impatient.emit(b"still here")
+
+        reason = await self.run_pump(
+            tm.pump(socket, impatient, lambda c, r: None, 0.4), impatient
+        )
+
+        self.assertEqual(reason, "idle")
+        self.assertEqual(socket.output(), "still here")
 
     async def test_a_disconnect_ends_the_session(self) -> None:
         socket, pty = FakeWebSocket(), FakePty()

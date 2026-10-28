@@ -188,6 +188,8 @@ impl TerminalSocket for RunnerTerminal {
                     return Ok(Some(TerminalMessage::Closed(reason)));
                 }
                 // Protocol bookkeeping, not a frame the session sees.
+                // tungstenite queues the pong for a ping and writes it while
+                // the stream is polled, which this loop always is.
                 Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => continue,
             }
         }
@@ -246,6 +248,44 @@ mod tests {
             close_control_frame(r#"{"type":"close"}"#),
             Some("error".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn an_idle_terminal_answers_a_ping() {
+        // The runner pings every twenty seconds. This side is read-only while a
+        // shell sits at its prompt, so the pong has to be flushed explicitly —
+        // without that the peer gives up after a minute and an idle terminal
+        // dies for no reason a user could see.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap_or_else(|error| panic!("a local port: {error}"));
+        let address = listener.local_addr().unwrap_or_else(|error| panic!("{error}"));
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap_or_else(|error| panic!("{error}"));
+            let mut socket = tokio_tungstenite::accept_async(stream)
+                .await
+                .unwrap_or_else(|error| panic!("handshake: {error}"));
+            socket
+                .send(Message::Ping(vec![1, 2, 3].into()))
+                .await
+                .unwrap_or_else(|error| panic!("ping: {error}"));
+            let answer = tokio::time::timeout(std::time::Duration::from_secs(5), socket.next())
+                .await
+                .unwrap_or_else(|_| panic!("no answer within five seconds"));
+            matches!(answer, Some(Ok(Message::Pong(_))))
+        });
+
+        let (stream, _) =
+            tokio_tungstenite::connect_async(format!("ws://{address}"))
+                .await
+                .unwrap_or_else(|error| panic!("connect: {error}"));
+        let mut terminal = RunnerTerminal::new(stream);
+        let reader = tokio::spawn(async move {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(3), terminal.recv()).await;
+        });
+
+        assert!(server.await.unwrap_or(false), "the pong must reach the peer");
+        let _ = reader.await;
     }
 
     #[test]
