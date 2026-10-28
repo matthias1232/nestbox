@@ -126,6 +126,34 @@ export default function ModelsPage() {
     }
   }
 
+  // The RAM figure being typed per install, in GiB. Kept as text so a half-typed
+  // "4." is not rewritten under the cursor.
+  const [ramDraft, setRamDraft] = createSignal({});
+
+  async function change(row, patch, label) {
+    setNotice(null);
+    setError(null);
+    try {
+      const result = await models.updateInstall(row.model_key, { node: nodeName(), ...patch });
+      setNotice(`${row.model_name || row.model_key}: ${label}. ${result.warning || ''}`.trim());
+      setRamDraft({ ...ramDraft(), [row.model_key]: undefined });
+      await load(false);
+    } catch (failure) {
+      setError(failure.message);
+    }
+  }
+
+  function saveRam(row) {
+    const text = ramDraft()[row.model_key];
+    const value = Number.parseFloat(text);
+    if (!Number.isFinite(value) || value <= 0) {
+      setError('Reserved RAM is a number of GiB greater than zero.');
+      return;
+    }
+    return change(row, { reserved_ram_bytes: Math.round(value * 1024 * 1024 * 1024) },
+      `reserved RAM set to ${value} GiB`);
+  }
+
   async function uninstall(model) {
     setNotice(null);
     setError(null);
@@ -276,7 +304,7 @@ export default function ModelsPage() {
           </summary>
           <table class="model-table">
             <thead>
-              <tr><th>Model</th><th>State</th><th>Reserved</th><th>Endpoint</th></tr>
+              <tr><th>Model</th><th>State</th><th>Reserved RAM</th><th>Endpoint</th><th>Active</th></tr>
             </thead>
             <tbody>
               <For each={installs()}>
@@ -298,9 +326,40 @@ export default function ModelsPage() {
                         <div class="muted small">{row.error}</div>
                       </Show>
                     </td>
-                    <td>{gib(row.reserved_ram_bytes || 0)} RAM</td>
+                    <td>
+                      <Show when={row.state === 'installed'} fallback={<>{gib(row.reserved_ram_bytes || 0)}</>}>
+                        <input
+                          class="ram-input"
+                          type="number" min="0.1" step="0.5"
+                          value={ramDraft()[row.model_key] ?? (row.reserved_ram_bytes / 1073741824).toFixed(1)}
+                          onInput={(event) =>
+                            setRamDraft({ ...ramDraft(), [row.model_key]: event.currentTarget.value })}
+                        />{' '}GiB{' '}
+                        <button class="secondary"
+                                disabled={ramDraft()[row.model_key] === undefined}
+                                onClick={() => saveRam(row)}>
+                          Save
+                        </button>
+                        <Show when={!row.enabled}>
+                          <div class="muted small">off: counts once switched on</div>
+                        </Show>
+                      </Show>
+                    </td>
                     <td class="muted small">
-                      {row.state === 'installed' ? 'answering on the runtime network' : '—'}
+                      {row.state === 'installed' && row.enabled
+                        ? 'answering on the runtime network'
+                        : row.state === 'installed' ? 'off, memory free' : '—'}
+                    </td>
+                    <td>
+                      <Show when={row.state === 'installed'}>
+                        <label class="switch">
+                          <input type="checkbox" checked={row.enabled}
+                                 onChange={(event) =>
+                                   change(row, { enabled: event.currentTarget.checked },
+                                     event.currentTarget.checked ? 'switching on' : 'switched off')} />
+                          {row.enabled ? 'On' : 'Off'}
+                        </label>
+                      </Show>
                     </td>
                   </tr>
                 )}

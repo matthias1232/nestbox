@@ -8,7 +8,7 @@ use crate::domain::model_install::{InstallState, ModelInstall};
 use crate::error::StoreError;
 
 const INSTALL_COLUMNS: &str = "id, environment_id, model_key, node_id, state, installed_version, \
-     reserved_ram_bytes, reserved_vram_bytes, provider_profile_id, job_id, error, \
+     reserved_ram_bytes, reserved_vram_bytes, enabled, provider_profile_id, job_id, error, \
      created_at, updated_at";
 
 fn row_to_install(row: &sqlx::postgres::PgRow) -> Result<ModelInstall, StoreError> {
@@ -22,6 +22,7 @@ fn row_to_install(row: &sqlx::postgres::PgRow) -> Result<ModelInstall, StoreErro
         installed_version: row.try_get("installed_version")?,
         reserved_ram_bytes: row.try_get("reserved_ram_bytes")?,
         reserved_vram_bytes: row.try_get("reserved_vram_bytes")?,
+        enabled: row.try_get("enabled")?,
         provider_profile_id: row.try_get("provider_profile_id")?,
         job_id: row.try_get("job_id")?,
         error: row.try_get("error")?,
@@ -146,6 +147,54 @@ pub async fn set_state(
     row_to_install(&row)
 }
 
+/// Change what an install reserves.
+///
+/// The figures are the operator's setting: the node's budget is checked by the
+/// service before this runs, and `enabled` decides whether they count.
+pub async fn set_reservation(
+    scope: &mut TenantScope<'_>,
+    id: Uuid,
+    ram_bytes: i64,
+    vram_bytes: i64,
+) -> Result<ModelInstall, StoreError> {
+    let sql = format!(
+        "UPDATE model_installs
+            SET reserved_ram_bytes = $3, reserved_vram_bytes = $4, updated_at = now()
+          WHERE environment_id = $1 AND id = $2
+      RETURNING {INSTALL_COLUMNS}"
+    );
+    let row = sqlx::query(&sql)
+        .bind(scope.environment_id())
+        .bind(id)
+        .bind(ram_bytes)
+        .bind(vram_bytes)
+        .fetch_optional(scope.connection())
+        .await?
+        .ok_or(StoreError::NotFound)?;
+    row_to_install(&row)
+}
+
+/// Switch an install on or off.
+pub async fn set_enabled(
+    scope: &mut TenantScope<'_>,
+    id: Uuid,
+    enabled: bool,
+) -> Result<ModelInstall, StoreError> {
+    let sql = format!(
+        "UPDATE model_installs SET enabled = $3, updated_at = now()
+          WHERE environment_id = $1 AND id = $2
+      RETURNING {INSTALL_COLUMNS}"
+    );
+    let row = sqlx::query(&sql)
+        .bind(scope.environment_id())
+        .bind(id)
+        .bind(enabled)
+        .fetch_optional(scope.connection())
+        .await?
+        .ok_or(StoreError::NotFound)?;
+    row_to_install(&row)
+}
+
 /// Attach the provider profile created for this install.
 pub async fn set_provider(
     scope: &mut TenantScope<'_>,
@@ -232,7 +281,7 @@ pub async fn reserved_on(
                 COALESCE(SUM(reserved_vram_bytes), 0)::bigint AS vram,
                 COUNT(*)::bigint AS n
            FROM model_installs
-          WHERE environment_id = $1 AND node_id = $2 AND state <> 'failed'",
+          WHERE environment_id = $1 AND node_id = $2 AND state <> 'failed' AND enabled",
     )
     .bind(scope.environment_id())
     .bind(node_id)

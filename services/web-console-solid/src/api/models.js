@@ -68,3 +68,13 @@ export function uninstall(key, node) {
 export function sync() {
   return request('models/sync', { method: 'POST' });
 }
+
+/**
+ * Edit an installed model: `{ node, enabled, reserved_ram_bytes, reserved_vram_bytes }`,
+ * every field optional. Off stops the server and frees its memory; a new RAM
+ * figure on a running model restarts it. `422 node.insufficient_resources`
+ * says what the node has left.
+ */
+export function updateInstall(key, change) {
+  return request(`models/${key}/install`, { method: 'PATCH', body: change });
+}

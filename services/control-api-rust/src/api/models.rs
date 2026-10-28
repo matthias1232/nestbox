@@ -236,3 +236,38 @@ pub async fn uninstall(
         model_service::uninstall(&state.services, &auth.principal, &key, node.as_deref()).await?,
     ))
 }
+
+/// The body of an install edit.
+#[derive(Debug, Default, Deserialize)]
+pub struct UpdateInstallRequest {
+    pub node: Option<String>,
+    /// New reserved RAM in bytes.
+    pub reserved_ram_bytes: Option<i64>,
+    /// New reserved VRAM in bytes.
+    pub reserved_vram_bytes: Option<i64>,
+    /// Switch the model on or off.
+    pub enabled: Option<bool>,
+}
+
+/// Edit an installed model: reserved memory and the on/off switch.
+pub async fn update_install(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(key): Path<String>,
+    Json(body): Json<UpdateInstallRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(
+        model_service::update_install(
+            &state.services,
+            &auth.principal,
+            &key,
+            body.node.as_deref(),
+            model_service::InstallChange {
+                reserved_ram_bytes: body.reserved_ram_bytes,
+                reserved_vram_bytes: body.reserved_vram_bytes,
+                enabled: body.enabled,
+            },
+        )
+        .await?,
+    ))
+}

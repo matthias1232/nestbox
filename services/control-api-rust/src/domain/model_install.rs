@@ -89,6 +89,9 @@ pub struct ModelInstall {
     pub installed_version: Option<String>,
     pub reserved_ram_bytes: i64,
     pub reserved_vram_bytes: i64,
+    /// Whether the server runs and the reservation counts against the node.
+    /// Off keeps the artefact and the figures, and frees the memory.
+    pub enabled: bool,
     pub provider_profile_id: Option<Uuid>,
     pub job_id: Option<Uuid>,
     pub error: Option<String>,
@@ -133,7 +136,7 @@ impl ReservationHolder {
     /// A failed install reserves nothing, and an install whose catalog row has
     /// no numbers holds zero; neither belongs in a reason string.
     pub fn of(install: &ModelInstall) -> Option<Self> {
-        if !install.state.reserves() {
+        if !install.state.reserves() || !install.enabled {
             return None;
         }
         let ram = install.reserved_ram_bytes.max(0);
@@ -400,12 +403,22 @@ mod tests {
             installed_version: None,
             reserved_ram_bytes: ram,
             reserved_vram_bytes: vram,
+            enabled: true,
             provider_profile_id: None,
             job_id: None,
             error: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
+    }
+
+    #[test]
+    fn a_disabled_install_holds_no_memory() {
+        let mut off = install("m", InstallState::Installed, 4 << 30, 0);
+        off.enabled = false;
+        let on = install("n", InstallState::Installed, 2 << 30, 0);
+        let free = FreeBudget::from_installs(16 << 30, 16 << 30, &[off, on]);
+        assert_eq!(free.ram_reserved_bytes, 2 << 30);
     }
 
     #[test]

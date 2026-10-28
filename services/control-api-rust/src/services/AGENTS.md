@@ -70,7 +70,7 @@ shape it:
 | `telemetry_service.rs` | Ingest (one event, and the proxy's access-log batch with bodies and MCP calls), live publish, history queries |
 | `traffic_service.rs` | Traffic rows with window counts, the map, one body, MCP calls, effective rules with the deployment comparison, live edges for the cluster graph (`feat/live-traffic`) |
 | `geography_service.rs` | RDAP lookup per destination host, cached; runs after a traffic read and never blocks it |
-| `model_service.rs` | Hardware probing through a node's runner (CPU, RAM, GPU, unified pool), fit against a node's free budget, facets, catalog filters, installs and their reservations |
+| `model_service.rs` | Hardware probing through a node's runner (CPU, RAM, GPU, unified pool), fit against a node's free budget, facets, catalog filters, installs and their reservations, editing an install (reserved RAM, on/off; off frees the memory) |
 | `node_service.rs` | The nodes list, one node with its budget, a node's sandboxes, name-or-id resolution, display rename |
 | `pack_service.rs` | Baselines, agent packs, and tool catalog as data; pack defaults by row, baseline compatibility, package-name resolution |
 | `builder_service.rs` | Recipes: validation against the catalogs, the Dockerfile generator, content hash, build job, instantiate |

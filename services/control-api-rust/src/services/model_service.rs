@@ -331,6 +331,8 @@ pub struct InstallView {
     pub installed_version: Option<String>,
     pub reserved_ram_bytes: i64,
     pub reserved_vram_bytes: i64,
+    /// Whether the server runs; off frees the reservation.
+    pub enabled: bool,
     pub provider_profile_id: Option<Uuid>,
     pub job_id: Option<Uuid>,
     pub error: Option<String>,
@@ -389,6 +391,7 @@ pub async fn installs(
             installed_version: install.installed_version,
             reserved_ram_bytes: install.reserved_ram_bytes,
             reserved_vram_bytes: install.reserved_vram_bytes,
+            enabled: install.enabled,
             provider_profile_id: install.provider_profile_id,
             job_id: install.job_id,
             error: install.error,
@@ -765,6 +768,329 @@ pub async fn uninstall(
         "server_stopped": true,
         "note": "The artefact stays on the node; installing this model again reuses it.",
     }))
+}
+
+/// What an operator may change on an installed model.
+///
+/// Every field is optional: a request that only flips `enabled` keeps the
+/// figures, and one that only sets the RAM keeps the switch.
+#[derive(Debug, Clone, Default)]
+pub struct InstallChange {
+    /// The memory the model server may use, in bytes. Any value the node can
+    /// hold: the catalogue's figure is the default, not a limit.
+    pub reserved_ram_bytes: Option<i64>,
+    /// The VRAM it reserves, in bytes.
+    pub reserved_vram_bytes: Option<i64>,
+    /// `false` stops the server and frees the memory; `true` starts it again.
+    pub enabled: Option<bool>,
+}
+
+/// Edit an installed model: its reserved memory and whether it runs.
+///
+/// Several models can stay installed while only the ones in use are on. Off
+/// stops the server and releases the reservation (the artefact stays, so
+/// switching on does not download it again); on checks that the node has the
+/// memory left, then starts the server with the new limit. A change to the
+/// figures of a running model restarts it, because the limit is set when the
+/// container starts.
+pub async fn update_install(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    key: &str,
+    node_name: Option<&str>,
+    change: InstallChange,
+) -> Result<serde_json::Value, ApiError> {
+    require(principal, Permission::ModelInstall)?;
+
+    const MIN_RAM: i64 = 64 * 1024 * 1024;
+    if change.reserved_ram_bytes.is_some_and(|ram| ram < MIN_RAM) {
+        return Err(ApiError::validation("Reserved RAM must be at least 64 MiB."));
+    }
+    if change.reserved_vram_bytes.is_some_and(|vram| vram < 0) {
+        return Err(ApiError::validation("Reserved VRAM cannot be negative."));
+    }
+
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let node = resolve_node(&mut scope, node_name).await?;
+
+    // The same lock an install takes: two edits that read the same free budget
+    // must not both claim it.
+    sqlx::query("SELECT id FROM nodes WHERE id = $1 FOR UPDATE")
+        .bind(node.id)
+        .execute(scope.connection())
+        .await
+        .map_err(|error| ApiError::from(StoreError::Database(error)))?;
+
+    let install = install_store::get(&mut scope, key, node.id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| {
+            ApiError::not_found(
+                ErrorCode::MODEL_INSTALL_NOT_FOUND,
+                format!("'{key}' is not installed on node '{}'.", node.name),
+            )
+        })?;
+    if install.state != InstallState::Installed {
+        return Err(ApiError::conflict(
+            ErrorCode::MODEL_INSTALL_IN_PROGRESS,
+            format!(
+                "'{}' is {} on node '{}'. Only an installed model can be edited.",
+                install.model_key,
+                install.state.as_str(),
+                node.name
+            ),
+        ));
+    }
+
+    let ram = change.reserved_ram_bytes.unwrap_or(install.reserved_ram_bytes);
+    let vram = change.reserved_vram_bytes.unwrap_or(install.reserved_vram_bytes);
+    let enabled = change.enabled.unwrap_or(install.enabled);
+    let figures_changed =
+        ram != install.reserved_ram_bytes || vram != install.reserved_vram_bytes;
+
+    // Switching off: stop first, then release. A server that could not be
+    // stopped keeps its reservation, because freeing memory a container still
+    // holds is how a node is oversubscribed.
+    if install.enabled && !enabled {
+        if let Some(profile_id) = install.provider_profile_id {
+            let sandboxes = install_store::sandboxes_using_profile(&mut scope, profile_id)
+                .await
+                .map_err(ApiError::from)?;
+            if !sandboxes.is_empty() {
+                return Err(ApiError::conflict(
+                    ErrorCode::PROVIDER_IN_USE,
+                    format!(
+                        "The provider profile of '{}' is selected by sandbox {}; remove it there \
+                         before switching the model off.",
+                        install.model_key,
+                        sandboxes.join(", ")
+                    ),
+                ));
+            }
+        }
+        scope.commit().await.map_err(ApiError::from)?;
+        ctx.runtime.stop_model(&install.model_key).await.map_err(|error| {
+            ApiError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                ErrorCode::NODE_RUNTIME_UNAVAILABLE,
+                format!(
+                    "The model server for '{}' could not be stopped: {error}. Nothing was changed.",
+                    install.model_key
+                ),
+            )
+        })?;
+        let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+            .await
+            .map_err(ApiError::from)?;
+        if figures_changed {
+            install_store::set_reservation(&mut scope, install.id, ram, vram)
+                .await
+                .map_err(ApiError::from)?;
+        }
+        let off = install_store::set_enabled(&mut scope, install.id, false)
+            .await
+            .map_err(ApiError::from)?;
+        if let Some(profile_id) = off.provider_profile_id {
+            crate::store::postgres::providers::set_status(
+                &mut scope,
+                profile_id,
+                crate::domain::provider::ProviderStatus::Unreachable,
+            )
+            .await
+            .map_err(ApiError::from)?;
+        }
+        update_audit(&mut scope, principal, &off, &node.name, "model.disable").await?;
+        scope.commit().await.map_err(ApiError::from)?;
+        return Ok(serde_json::json!({
+            "model_key": off.model_key,
+            "node": node.name,
+            "enabled": false,
+            "state": off.state.as_str(),
+            "reserved_ram_bytes": off.reserved_ram_bytes,
+            "released_ram_bytes": install.reserved_ram_bytes,
+            "released_vram_bytes": install.reserved_vram_bytes,
+            "note": "The server is stopped and its memory is free. The artefact stays on the node.",
+        }));
+    }
+
+    // Staying off: only the setting changes.
+    if !install.enabled && !enabled {
+        let saved = install_store::set_reservation(&mut scope, install.id, ram, vram)
+            .await
+            .map_err(ApiError::from)?;
+        update_audit(&mut scope, principal, &saved, &node.name, "model.reserve").await?;
+        scope.commit().await.map_err(ApiError::from)?;
+        return Ok(serde_json::json!({
+            "model_key": saved.model_key,
+            "node": node.name,
+            "enabled": false,
+            "state": saved.state.as_str(),
+            "reserved_ram_bytes": saved.reserved_ram_bytes,
+            "reserved_vram_bytes": saved.reserved_vram_bytes,
+            "note": "Saved. The model is off, so the figure counts against the node once it is switched on.",
+        }));
+    }
+
+    // On, either newly or with other figures: the node has to hold them. A
+    // model that is running already holds its old figures, so those are added
+    // back before the check.
+    if install.enabled && !figures_changed {
+        return Ok(serde_json::json!({
+            "model_key": install.model_key,
+            "node": node.name,
+            "enabled": true,
+            "state": install.state.as_str(),
+            "reserved_ram_bytes": install.reserved_ram_bytes,
+            "reserved_vram_bytes": install.reserved_vram_bytes,
+            "note": "Nothing to change.",
+        }));
+    }
+    let budget = super::node_service::free_budget(&mut scope, node.id).await?;
+    let (own_ram, own_vram) = if install.enabled {
+        (install.reserved_ram_bytes, install.reserved_vram_bytes)
+    } else {
+        (0, 0)
+    };
+    let free_ram = budget.ram_free_bytes + own_ram;
+    let free_vram = budget.vram_free_bytes + own_vram;
+    if ram > free_ram || vram > free_vram {
+        return Err(ApiError::unprocessable(
+            ErrorCode::NODE_INSUFFICIENT_RESOURCES,
+            format!(
+                "Node '{}' has {:.1} GiB of RAM and {:.1} GiB of VRAM left for this model; \
+                 {:.1} GiB and {:.1} GiB were asked for. Switch another model off or lower the figure.",
+                node.name,
+                free_ram as f64 / 1_073_741_824.0,
+                free_vram as f64 / 1_073_741_824.0,
+                ram as f64 / 1_073_741_824.0,
+                vram as f64 / 1_073_741_824.0,
+            ),
+        ));
+    }
+
+    let model = store::get_by_key(&mut scope, &install.model_key)
+        .await
+        .map_err(ApiError::from)?;
+    install_store::set_reservation(&mut scope, install.id, ram, vram)
+        .await
+        .map_err(ApiError::from)?;
+    install_store::set_enabled(&mut scope, install.id, true)
+        .await
+        .map_err(ApiError::from)?;
+    let starting = install_store::set_state(
+        &mut scope,
+        install.id,
+        InstallState::Installing,
+        None,
+        None,
+    )
+    .await
+    .map_err(ApiError::from)?;
+    let job = crate::store::postgres::jobs::create(
+        &mut scope,
+        JobKind::ModelInstall,
+        &[model.id],
+        &serde_json::json!({
+            "model_key": model.key,
+            "node": node.name,
+            "reserved_ram_bytes": ram,
+            "reserved_vram_bytes": vram,
+            "restart": install.enabled,
+        }),
+        None,
+        Some(principal.user_id),
+    )
+    .await
+    .map_err(ApiError::from)?;
+    install_store::set_job(&mut scope, install.id, job.id)
+        .await
+        .map_err(ApiError::from)?;
+    update_audit(
+        &mut scope,
+        principal,
+        &starting,
+        &node.name,
+        if install.enabled { "model.reserve" } else { "model.enable" },
+    )
+    .await?;
+    scope.commit().await.map_err(ApiError::from)?;
+
+    // A running container keeps its old limit until it is replaced.
+    if install.enabled {
+        if let Err(error) = ctx.runtime.stop_model(&install.model_key).await {
+            let message = format!("The old server could not be stopped for the restart: {error}");
+            fail_install(ctx, principal.environment_id, install.id, job.id, &message).await?;
+            return Err(ApiError::new(
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                ErrorCode::NODE_RUNTIME_UNAVAILABLE,
+                message,
+            ));
+        }
+    }
+
+    let worker = ctx.clone();
+    let environment_id = principal.environment_id;
+    let install_id = install.id;
+    let job_id = job.id;
+    tokio::spawn(async move {
+        if let Err(error) = run_install(&worker, environment_id, install_id, job_id).await {
+            tracing::error!(
+                code = error.code.0,
+                install = %install_id,
+                job = %job_id,
+                "model start could not record its outcome"
+            );
+        }
+    });
+
+    let below_minimum = model.min_ram_bytes.is_some_and(|min| ram < min);
+    Ok(serde_json::json!({
+        "model_key": model.key,
+        "node": node.name,
+        "enabled": true,
+        "state": InstallState::Installing.as_str(),
+        "reserved_ram_bytes": ram,
+        "reserved_vram_bytes": vram,
+        "job_id": job.id,
+        "warning": if below_minimum {
+            serde_json::json!("The figure is below the catalogue's minimum for this model; it may fail to load or run slowly.")
+        } else {
+            serde_json::Value::Null
+        },
+        "note": "The server is starting with the new figures; the state moves to installed once it answers.",
+    }))
+}
+
+/// Record an edit of an install in the audit trail.
+async fn update_audit(
+    scope: &mut TenantScope<'_>,
+    principal: &Principal,
+    install: &ModelInstall,
+    node: &str,
+    kind: &str,
+) -> Result<(), ApiError> {
+    crate::store::postgres::audit::record(
+        scope,
+        crate::store::postgres::audit::NewAuditEvent {
+            actor_id: Some(principal.user_id),
+            actor_label: &principal.display_name,
+            kind,
+            subject_type: Some("model_install"),
+            subject_id: Some(install.id),
+            detail: &serde_json::json!({
+                "model_key": install.model_key,
+                "node": node,
+                "enabled": install.enabled,
+                "reserved_ram_bytes": install.reserved_ram_bytes,
+                "reserved_vram_bytes": install.reserved_vram_bytes,
+            }),
+            request_id: None,
+        },
+    )
+    .await
+    .map_err(ApiError::from)
 }
 
 /// The `model_install` job body: fetch, start, probe, record.
