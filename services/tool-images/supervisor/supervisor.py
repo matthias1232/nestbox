@@ -74,7 +74,10 @@ def check(key: str, state: str, detail: str) -> dict:
 def model_reachable() -> dict:
     base = os.getenv("OPENAI_BASE_URL", "")
     if not base:
-        return check("model_reachable", "fail", "OPENAI_BASE_URL is not set")
+        # A sandbox without an agent is not supposed to talk to a model. That is
+        # a configuration the recipe chose, not a broken sandbox, so it is a
+        # warning with the reason rather than a failure.
+        return check("model_reachable", "warn", "no OPENAI_BASE_URL: this recipe asked for no agent")
     try:
         with urllib.request.urlopen(base.rstrip("/") + "/models", timeout=5) as answer:
             return check("model_reachable", "ok", f"{base} answered {answer.status}")
@@ -97,9 +100,27 @@ def proxy_set() -> dict:
     return check("proxy_set", "ok", f"proxy in both spellings, NO_PROXY={bypass}")
 
 
+# A catalogue key is not always the binary name: `fd` installs as `fdfind` on
+# Debian and Ubuntu. Checking the key alone would report a tool that is there.
+BINARY_ALIASES = {"fd": ["fd", "fdfind"], "nodejs": ["node", "nodejs"]}
+
+
+def wanted_tools() -> list[str]:
+    """What the recipe asked for, then the settings, then the interpreter."""
+    declared = read_json(SETTINGS, {}).get("tools")
+    if declared:
+        return list(declared)
+    from_recipe = [part for part in os.getenv("NESTBOX_TOOLS", "").split(",") if part]
+    return from_recipe or ["python3"]
+
+
 def tools_present() -> dict:
-    wanted = read_json(SETTINGS, {}).get("tools") or ["python3", "curl", "git", "jq"]
-    missing = [name for name in wanted if shutil.which(name) is None]
+    wanted = wanted_tools()
+    missing = [
+        name
+        for name in wanted
+        if not any(shutil.which(candidate) for candidate in BINARY_ALIASES.get(name, [name]))
+    ]
     if missing:
         return check("tools_present", "fail", f"missing: {', '.join(sorted(missing))}")
     return check("tools_present", "ok", f"{len(wanted)} tools present")

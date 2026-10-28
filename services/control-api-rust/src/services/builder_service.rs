@@ -909,6 +909,10 @@ pub async fn instantiate(
             &mut environment,
             "NESTBOX_CONTROL_URL",
         );
+        // The recipe's own tool list, so "are the tools there" is measured
+        // against what was asked for and not against a default invented in the
+        // supervisor.
+        environment.push(("NESTBOX_TOOLS".to_string(), recipe.tools.join(",")));
     }
 
     let runtime_spec = SandboxSpec {
@@ -1508,6 +1512,7 @@ pub fn supervisor_script(plan: &ImagePlan) -> Result<String, String> {
             "NESTBOX_SUPERVISOR_TOKEN".to_string(),
             "NESTBOX_CONTROL_URL".to_string(),
             "NESTBOX_SUPERVISOR_INTERVAL".to_string(),
+            "NESTBOX_TOOLS".to_string(),
         ],
         port: None,
     });
