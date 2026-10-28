@@ -494,25 +494,37 @@ fn validate_locator(locator: &str) -> Result<(), ApiError> {
 
 /// Which profile a sandbox should be given, from those the environment has.
 ///
-/// The rule, in one place: prefer an OpenAI-compatible profile that has
-/// answered, then any profile that has answered; never a pending one. A
-/// pending profile is an install whose server does not exist yet, and handing
-/// it to an agent would send requests to a hostname that does not resolve.
+/// The rule, in one place: an OpenAI-shaped endpoint that has answered, never a
+/// pending one. A pending profile is an install whose server does not exist
+/// yet, and handing it to an agent would send requests to a hostname that does
+/// not resolve.
+///
+/// Among the ones that qualify, the closest endpoint wins: a model installed on
+/// this node costs no egress and needs no credential, a gateway is the next
+/// best, and a cloud API is last. Without that order the alphabet decided which
+/// model an agent used, which is how a sandbox ended up calling the gateway
+/// with a key that was not meant for it.
 pub fn select_inference_profile(profiles: &[ProviderProfile]) -> Option<&ProviderProfile> {
-    let speaks_openai = |profile: &&ProviderProfile| {
+    let speaks_openai = |profile: &ProviderProfile| {
         matches!(
             profile.kind,
-            ProviderKind::OpenaiCompatible | ProviderKind::Openai | ProviderKind::Omniroute
+            ProviderKind::LocalOpenaiCompatible
+                | ProviderKind::LocalVllm
+                | ProviderKind::OpenaiCompatible
+                | ProviderKind::Openai
+                | ProviderKind::Omniroute
         )
     };
-    profiles
-        .iter()
-        .find(|profile| profile.status == ProviderStatus::Reachable && speaks_openai(profile))
-        .or_else(|| {
-            profiles
-                .iter()
-                .find(|profile| profile.status == ProviderStatus::Reachable)
+    let reachable = || profiles.iter().filter(|p| p.status == ProviderStatus::Reachable);
+    reachable()
+        .filter(|profile| speaks_openai(profile))
+        .min_by_key(|profile| match profile.kind {
+            ProviderKind::LocalOpenaiCompatible | ProviderKind::LocalVllm => 0,
+            ProviderKind::OpenaiCompatible | ProviderKind::Openai => 1,
+            ProviderKind::Omniroute => 2,
+            _ => 3,
         })
+        .or_else(|| reachable().next())
 }
 
 #[cfg(test)]
@@ -550,6 +562,20 @@ mod tests {
             ProviderStatus::Pending,
         )];
         assert!(select_inference_profile(&profiles).is_none());
+    }
+
+    #[test]
+    fn a_model_on_this_node_wins_over_the_gateway() {
+        let profiles = vec![
+            profile("omniroute", ProviderKind::Omniroute, ProviderStatus::Reachable),
+            profile(
+                "local/qwen3-1.7b@local",
+                ProviderKind::LocalOpenaiCompatible,
+                ProviderStatus::Reachable,
+            ),
+        ];
+        let chosen = select_inference_profile(&profiles).expect("a profile");
+        assert_eq!(chosen.name, "local/qwen3-1.7b@local");
     }
 
     #[test]
