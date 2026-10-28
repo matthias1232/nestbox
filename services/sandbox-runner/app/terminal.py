@@ -37,7 +37,7 @@ import json
 import os
 from typing import Any
 
-from fastapi import APIRouter, WebSocket
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 router = APIRouter()
 
@@ -217,6 +217,25 @@ class PtySocket:
                 return
 
 
+async def finish(websocket: WebSocket, reason: str, message: str | None = None) -> None:
+    """Say why the session ended, then close it.
+
+    A browser that already left is not an error. Starlette raises
+    `WebSocketDisconnect` when a frame is written to a socket the client closed,
+    and a traceback for a session that ended correctly is noise that hides the
+    ones that did not — so this is the only place that writes the last frame,
+    and it swallows exactly that case.
+    """
+    try:
+        await websocket.send_text(close_frame(reason, message))
+    except (WebSocketDisconnect, RuntimeError, OSError):
+        return
+    try:
+        await websocket.close(code=CLOSE_NORMAL, reason=reason)
+    except (WebSocketDisconnect, RuntimeError, OSError):
+        pass
+
+
 async def pump(
     websocket: WebSocket,
     pty: PtySocket,
@@ -385,8 +404,7 @@ async def terminal(websocket: WebSocket, name: str) -> None:
     try:
         exec_id, pty = await asyncio.to_thread(opened_exec, container)
     except (DockerException, KeyError) as exc:
-        await websocket.send_text(close_frame("error", f"could not open a shell: {exc}"))
-        await websocket.close(code=CLOSE_INTERNAL, reason="exec failed")
+        await finish(websocket, "error", f"could not open a shell: {exc}")
         return
 
     def resize(cols: int, rows: int) -> None:
@@ -401,10 +419,4 @@ async def terminal(websocket: WebSocket, name: str) -> None:
     finally:
         pty.close()
 
-    try:
-        await websocket.send_text(close_frame(reason))
-    except (RuntimeError, OSError):
-        # The client is gone; the close frame is a courtesy, and its absence is
-        # not an error worth a stack trace in the log.
-        pass
-    await websocket.close(code=CLOSE_NORMAL, reason=reason)
+    await finish(websocket, reason)

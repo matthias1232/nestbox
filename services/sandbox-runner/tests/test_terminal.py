@@ -351,6 +351,25 @@ class PumpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pty.written, [])
 
 
+class FinishTests(unittest.IsolatedAsyncioTestCase):
+    """The last frame, including the case where nobody is left to read it."""
+
+    async def test_the_reason_is_written_before_the_close(self) -> None:
+        socket = FakeWebSocket()
+        await tm.finish(socket, "idle")
+        self.assertEqual(json.loads(socket.sent[-1]), {"type": "close", "reason": "idle"})
+        self.assertEqual(socket.closed, (1000, "idle"))
+
+    async def test_a_browser_that_left_is_not_an_error(self) -> None:
+        class Gone(FakeWebSocket):
+            async def send_text(self, text: str) -> None:
+                raise tm.WebSocketDisconnect(1006)
+
+        # No exception: the session ended correctly, and logging a traceback for
+        # a closed socket would hide the sessions that did not.
+        await tm.finish(Gone(), "user")
+
+
 class ContainerNameTests(unittest.TestCase):
     def test_the_prefix_matches_the_runner_contract(self) -> None:
         self.assertEqual(tm.container_name("hermes-01"), "nestbox-sandbox-hermes-01")
