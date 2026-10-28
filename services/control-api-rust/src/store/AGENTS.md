@@ -61,7 +61,7 @@ security policy on `mounts` repeats the sandbox check.
 | `postgres/environments.rs` | Environments and clusters |
 | `postgres/providers.rs` | Provider profiles and secret references |
 | `postgres/audit.rs` | Append-only audit writes |
-| `postgres/metrics.rs` | Samples, rollup, partition maintenance |
+| `postgres/metrics.rs` | Samples, rollup, partition maintenance, the inventory snapshot |
 | `postgres/access.rs` | SSH keys, port pool, inventory, sessions |
 | `postgres/egress.rs` | Compiled policy hash, decisions, windows, the node token locator, and the deployment comparison |
 | `postgres/mcp.rs` | MCP registry, attachments, tool calls |

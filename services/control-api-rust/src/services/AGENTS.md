@@ -77,8 +77,8 @@ shape it:
 | `job_service.rs` | Job creation and progress |
 | `catalog_sync/` | The model catalogue is rebuilt from Hugging Face, Ollama, NGC, and NIM, never over a curated row |
 | `schedule_service.rs` | Schedule evaluation and runs |
-| `metrics_service.rs` | Sample ingest, ranged query, rollup, retention (`feat/sandbox-metrics`) |
-| `inventory_service.rs` | Snapshot storage and age; never an environment value (`feat/sandbox-metrics`) |
+| `metrics_service.rs` | Sample ingest, ranged query, rollup, partition maintenance, the two metrics jobs |
+| `inventory_service.rs` | Snapshot storage and age, the allow-list that keeps a value out, never an environment value |
 | `access_service.rs` | SSH key pair as a file with a locator, port pool, sessions (`feat/sandbox-access`) |
 | `mcp_service.rs` | Registry, attachments, discovery through the policy check (`feat/mcp-registry`) |
 | `persist_service.rs` | Persistent roots: derived host paths, mounts, the one-read-write rule, honest usage |

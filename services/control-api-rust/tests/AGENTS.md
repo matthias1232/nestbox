@@ -31,3 +31,5 @@ Two different jobs:
 | `database.rs` | Schema, row-level security, seed, and the constraints the services rely on (skips without `TEST_DATABASE_URL`) |
 | `recipes.rs` | The builder against a database: drafts, revisions, build outcome, instantiate, capacity |
 | `policy_decider.rs` | The egress check end to end: allow/deny/audit, windows, the compiled hash, the deployment comparison, the node token, and the scoped lookup under the application role (skips without `TEST_DATABASE_URL`) |
+| `metrics.rs` | Sample ingest, the hour/day/week reads, rollup idempotency, partition retention, the process table and the inventory snapshot against a database |
+| `traffic.rs` | The traffic log: rows, aggregates, the map, and the scoped reads |

@@ -27,7 +27,7 @@ services can be tested against `FakeAdapter` without a container runtime.
 
 | File | Responsibility |
 |---|---|
-| `mod.rs` | The `RuntimeAdapter` trait (create, inspect, list, lifecycle, logs, exec) and its errors |
+| `mod.rs` | The `RuntimeAdapter` trait (create, inspect, list, lifecycle, logs, exec, hardware, processes, inventory, build) and its errors |
 | `http_runner.rs` | Adapter that speaks to the sandbox runner's internal API |
 | `fake.rs` | In-memory adapter for tests |
 
@@ -44,3 +44,17 @@ and `nvidia-smi` text plus whether the Docker daemon has an NVIDIA runtime.
 Raw rather than parsed, because the parsers are tested Rust in
 `services/model_service.rs`. `build()` sends a generated Dockerfile and gets an
 image tag back; the runner only accepts tags under `nestbox-recipe/`.
+
+## Live reads
+
+`processes()` and `inventory()` are questions about a container *now*, so they
+are calls rather than stored state: the runner answers with `docker top` and with
+the output of a probe script that ships in its own image.
+
+Both are parameterless on the container side. The `ps` column set and the probe
+script are the runner's, never the request's, so neither an agent inside the
+container nor a caller outside it can steer what is read. The process table comes
+back typed and capped (the runner says whether it cut it); the inventory comes
+back as the probe's document, because the runner may gain a section and the table
+it lands in has fixed columns — `services/inventory_service.rs` is what rebuilds
+it by allow-list, and that rebuild is where a value would be rejected.

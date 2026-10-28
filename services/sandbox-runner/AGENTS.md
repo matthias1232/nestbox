@@ -28,6 +28,10 @@ control plane.
 | `POST` | `/v1/models/serve` | Start one model server container |
 | `GET`/`DELETE` | `/v1/models/serve/{key}` | Inspect or stop it |
 | `GET` | `/v1/egress` | The sandbox network, the proxy, and the redirect state, as facts |
+| `GET` | `/v1/sandboxes/{name}/stats` | One `docker stats` sample |
+| `GET` | `/v1/sandboxes/{name}/processes` | `docker top`, capped and typed |
+| `GET` | `/v1/sandboxes/{name}/inventory` | A fresh snapshot from the fixed probe |
+| `GET` | `/v1/sandboxes/{name}/terminal` | The terminal WebSocket |
 
 ## Security rules
 
@@ -113,5 +117,31 @@ corner cut here.
 
 | File | Responsibility |
 |---|---|
-| `app/main.py` | The FastAPI adapter, the sandbox network, and the egress wiring |
+| `app/main.py` | The FastAPI adapter, the sandbox network, the egress wiring, and model serving |
+| `app/stats.py` | One-shot `docker stats` samples and the poster loop |
+| `app/processes.py` | `docker top` for one sandbox |
+| `app/inventory.py` | Runs the probe and parses its sections |
+| `app/inventory.sh` | The fixed probe script, executed inside the container |
 | `Dockerfile` | Image build |
+
+## Samples, processes, inventory
+
+Three reads of the same container, each with its own cost:
+
+- **A sample is one `docker stats` one-shot**, not a stream. A stream is a socket
+  per sandbox that has to survive a runner restart, and the console only needs a
+  point every five seconds. The poster thread starts only when
+  `NESTBOX_METRICS_POST_URL` is set and posts one batch per tick with
+  `NESTBOX_NODE_TOKEN`; a failed batch is dropped rather than queued, because a
+  queue of stale points draws a lie.
+- **The process table is `docker top`**, which is the list `ps` inside the
+  container would show without running a command through the agent's shell. The
+  `ps` column set is a constant in `app/processes.py`: `ps` accepts a format
+  string, and a caller-supplied one is enough to read a file the caller should
+  not see. A stopped container answers 409, not an empty table.
+- **The inventory is a script that ships with this image**, piped to `sh` inside
+  the container. It takes no argument, so nothing an agent inside the container
+  or a caller outside it can do changes what it prints. It prints environment
+  variables **by name only** (`cut -d= -f1`), and lists files under the agent's
+  home rather than reading them. A partial answer carries a `note` instead of
+  looking like a complete one.
