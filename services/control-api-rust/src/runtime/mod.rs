@@ -157,7 +157,9 @@ pub trait RuntimeAdapter: Send + Sync {
         &self,
         _name: &str,
         _memory_bytes: Option<i64>,
+        _memory_reservation_bytes: Option<i64>,
         _cpus: Option<f64>,
+        _cpu_shares: Option<i64>,
         _pids_limit: Option<i64>,
     ) -> Result<(), RuntimeError> {
         Err(RuntimeError::Unavailable("this runtime cannot change limits live".into()))

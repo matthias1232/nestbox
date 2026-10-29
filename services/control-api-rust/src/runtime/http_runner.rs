@@ -406,12 +406,16 @@ impl RuntimeAdapter for HttpRunner {
         &self,
         name: &str,
         memory_bytes: Option<i64>,
+        memory_reservation_bytes: Option<i64>,
         cpus: Option<f64>,
+        cpu_shares: Option<i64>,
         pids_limit: Option<i64>,
     ) -> Result<(), RuntimeError> {
         let payload = serde_json::json!({
             "memory_bytes": memory_bytes,
+            "memory_reservation_bytes": memory_reservation_bytes,
             "cpus": cpus,
+            "cpu_shares": cpu_shares,
             "pids_limit": pids_limit,
         });
         let _: serde_json::Value = self

@@ -75,7 +75,7 @@ pub struct FakeRuntime {
     /// the public keys sent alongside.
     forwards: Mutex<BTreeMap<String, (Vec<ForwardRequest>, Vec<String>)>>,
     credentials: Mutex<BTreeMap<String, Vec<SshCredential>>>,
-    resource_changes: Mutex<Vec<(String, Option<i64>, Option<f64>, Option<i64>)>>,
+    resource_changes: Mutex<Vec<(String, Option<i64>, Option<i64>, Option<f64>, Option<i64>, Option<i64>)>>,
     terminal: Arc<FakeTerminalState>,
 }
 
@@ -90,7 +90,7 @@ impl FakeRuntime {
     }
 
     /// Every live resource change asked for, in order.
-    pub fn resource_changes(&self) -> Vec<(String, Option<i64>, Option<f64>, Option<i64>)> {
+    pub fn resource_changes(&self) -> Vec<(String, Option<i64>, Option<i64>, Option<f64>, Option<i64>, Option<i64>)> {
         lock(&self.resource_changes).clone()
     }
 
@@ -484,10 +484,19 @@ impl RuntimeAdapter for FakeRuntime {
         &self,
         name: &str,
         memory_bytes: Option<i64>,
+        memory_reservation_bytes: Option<i64>,
         cpus: Option<f64>,
+        cpu_shares: Option<i64>,
         pids_limit: Option<i64>,
     ) -> Result<(), RuntimeError> {
-        lock(&self.resource_changes).push((name.to_string(), memory_bytes, cpus, pids_limit));
+        lock(&self.resource_changes).push((
+            name.to_string(),
+            memory_bytes,
+            memory_reservation_bytes,
+            cpus,
+            cpu_shares,
+            pids_limit,
+        ));
         Ok(())
     }
 
