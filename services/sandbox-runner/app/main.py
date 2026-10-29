@@ -118,6 +118,14 @@ def validate_mount(mount: MountSpec) -> dict[str, Any]:
     if ".." in mount.target.split("/"):
         raise HTTPException(422, "mount target must not contain '..'")
     os.makedirs(real, exist_ok=True)
+    # The directory is made by this process (root), but the sandbox user that writes
+    # into it is not root and differs between images, so it must be writable by any
+    # of them. It is reachable only through this bind: its parents are not
+    # world-readable, so no other process on the host gets to it by path.
+    try:
+        os.chmod(real, 0o777)
+    except OSError:
+        pass
     return {"type": "bind", "source": real, "target": mount.target, "read_only": mount.read_only}
 
 
