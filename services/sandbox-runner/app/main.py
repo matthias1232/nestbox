@@ -27,6 +27,7 @@ from app import telemetry_shipper
 from app import host as host_load
 from app import backups as root_backups
 from app import openshell_backend as osh
+from app import catalogue as package_catalogue
 from app.images import image_allowed
 from app.workload import get_container, list_workloads, openshell_name, sandbox_name
 
