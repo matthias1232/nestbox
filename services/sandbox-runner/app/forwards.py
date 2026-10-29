@@ -24,7 +24,7 @@ A forward reports two separate facts, and the console shows both:
   not been started yet; saying "active" for that would be a lie.
 """
 from __future__ import annotations
-from app.workload import get_container, list_workloads, sandbox_name
+from app.workload import get_container, list_workloads, openshell_name, sandbox_name
 
 import asyncio
 import json
@@ -259,7 +259,7 @@ class Manager:
                     # door is open and the sandbox is running, not that port 22 is
                     # listening inside the container (nothing is, by design).
                     "target_up": (
-                        item.server is not None and sandbox_address(item.sandbox) is not None
+                        item.server is not None and is_running(item.sandbox)
                         if item.spec.purpose == "ssh"
                         else target_listening(item.sandbox, item.spec.target_port)
                     ),
@@ -301,13 +301,77 @@ def sandbox_address(sandbox: str) -> str | None:
     return address or None
 
 
+def is_running(sandbox: str) -> bool:
+    try:
+        return get_container(docker_client(), sandbox).status == "running"
+    except (NotFound, DockerException):
+        return False
+
+
+# One `openshell forward service` per (sandbox, target port) for sandboxes on the
+# OpenShell gateway: their workload has no network, so the way in is the gateway's
+# own tunnel, listening on a loopback port of this runner.
+_tunnels: dict[tuple[str, int], tuple[Any, int]] = {}
+
+
+def _free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def _tunnel(sandbox: str, target_port: int) -> tuple[str, int] | None:
+    import subprocess
+    import time
+
+    key = (sandbox, target_port)
+    known = _tunnels.get(key)
+    if known and known[0].poll() is None:
+        return "127.0.0.1", known[1]
+    local = _free_port()
+    process = subprocess.Popen(
+        [
+            os.getenv("OPENSHELL_BIN", "openshell"), "forward", "service", sandbox,
+            "--target-port", str(target_port), "--local", f"127.0.0.1:{local}",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    deadline = time.time() + 8
+    while time.time() < deadline and process.poll() is None:
+        try:
+            with socket.create_connection(("127.0.0.1", local), timeout=0.3):
+                break
+        except OSError:
+            time.sleep(0.25)
+    else:
+        process.terminate()
+        return None
+    _tunnels[key] = (process, local)
+    return "127.0.0.1", local
+
+
+def sandbox_endpoint(sandbox: str, target_port: int) -> tuple[str, int] | None:
+    """Where to connect to reach a port inside the sandbox, or None when it is down."""
+    try:
+        container = get_container(docker_client(), sandbox)
+    except (NotFound, DockerException):
+        return None
+    if container.status != "running":
+        return None
+    if openshell_name(container.name):
+        return _tunnel(sandbox, target_port)
+    address = sandbox_address(sandbox)
+    return (address, target_port) if address else None
+
+
 def target_listening(sandbox: str, port: int) -> bool:
     """Whether something accepts a connection at the sandbox's port right now."""
-    address = sandbox_address(sandbox)
-    if address is None:
+    endpoint = sandbox_endpoint(sandbox, port)
+    if endpoint is None:
         return False
     try:
-        with socket.create_connection((address, port), timeout=PROBE_SECONDS):
+        with socket.create_connection(endpoint, timeout=PROBE_SECONDS):
             return True
     except OSError:
         return False
@@ -316,13 +380,13 @@ def target_listening(sandbox: str, port: int) -> bool:
 async def relay(listener: Listener, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     """Pipe one client connection to the sandbox, and back."""
     listener.connections += 1
-    address = await asyncio.to_thread(sandbox_address, listener.sandbox)
-    if address is None:
+    endpoint = await asyncio.to_thread(sandbox_endpoint, listener.sandbox, listener.spec.target_port)
+    if endpoint is None:
         writer.close()
         return
     try:
         upstream_reader, upstream_writer = await asyncio.wait_for(
-            asyncio.open_connection(address, listener.spec.target_port), timeout=CONNECT_SECONDS
+            asyncio.open_connection(*endpoint), timeout=CONNECT_SECONDS
         )
     except (OSError, asyncio.TimeoutError):
         writer.close()
