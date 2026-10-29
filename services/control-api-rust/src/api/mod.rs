@@ -340,6 +340,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/schedules/{id}/run", post(jobs::run_schedule))
         // Audit
         .route("/api/v1/audit-events", get(system::audit_events))
+        // A CONNECT's request target is `host:port`, not a path, so no route can
+        // match it. The proxy asks about a tunnel with exactly that request, and
+        // this is the one place it can be answered; every other unmatched
+        // request is the plain 404 it always was.
+        .fallback(policies::connect_or_not_found)
         .with_state(state.clone());
 
     // Security headers on every response, including errors and streams. A CSP

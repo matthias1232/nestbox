@@ -792,3 +792,25 @@ async fn resolve_source(state: &AppState, address: &str) -> Option<Uuid> {
         .ok()
         .flatten()
 }
+
+/// Answer a proxy's question about a CONNECT; anything else unmatched is a 404.
+///
+/// Envoy forwards a CONNECT to its authorization service as a CONNECT whose
+/// target is the destination (`api.example.com:443`), which no path route can
+/// receive. The decision is the same as for any request: the host and port come
+/// from the authority, the sandbox from the source address, and the node must
+/// still present its token, so this opens nothing to an unauthenticated caller.
+pub async fn connect_or_not_found(
+    State(state): State<AppState>,
+    method: Method,
+    original: OriginalUri,
+    headers: HeaderMap,
+) -> Response {
+    if method != Method::CONNECT {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    match internal_check(State(state), method, original, headers).await {
+        Ok(response) => response,
+        Err(error) => error.into_response(),
+    }
+}
