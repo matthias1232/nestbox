@@ -450,6 +450,12 @@ fn proxy_host(proxy: &str) -> &str {
 /// request for the proxy *to* the proxy, which is a loop. Loopback stays out of
 /// the proxy because nothing on it leaves the container.
 pub fn egress_environment(proxy: &str) -> Vec<(String, String)> {
+    // On an OpenShell gateway the supervisor mediates every connection itself and
+    // sets up the workload's proxy; pointing the agent at our own proxy would send
+    // it to a host the sandbox cannot (and may not) reach.
+    if std::env::var("NESTBOX_SANDBOX_RUNTIME").is_ok_and(|value| value == "openshell") {
+        return Vec::new();
+    }
     let bypass = format!("localhost,127.0.0.1,::1,{}", proxy_host(proxy));
     let mut values = Vec::with_capacity(8);
     for key in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"] {
