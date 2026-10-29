@@ -96,6 +96,22 @@ pub async fn list(
         .await
         .map_err(ApiError::from)?;
     let page = store::list(&mut scope, params).await.map_err(ApiError::from)?;
+    // Names the list shows next to each sandbox: where it sits and who watches it.
+    let clusters: std::collections::HashMap<Uuid, String> =
+        sqlx::query_as::<_, (Uuid, String)>("SELECT id, name FROM clusters")
+            .fetch_all(scope.connection())
+            .await
+            .map_err(|error| ApiError::from(crate::error::StoreError::Database(error)))?
+            .into_iter()
+            .collect();
+    let supervisors: std::collections::HashMap<Uuid, (String, String)> =
+        sqlx::query_as::<_, (Uuid, String, String)>("SELECT id, name, status FROM supervisors")
+            .fetch_all(scope.connection())
+            .await
+            .map_err(|error| ApiError::from(crate::error::StoreError::Database(error)))?
+            .into_iter()
+            .map(|(id, name, status)| (id, (name, status)))
+            .collect();
     scope.commit().await.map_err(ApiError::from)?;
 
     let facts = ctx.runtime.list().await.ok();
@@ -116,7 +132,14 @@ pub async fn list(
         .into_iter()
         .map(|sandbox| {
             let live = index.get(&sandbox.name);
+            let supervisor = sandbox.supervisor_id.and_then(|id| supervisors.get(&id));
             SandboxSummary {
+                cluster_name: clusters.get(&sandbox.cluster_id).cloned(),
+                supervisor_name: supervisor.map(|(name, _)| name.clone()),
+                supervisor_status: supervisor.map(|(_, status)| status.clone()),
+                runtime_kind: live.map(|facts| {
+                    if facts.container_name.starts_with("openshell-default--") { "openshell" } else { "docker" }.to_string()
+                }),
                 address: live.map(|facts| facts.ip.clone()).filter(|ip| !ip.is_empty()),
                 uptime_seconds: live.map(|facts| facts.uptime_seconds),
                 container_name: live.map(|facts| facts.container_name.clone()),
