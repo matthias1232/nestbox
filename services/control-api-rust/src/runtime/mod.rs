@@ -157,6 +157,19 @@ pub trait RuntimeAdapter: Send + Sync {
         Err(RuntimeError::Unavailable("this runtime cannot change limits live".into()))
     }
 
+    /// Hand the sandbox its network policy, compiled to the runtime's own format.
+    ///
+    /// Only a runtime that enforces policy itself (an OpenShell gateway) has
+    /// anything to do; for the others the decider answers per request instead, so
+    /// the default is "nothing to push".
+    async fn set_openshell_policy(
+        &self,
+        _name: &str,
+        _document: &serde_json::Value,
+    ) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+
     /// Close every port of a sandbox. Idempotent.
     async fn clear_forwards(&self, _name: &str) -> Result<(), RuntimeError> {
         Ok(())

@@ -18,6 +18,7 @@ pub mod metrics;
 pub mod model;
 pub mod model_install;
 pub mod node;
+pub mod openshell_policy;
 pub mod pack;
 pub mod pack_access;
 pub mod pagination;
