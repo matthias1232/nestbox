@@ -170,3 +170,14 @@ def set_policy(name: str, document: dict[str, Any]) -> None:
         run(["policy", "set", name, "--policy", path, "--wait", "--timeout", "45"], timeout=75)
     finally:
         os.unlink(path)
+
+
+_VERSION: dict[str, Any] = {"value": None, "at": 0.0}
+
+
+def gateway_version() -> str:
+    """The gateway's version, cached for a minute (it is read for every listing)."""
+    if time.time() - _VERSION["at"] > 60 or _VERSION["value"] is None:
+        _VERSION["value"] = status().get("version") or ""
+        _VERSION["at"] = time.time()
+    return _VERSION["value"]
