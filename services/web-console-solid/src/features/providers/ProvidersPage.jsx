@@ -25,7 +25,7 @@ const KINDS = [
   { id: 'openai_compatible', label: 'OpenAI-compatible server' },
   { id: 'openai', label: 'OpenAI' },
   { id: 'anthropic', label: 'Anthropic' },
-  { id: 'nvidia', label: 'NVIDIA' },
+  { id: 'nvidia', label: 'NVIDIA NIM (OpenAI-compatible)' },
   { id: 'local_vllm', label: 'Local vLLM' },
 ];
 
@@ -213,6 +213,14 @@ export default function ProvidersPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function chooseKind(kind) {
+    const current = form();
+    // NIM's OpenAI-compatible endpoint is a safe public default. A user may
+    // still replace it with a private NIM deployment, but does not have to
+    // discover the path from an error message.
+    setForm({ ...current, kind, endpoint: kind === 'nvidia' && !current.endpoint.trim() ? 'https://integrate.api.nvidia.com/v1' : current.endpoint });
   }
 
   async function saveEdit(event) {
@@ -579,7 +587,7 @@ export default function ProvidersPage() {
           <label class="field">
             <span>Kind</span>
             <select value={form().kind}
-                    onChange={(e) => setForm({ ...form(), kind: e.currentTarget.value })}>
+                     onChange={(e) => chooseKind(e.currentTarget.value)}>
               <For each={KINDS}>{(kind) => <option value={kind.id}>{kind.label}</option>}</For>
             </select>
           </label>

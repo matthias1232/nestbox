@@ -595,6 +595,11 @@ pub fn select_inference_profile(profiles: &[ProviderProfile]) -> Option<&Provide
                 | ProviderKind::LocalVllm
                 | ProviderKind::OpenaiCompatible
                 | ProviderKind::Openai
+                // NVIDIA NIM exposes the OpenAI-compatible `/v1` inference
+                // surface. It is therefore a valid source for the generic
+                // inference clients; the secret still resolves only in this
+                // service, never in a catalog response.
+                | ProviderKind::Nvidia
                 | ProviderKind::Omniroute
         )
     };
@@ -604,7 +609,8 @@ pub fn select_inference_profile(profiles: &[ProviderProfile]) -> Option<&Provide
         .min_by_key(|profile| match profile.kind {
             ProviderKind::LocalOpenaiCompatible | ProviderKind::LocalVllm => 0,
             ProviderKind::OpenaiCompatible | ProviderKind::Openai => 1,
-            ProviderKind::Omniroute => 2,
+            ProviderKind::Nvidia => 2,
+            ProviderKind::Omniroute => 3,
             _ => 3,
         })
         .or_else(|| reachable().next())
@@ -672,7 +678,13 @@ mod tests {
             ),
         ];
         let chosen = select_inference_profile(&profiles).expect("a profile");
-        assert_eq!(chosen.name, "omniroute");
+        assert_eq!(chosen.name, "nvidia");
+    }
+
+    #[test]
+    fn a_reachable_nim_profile_is_a_valid_openai_inference_source() {
+        let profiles = vec![profile("nvidia-nim", ProviderKind::Nvidia, ProviderStatus::Reachable)];
+        assert_eq!(select_inference_profile(&profiles).map(|profile| profile.name.as_str()), Some("nvidia-nim"));
     }
 
     #[test]
