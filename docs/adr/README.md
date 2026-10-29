@@ -45,6 +45,7 @@ supersedes the old one and note the supersession in both files.
 | [0035](0035-a-sandbox-is-administered-live-and-starts-connected.md) | A sandbox is administered live, and its agent starts connected | Accepted |
 | [0036](0036-sandboxes-run-on-openshell.md) | Sandboxes run on the NVIDIA OpenShell gateway | Accepted |
 | [0037](0037-keys-typed-into-the-console-are-stored-encrypted.md) | Keys typed into the console are stored encrypted, write-only | Accepted |
+| [0038](0038-a-user-owns-their-sandboxes.md) | A user owns their sandboxes; an admin sees and sets everything shared | Accepted |
 
 ## Writing a new ADR
 
