@@ -368,12 +368,24 @@ async def pump(
     return reason
 
 
-def opened_exec(container: Any) -> tuple[str, PtySocket]:
-    """Create a TTY exec in the container and return its id and byte stream."""
+def opened_exec(container: Any, tab: str) -> tuple[str, PtySocket]:
+    """Attach to a durable tmux tab or create it the first time.
+
+    The browser is only a viewer. Disconnecting its WebSocket detaches from
+    tmux, while the shell keeps running until the user explicitly closes its
+    tab. `tab` has already been constrained by the control API and is checked
+    again here because the runner is a separate security boundary.
+    """
     client = container.client
+    # Existing sandboxes keep working while their image is awaiting a controlled
+    # recreate. New images carry tmux and gain durable tabs; an old image gets a
+    # normal shell with an honest, non-persistent fallback rather than a broken
+    # terminal after this control-plane deploy.
+    has_tmux, _ = container.exec_run(["sh", "-c", "command -v tmux >/dev/null"], stdout=False, stderr=False)
+    command = ["tmux", "new-session", "-A", "-s", f"nestbox-{tab}"] if has_tmux == 0 else list(SHELL)
     created = client.api.exec_create(
         container.id,
-        list(SHELL),
+        command,
         tty=True,
         stdin=True,
         stdout=True,
@@ -416,8 +428,12 @@ async def terminal(websocket: WebSocket, name: str) -> None:
 
     await websocket.accept(subprotocol=SUBPROTOCOL)
 
+    tab = websocket.query_params.get("tab", "")
+    if not tab or len(tab) > 64 or not all(ch.isascii() and (ch.isalnum() or ch in "_-") for ch in tab):
+        await websocket.close(code=CLOSE_INTERNAL, reason="invalid terminal tab")
+        return
     try:
-        exec_id, pty = await asyncio.to_thread(opened_exec, container)
+        exec_id, pty = await asyncio.to_thread(opened_exec, container, tab)
     except (DockerException, KeyError) as exc:
         await finish(websocket, "error", f"could not open a shell: {exc}")
         return

@@ -503,8 +503,10 @@ impl RuntimeAdapter for HttpRunner {
         Ok(answer.logs)
     }
 
-    async fn open_terminal(&self, name: &str) -> Result<BoxTerminal, RuntimeError> {
-        let url = format!("{}/v1/sandboxes/{}/terminal", self.ws_base_url(), name);
+    async fn open_terminal(&self, name: &str, tab_id: &str) -> Result<BoxTerminal, RuntimeError> {
+        // `tab_id` is validated to ASCII alphanumerics, `_`, and `-` before it
+        // reaches the runtime, so it is already safe as this path's query value.
+        let url = format!("{}/v1/sandboxes/{}/terminal?tab={tab_id}", self.ws_base_url(), name);
         let mut request = url
             .as_str()
             .into_client_request()

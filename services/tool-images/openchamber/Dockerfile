@@ -12,7 +12,7 @@ ARG OPENCODE_VERSION=1.19.5
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates curl git jq less procps htop ripgrep vim openssh-client python3 \
+        ca-certificates curl git jq less procps htop ripgrep vim tmux openssh-client python3 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --shell /bin/bash nestbox
