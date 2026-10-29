@@ -171,3 +171,39 @@ async fn a_backup_outlives_its_root_and_a_running_writer_blocks_a_restore() {
     assert!(kept[0].root_id.is_none());
     assert!(backup_service::restore(&ctx, &principal, backup.id, None, false, false).await.is_err());
 }
+
+#[tokio::test]
+async fn a_claude_code_sandbox_gets_a_persistent_home_and_a_recreated_one_gets_it_back() {
+    let Some(pool) = connect().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+    let runtime = Arc::new(FakeRuntime::new());
+    let ctx = context(&pool, &runtime);
+    let principal = principal_of(user(&pool).await);
+
+    let first = sandbox_service::create(&ctx, &principal, request("claude-home", "claude-code")).await.expect("create");
+    let spec = runtime.created_specs().pop().expect("spec");
+    let home = spec
+        .mounts
+        .iter()
+        .find(|mount| mount.target == "/home/nestbox/.agent-state")
+        .expect("the state directory is mounted");
+    assert!(!home.read_only);
+    assert!(home.source.contains("agent-home--home-claude-home") || home.source.contains("home-claude-home"));
+    assert!(spec.environment.iter().any(|(k, v)| k == "CLAUDE_CONFIG_DIR" && v == "/home/nestbox/.agent-state/claude"));
+
+    // Delete and create again under the same name: the same directory comes back.
+    sandbox_service::delete(&ctx, &principal, first.id).await.expect("delete");
+    sandbox_service::create(&ctx, &principal, request("claude-home", "claude-code")).await.expect("again");
+    let again = runtime.created_specs().pop().expect("spec");
+    let source = |spec: &nestbox_control_api::domain::runtime::SandboxSpec| {
+        spec.mounts.iter().find(|m| m.target == "/home/nestbox/.agent-state").map(|m| m.source.clone())
+    };
+    assert_eq!(source(&again), Some(home.source.clone()));
+
+    // Another pack gets no such mount.
+    sandbox_service::create(&ctx, &principal, request("plain-box", "ubuntu-dev")).await.expect("plain");
+    let plain = runtime.created_specs().pop().expect("spec");
+    assert!(source(&plain).is_none());
+}
