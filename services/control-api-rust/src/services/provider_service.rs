@@ -495,6 +495,11 @@ pub async fn environment_for_pack(
     pack_key: &str,
 ) -> Result<BTreeMap<String, String>, ApiError> {
     let mut environment = model_environment_for_pack(ctx, environment_id, pack_key).await?;
+    if pack_key == "claude-code" {
+        // Claude Code keeps its settings, state and login here, on the persistent home
+        // the sandbox is created with.
+        environment.insert("CLAUDE_CONFIG_DIR".into(), "/home/nestbox/.agent-state/claude".into());
+    }
     if matches!(pack_key, "hermes" | "claude-code" | "opencode" | "openchamber") {
         // The Nestbox MCP hub: its address and the shared token, when the hub is
         // deployed (the token file exists). The token is the same for every agent;

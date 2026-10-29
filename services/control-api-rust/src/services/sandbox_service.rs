@@ -649,6 +649,55 @@ pub async fn create(
     // request cannot name a mount source: the only source is a persistent root's
     // stored host path. Read inside this transaction so a row written by the same
     // operation is visible.
+    // A Claude Code sandbox gets a persistent home for its state: the settings and the
+    // login the user makes themselves (no API key) live there, so they survive the
+    // sandbox being recreated, which a mount change requires.
+    if sandbox.pack_key == "claude-code" {
+        let slug = format!("home-{}", sandbox.name);
+        if let Ok(valid) = crate::domain::persist::RootSlug::new(&slug) {
+            let host_path = crate::domain::persist::host_path(
+                &crate::services::persist_service::persistent_base(),
+                &principal.user_id.to_string(),
+                crate::domain::persist::RootKind::AgentHome,
+                &valid,
+            );
+            // The home of an earlier sandbox of the same name is reused, so deleting a
+            // sandbox and creating it again brings the login back. Looked up first: a
+            // failed insert would abort the transaction.
+            let existing = crate::store::postgres::persistent_roots::list_roots(&mut scope)
+                .await
+                .map_err(ApiError::from)?
+                .into_iter()
+                .find(|root| root.slug == slug && root.node_id == node.id && root.archived_at.is_none());
+            let root_id = match existing {
+                Some(root) => root.id,
+                None => {
+                    crate::store::postgres::persistent_roots::insert_root(
+                        &mut scope,
+                        crate::store::postgres::persistent_roots::NewRoot {
+                            node_id: node.id,
+                            kind: crate::domain::persist::RootKind::AgentHome,
+                            owner_user_id: Some(principal.user_id),
+                            slug: valid.as_str(),
+                            host_path: &host_path,
+                        },
+                    )
+                    .await
+                    .map_err(ApiError::from)?
+                    .id
+                }
+            };
+            crate::store::postgres::persistent_roots::insert_mount(
+                &mut scope,
+                root_id,
+                sandbox.id,
+                "/home/nestbox/.agent-state",
+                false,
+            )
+            .await
+            .map_err(ApiError::from)?;
+        }
+    }
     let mounts =
         crate::services::persist_service::mount_specs_for_sandbox(&mut scope, sandbox.id).await?;
 
@@ -1386,13 +1435,35 @@ pub async fn apply_agent_files(
     let mut written = 0;
     for file in &files {
         let encoded = base64::engine::general_purpose::STANDARD.encode(file.content.as_bytes());
+        // Plain files are replaced. A state file the agent also writes is merged into
+        // when it exists (keys already there win, the MCP server list is updated), so
+        // re-applying the configuration never signs the user out.
+        let script = r#"target="$HOME/$1"; mkdir -p "$(dirname "$target")" || exit 1
+printf %s "$2" | base64 -d > "$target.new" || exit 1
+if [ "$3" = merge ] && [ -s "$target" ] && command -v python3 >/dev/null 2>&1; then
+python3 - "$target" "$target.new" <<'PY'
+import json, sys
+old = json.load(open(sys.argv[1]))
+new = json.load(open(sys.argv[2]))
+for key, value in new.items():
+    if key == "mcpServers":
+        old.setdefault(key, {}).update(value)
+    elif key not in old:
+        old[key] = value
+json.dump(old, open(sys.argv[1], "w"), indent=2)
+PY
+rm -f "$target.new"
+else
+mv "$target.new" "$target"
+fi"#;
         let command = vec![
             "sh".to_string(),
             "-c".to_string(),
-            "target=\"$HOME/$1\"; mkdir -p \"$(dirname \"$target\")\" && printf %s \"$2\" | base64 -d > \"$target\"".to_string(),
+            script.to_string(),
             "sh".to_string(),
             file.path.clone(),
             encoded,
+            if file.merge_json { "merge" } else { "replace" }.to_string(),
         ];
         match ctx.runtime.exec(sandbox_name, &command, 20).await {
             Ok(result) if result.exit_code == Some(0) => written += 1,

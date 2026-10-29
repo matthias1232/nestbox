@@ -22,6 +22,10 @@ pub struct AgentFile {
     /// Relative to `$HOME`, e.g. `.claude/settings.json`.
     pub path: String,
     pub content: String,
+    /// The file is state the agent also writes (its login, its history): an existing
+    /// copy is merged into rather than replaced, so a re-applied configuration cannot
+    /// sign the user out.
+    pub merge_json: bool,
 }
 
 fn get<'a>(environment: &'a BTreeMap<String, String>, key: &str) -> Option<&'a str> {
@@ -68,15 +72,27 @@ fn claude_code(environment: &BTreeMap<String, String>) -> Vec<AgentFile> {
         // agent is not asked to confirm every command inside it.
         "permissions": { "defaultMode": "acceptEdits" },
     });
+    // With a persistent config directory (CLAUDE_CONFIG_DIR under the home) the settings
+    // and the state, including a login the user made themselves, live on the persistent
+    // mount and survive the sandbox being recreated. Otherwise the default locations.
+    let dir = get(environment, "CLAUDE_CONFIG_DIR")
+        .and_then(|path| path.strip_prefix("/home/nestbox/"))
+        .map(str::to_string);
+    let (settings_path, state_path) = match &dir {
+        Some(dir) => (format!("{dir}/settings.json"), format!("{dir}/.claude.json")),
+        None => (".claude/settings.json".to_string(), ".claude.json".to_string()),
+    };
     vec![
         AgentFile {
-            path: ".claude/settings.json".into(),
+            path: settings_path,
             content: serde_json::to_string_pretty(&settings).unwrap_or_default(),
+            merge_json: false,
         },
         // Skip the first-run wizard: the endpoint and the credential are already set.
         AgentFile {
-            path: ".claude.json".into(),
+            path: state_path,
             content: serde_json::to_string_pretty(&claude_state(environment)).unwrap_or_default(),
+            merge_json: true,
         },
     ]
 }
@@ -133,6 +149,7 @@ fn opencode(environment: &BTreeMap<String, String>) -> Vec<AgentFile> {
         });
     }
     vec![AgentFile {
+        merge_json: false,
         path: ".config/opencode/opencode.json".into(),
         content: serde_json::to_string_pretty(&config).unwrap_or_default(),
     }]
