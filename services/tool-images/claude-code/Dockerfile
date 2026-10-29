@@ -15,7 +15,7 @@ ARG CLAUDE_CODE_VERSION=2.1.312
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates curl git jq less procps htop ripgrep vim openssh-client \
+        ca-certificates curl git jq less procps htop ripgrep vim openssh-client python3 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --shell /bin/bash nestbox

@@ -689,6 +689,13 @@ pub async fn create(
             // before anyone opens a shell. Best effort; a failure is logged and the
             // environment still carries the same facts.
             apply_agent_files(ctx, &sandbox.name, &sandbox.pack_key, &configured_environment).await;
+            // An agent starts with the Nestbox MCP hub attached when the hub is
+            // deployed (the same condition that put its address in the environment).
+            if configured_environment.contains_key("NESTBOX_MCP_URL") {
+                if let Err(error) = crate::services::mcp_service::attach(ctx, principal, sandbox.id, "nestbox-hub", true).await {
+                    tracing::warn!(sandbox = %sandbox.name, code = error.code.0, "could not attach the MCP hub");
+                }
+            }
             let health = health_from_runtime(&facts);
             let updated = set_status(
                 ctx,

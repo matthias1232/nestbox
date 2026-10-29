@@ -35,6 +35,15 @@ services:
         # a protocol token — the handshake would fail with a bare 400.
         [ -s /secrets/node/token ] || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > /secrets/node/token
         chown -R 10001:10001 /data /secrets
+        # The MCP hub's shared token: one file the control API reads (it hands the
+        # token to the agents' environment) and one copy only the hub's user can read.
+        [ -s /secrets/mcp_hub_token ] || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > /secrets/mcp_hub_token
+        mkdir -p /secrets/mcp
+        cp /secrets/mcp_hub_token /secrets/mcp/token
+        chown -R 10002:10002 /secrets/mcp
+        chmod 0500 /secrets/mcp
+        chmod 0400 /secrets/mcp/token
+        chown 10001:10001 /secrets/mcp_hub_token
         # The egress proxy runs as `envoy` (uid 101) and must present the node
         # token on every policy check. It gets its own copy, in its own directory,
         # readable by it alone: the proxy mounts nothing else from secrets/.
@@ -277,6 +286,20 @@ services:
     # way out for a sandbox.
     networks:
       - control
+      - runtime
+
+  # The MCP server every agent sandbox is attached to (the registry entry
+  # `nestbox-hub`). It lives on the sandbox network under the name `mcp-hub`, so an
+  # agent reaches it through the egress proxy and every tool call is a logged fact.
+  mcp-hub:
+    build:
+      context: ../services/tool-images/mcp-hub
+    image: nestbox-mcp-hub:local
+    restart: unless-stopped
+    entrypoint: ["sh", "-c", "NESTBOX_MCP_TOKEN=$$(cat /run/mcp/token) exec python3 /app/server.py"]
+    volumes:
+      - ./secrets/mcp:/run/mcp:ro
+    networks:
       - runtime
 
   tool-image-ubuntu-dev:
