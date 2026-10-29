@@ -99,18 +99,29 @@ def _allowed(image: str) -> str:
     return image
 
 
-def _run(image: str, script: str, environment: dict[str, str], timeout: int = 180) -> tuple[int, str]:
+def _run(
+    image: str,
+    script: str,
+    environment: dict[str, str],
+    timeout: int = 180,
+    network: str = "bridge",
+) -> tuple[int, str]:
     """Run one fixed script in a throwaway container of `image`.
 
     Returns the exit code and stdout. The container is removed on every path,
     including a timeout, so a failed query cannot leave a process behind.
+
+    The entrypoint is cleared on purpose: a recipe image's entrypoint starts the
+    supervisor, which would ignore the script and run until the timeout. A
+    verification asks the image's package database, not its workload.
     """
     def create() -> Any:
         return client().containers.create(
             _allowed(image),
+            entrypoint=[],
             command=["sh", "-c", script],
             environment=environment,
-            network_mode="bridge",
+            network_mode=network,
             mem_limit="1g",
             pids_limit=256,
             cap_drop=["ALL"],
@@ -240,7 +251,9 @@ def verify(body: VerifyBody) -> dict[str, Any]:
         name = package.split("=", 1)[0].strip()
         if name and name not in wanted:
             wanted.append(name)
-    code, output = _run(body.tag, LIST_SCRIPT[body.package_manager], {})
+    # No network: a package database is local, so the check cannot depend on a
+    # mirror and cannot become an egress path.
+    code, output = _run(body.tag, LIST_SCRIPT[body.package_manager], {}, network="none")
     if code != 0:
         return {
             "present": [],
