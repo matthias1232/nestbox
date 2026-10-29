@@ -38,7 +38,7 @@ export default function TrafficTab(props) {
           <For each={WINDOWS}>{(w) => <option value={w}>last {w}</option>}</For>
         </select>
         <select value={filter()} onChange={(e) => { setFilter(e.currentTarget.value); poll.refresh(); }}>
-          <option value="all">all requests</option><option value="denied">blocked only</option><option value="allowed">allowed only</option>
+          <option value="all">all requests</option><option value="blocked">blocked only</option><option value="allowed">allowed only</option>
         </select>
         <Show when={s()}>
           <span class="muted small">{s().requests} requests · {s().allowed} allowed · <b>{s().denied} blocked</b> · {s().destinations} destinations</span>

@@ -42,8 +42,8 @@ the running appliance. VS Code Remote-SSH needs both and does not work through i
 the console says so. Legacy `scp -O` does work when the sandbox image has `scp`,
 because it is only a command run inside the sandbox, the same as typing it in a
 shell. A shell, `ssh host <command>` (so `ssh host claude`), a PTY with resize,
-and exit codes all work. SSH sessions are logged by the runner (who, when) but not
-yet recorded in `sandbox_sessions`; that needs a callback to the control API.
+and exit codes all work. SSH sessions are recorded in `sandbox_sessions` (who, when, how long, bytes; never
+content): the runner reports each open and close to the control API with the node token.
 
 ## Alternatives rejected
 

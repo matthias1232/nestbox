@@ -5,6 +5,13 @@
 // or saved but the runner could not apply it.
 import { Show, createSignal } from 'solid-js';
 import * as deck from '../../api/deck.js';
+import { formatBytes } from '../../components/Meter.jsx';
+
+// The spec stores bytes as "805306368b"; show what a person reads.
+function readable(limit) {
+  const match = String(limit || '').match(/^(\d+)b$/);
+  return match ? formatBytes(Number(match[1])) : limit || '—';
+}
 
 const SAID = {
   applied: 'Applied to the running sandbox.',
@@ -40,7 +47,7 @@ export default function ResourcesPanel(props) {
 
   return (
     <form class="resource-form" onSubmit={apply}>
-      <label>Memory (now {spec().memory_limit || '—'})
+      <label>Memory (now {readable(spec().memory_limit)})
         <input placeholder="e.g. 2g or 512Mi" value={memory()} onInput={(e) => setMemory(e.currentTarget.value)} />
       </label>
       <label>CPU cores (now {spec().cpu_limit ?? '—'})
