@@ -25,3 +25,7 @@ export const reconfigureAgent = (id) => request(`sandboxes/${id}/agent-config`, 
 
 // The sandbox's OpenShell supervisor: the supervisor row plus what the gateway reports.
 export const supervisor = (id) => request(`sandboxes/${id}/supervisor`);
+
+// How each running sandbox's agent is signed in (gateway key or own account), whether
+// the supervisor is connected, and who has a session open.
+export const loginSessions = () => request('sandboxes/login-sessions');

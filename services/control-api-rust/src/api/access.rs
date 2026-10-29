@@ -271,3 +271,12 @@ pub async fn ssh_session_event(
     scope.commit().await.map_err(ApiError::from)?;
     Ok(Json(result))
 }
+
+/// How each running sandbox's agent is signed in, and who is connected.
+pub async fn login_overview(
+    State(state): State<AppState>,
+    auth: crate::api::principal::Auth,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let items = crate::services::session_service::overview(&state.services, &auth.principal).await?;
+    Ok(Json(serde_json::json!({ "items": items })))
+}

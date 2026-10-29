@@ -13,6 +13,7 @@ pub mod environment;
 pub mod gateway;
 pub mod geography;
 pub mod job;
+pub mod login;
 pub mod mcp;
 pub mod metrics;
 pub mod model;
