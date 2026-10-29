@@ -1216,6 +1216,29 @@ pub async fn check(ctx: &ServiceContext, input: CheckInput) -> Result<CheckOutco
     if response.rule_id == Some(Uuid::nil()) {
         response.rule_id = None;
     }
+    // A DNS block is stronger than an allow: a name the operator has said a sandbox
+    // must not resolve is not reachable by any network rule or window. (An allow
+    // DNS rule adds nothing; the network rules still decide.)
+    if response.decision != Decision::Deny {
+        let dns_rules = store::list_dns_rules(&mut scope).await.map_err(ApiError::from)?;
+        if let Some(blocked) = crate::domain::policy::dns_rule_for(
+            &dns_rules,
+            sandbox_id,
+            governing.as_ref().map(|policy| policy.id),
+            &request.host,
+        )
+        .filter(|rule| rule.action == crate::domain::policy::RuleAction::Deny)
+        {
+            response.decision = Decision::Deny;
+            response.reason = DecisionReason::Rule;
+            response.rule_id = None;
+            response.window_id = None;
+            response.explanation = format!(
+                "The name {} is blocked by the DNS rule {}.",
+                request.host, blocked.pattern
+            );
+        }
+    }
 
     egress_store::record_decision(
         &mut scope,
