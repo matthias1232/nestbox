@@ -565,10 +565,21 @@ pub async fn internal_check(
         ));
     }
 
-    let request = CheckRequest {
-        sandbox_id: header_value(&headers, "x-nestbox-sandbox")
+    // Who is asking is decided by the connection, not by a header the sandbox
+    // could have written: the proxy reports the address the request came from
+    // (`x-nestbox-source-ip`, set by the proxy and never by the client), and the
+    // runner says which sandbox holds that address. A header naming a sandbox is
+    // accepted only when no source address was reported, which is how the tests
+    // and a hand-made check speak.
+    let sandbox_id = match header_value(&headers, "x-nestbox-source-ip") {
+        Some(address) => resolve_source(&state, &address).await,
+        None => header_value(&headers, "x-nestbox-sandbox")
             .or_else(|| header_value(&headers, "x-nestbox-sandbox-id"))
             .and_then(|value| Uuid::parse_str(value.trim()).ok()),
+    };
+
+    let request = CheckRequest {
+        sandbox_id,
         node_id: Some(node_id),
         host,
         port,
@@ -624,6 +635,9 @@ pub async fn internal_check(
             "x-nestbox-window-id",
             &window_id.to_string(),
         );
+    }
+    if let Some(id) = sandbox_id {
+        insert_header(&mut response_headers, "x-nestbox-sandbox", &id.to_string());
     }
     insert_header(
         &mut response_headers,
@@ -752,3 +766,29 @@ fn original_path(headers: &HeaderMap, original: &axum::http::Uri) -> String {
     path
 }
 
+/// The sandbox that holds this address on the sandbox network, if any.
+///
+/// The runner is asked for every container's address (a cheap read) and the one
+/// that matches is looked up by name. An address nobody holds, or a runner that
+/// cannot answer, is `None`: the check then refuses with "no sandbox identified",
+/// which is the honest fail-closed answer.
+async fn resolve_source(state: &AppState, address: &str) -> Option<Uuid> {
+    let address = address.trim();
+    let facts = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        state.services.runtime.list(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    let name = facts
+        .iter()
+        .find(|fact| {
+            fact.ip == address || fact.network.iter().any(|interface| interface.ip == address)
+        })
+        .map(|fact| fact.name.clone())?;
+    crate::store::postgres::egress::sandbox_id_by_name(&state.services.pool, &name)
+        .await
+        .ok()
+        .flatten()
+}

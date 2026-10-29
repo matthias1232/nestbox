@@ -49,7 +49,8 @@ RUN mkdir -p /etc/envoy/tls \
  && chown -R envoy:envoy /etc/envoy/tls \
  && chmod 0600 /etc/envoy/tls/loopback.key
 
-USER envoy
+# Starts as root only to read the node token and write the configuration copy; the
+# script drops to `envoy` (su-exec) before Envoy or the broker run.
 EXPOSE 3128
 # The script starts the broker (which reads the CA from Docker secrets) and
 # execs Envoy, so Envoy stays PID 1 and `docker compose run --entrypoint envoy`

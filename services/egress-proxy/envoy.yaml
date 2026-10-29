@@ -94,7 +94,7 @@ static_resources:
                           ts: "%START_TIME%"
                           node: "%ENVIRONMENT(NESTBOX_NODE_NAME)%"
                           listener: proxy
-                          sandbox: "%REQ(x-nestbox-sandbox)%"
+                          sandbox: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-sandbox)%"
                           # For a CONNECT this is `host:port`, for a plain
                           # request the Host header. `target_host`/`target_port`
                           # are the same value split by the Lua filter.
@@ -137,14 +137,22 @@ static_resources:
                     - name: forward
                       domains: ["*"]
                       routes:
-                        # HTTPS: end the CONNECT here and hand the TLS bytes to
-                        # the certificate broker. `connect_config` is what makes
-                        # Envoy strip the CONNECT headers and forward the
-                        # payload as raw TCP; without it Envoy would proxy the
-                        # CONNECT request itself and learn nothing.
+                        # HTTPS: the CONNECT is asked about like any request. The
+                        # decision is on the destination the client named
+                        # (host and port), made before a single byte is
+                        # tunnelled; what is inside the encrypted stream is not
+                        # read, and the log says so (`connect: true`, no path).
+                        # `connect_config` makes Envoy strip the CONNECT headers
+                        # and forward the payload as raw TCP.
+                        #
+                        # Reading inside TLS needs the certificate broker and a CA
+                        # trusted by every client. That is a separate, deliberate
+                        # mode (`tls_terminator`, listener 2 below), not the
+                        # default: a tunnel that cannot be read should be
+                        # allowed or denied by name, not broken.
                         - match: { connect_matcher: {} }
                           route:
-                            cluster: tls_terminator
+                            cluster: dynamic_forward_proxy_cluster
                             upgrade_configs:
                               - upgrade_type: CONNECT
                                 connect_config: {}
@@ -158,23 +166,9 @@ static_resources:
                             # body, and a CONNECT's body is the tunnel: it ends
                             # when the client is done, long after the client is
                             # waiting for the 200. Without this, every CONNECT
-                            # hangs until the client gives up — found the hard
-                            # way, and the reason this route disables the filter.
+                            # hangs until the client gives up.
                             envoy.filters.http.buffer:
                               "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.BufferPerRoute
-                              disabled: true
-                            # The decision for HTTPS is made once, on the request
-                            # that was decrypted, where the control API can see
-                            # the path, the body and the MCP facts. Asking twice
-                            # would double the decision load and, worse, Envoy
-                            # forwards a CONNECT to ext_authz as a CONNECT whose
-                            # request target is `host:port` — a request the
-                            # control API's `/internal/policy/check` route cannot
-                            # receive. A tunnel that opens is not a request that
-                            # leaves: nothing is sent to the destination until
-                            # the decrypted request is allowed.
-                            envoy.filters.http.ext_authz:
-                              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
                               disabled: true
                         # Plain HTTP: host from `:authority`, no CONNECT.
                         - match: { prefix: "/" }
@@ -210,8 +204,10 @@ static_resources:
                       # `http_service.authorization_request.allowed_headers`.
                       allowed_headers:
                         patterns:
-                          - exact: x-nestbox-sandbox
-                          - exact: x-nestbox-node
+                          # Set by the Lua filter from the connection, never copied
+                          # from the client: it is how the control API learns
+                          # which sandbox is asking.
+                          - exact: x-nestbox-source-ip
                           - exact: user-agent
                           - exact: mcp-session-id
                       http_service:
@@ -223,6 +219,17 @@ static_resources:
                         # `path_prefix`; the control API registers the exact
                         # path and the suffixed form.
                         path_prefix: /api/v1/internal/policy/check
+                        # This node's identity and token. They are filled in when
+                        # the container starts (`start-egress-proxy.sh`) and they
+                        # override anything the client sent under the same names,
+                        # so a sandbox cannot present its own. Without them the
+                        # control API answers 401 and every request is denied.
+                        authorization_request:
+                          headers_to_add:
+                            - key: x-nestbox-node
+                              value: "__NESTBOX_NODE_ID__"
+                            - key: authorization
+                              value: "Bearer __NESTBOX_NODE_TOKEN__"
                         authorization_response:
                           # The decider answers with these headers and Envoy
                           # copies them into the ext_authz filter metadata.
@@ -233,6 +240,7 @@ static_resources:
                               - exact: x-nestbox-decision
                               - exact: x-nestbox-reason
                               - exact: x-nestbox-rule-id
+                              - exact: x-nestbox-sandbox
                       # Fail closed. A control API that cannot answer is not
                       # permission to proceed.
                       failure_mode_allow: false
@@ -298,7 +306,7 @@ static_resources:
                           ts: "%START_TIME%"
                           node: "%ENVIRONMENT(NESTBOX_NODE_NAME)%"
                           listener: terminated
-                          sandbox: "%REQ(x-nestbox-sandbox)%"
+                          sandbox: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-sandbox)%"
                           host: "%REQ(:authority)%"
                           target_host: "%DYNAMIC_METADATA(nestbox:target_host)%"
                           target_port: "%DYNAMIC_METADATA(nestbox:target_port)%"
@@ -352,8 +360,10 @@ static_resources:
                       transport_api_version: V3
                       allowed_headers:
                         patterns:
-                          - exact: x-nestbox-sandbox
-                          - exact: x-nestbox-node
+                          # Set by the Lua filter from the connection, never copied
+                          # from the client: it is how the control API learns
+                          # which sandbox is asking.
+                          - exact: x-nestbox-source-ip
                           - exact: user-agent
                           - exact: mcp-session-id
                       http_service:
@@ -362,12 +372,24 @@ static_resources:
                           cluster: control_api
                           timeout: 1s
                         path_prefix: /api/v1/internal/policy/check
+                        # This node's identity and token. They are filled in when
+                        # the container starts (`start-egress-proxy.sh`) and they
+                        # override anything the client sent under the same names,
+                        # so a sandbox cannot present its own. Without them the
+                        # control API answers 401 and every request is denied.
+                        authorization_request:
+                          headers_to_add:
+                            - key: x-nestbox-node
+                              value: "__NESTBOX_NODE_ID__"
+                            - key: authorization
+                              value: "Bearer __NESTBOX_NODE_TOKEN__"
                         authorization_response:
                           dynamic_metadata_from_headers:
                             patterns:
                               - exact: x-nestbox-decision
                               - exact: x-nestbox-reason
                               - exact: x-nestbox-rule-id
+                              - exact: x-nestbox-sandbox
                       failure_mode_allow: false
                   - name: envoy.filters.http.dynamic_forward_proxy
                     typed_config:

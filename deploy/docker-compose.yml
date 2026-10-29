@@ -202,6 +202,11 @@ services:
       # sandboxes' forwards (SSH, agent UIs) and compose publishes the same range
       # on the node. It must equal the node's pool (nodes.port_pool_start/end);
       # a forward outside it is reported as failed instead of silently closed.
+      # Where the proxy's access log is delivered, and who the runner says it is
+      # when it delivers it (the same node token the terminal check uses).
+      NESTBOX_CONTROL_API_URL: http://control-api:8000
+      NESTBOX_NODE_ID: ${NESTBOX_NODE_ID:-00000000-0000-0000-0000-000000000003}
+      NESTBOX_ENVIRONMENT_ID: ${NESTBOX_ENVIRONMENT_ID:-00000000-0000-0000-0000-000000000002}
       NESTBOX_FORWARD_RANGE: ${NESTBOX_FORWARD_RANGE:-22200-22299}
       NESTBOX_RUNNER_STATE: /var/lib/nestbox-runner
     volumes:
@@ -241,10 +246,16 @@ services:
     restart: unless-stopped
     environment:
       NESTBOX_NODE_NAME: local
-      # Where a future CONNECT-termination step reads the node token. Until the
-      # proxy authenticates its ingest calls, the value is unused and the file
-      # is not mounted, so a missing secret cannot break the stack.
-      NESTBOX_NODE_TOKEN_FILE: /run/secrets/node_token
+      # Who this node is, and the token that proves it. The proxy presents both
+      # on every policy check; without them the control API refuses the check and
+      # every request is denied. The id is the seeded local node.
+      NESTBOX_NODE_ID: ${NESTBOX_NODE_ID:-00000000-0000-0000-0000-000000000003}
+      NESTBOX_NODE_TOKEN_FILE: /run/node/token
+    # Root only for the start script, which reads the 0600 token and writes the
+    # configuration copy, then drops to `envoy` (see start-egress-proxy.sh).
+    user: "0:0"
+    volumes:
+      - ./secrets/node:/run/node:ro
     cap_add:
       - NET_ADMIN
       - NET_RAW
