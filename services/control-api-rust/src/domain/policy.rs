@@ -1527,6 +1527,48 @@ pub fn rules_from_mcp(
         .collect()
 }
 
+/// The allow rule that lets a gateway sandbox reach the egress proxy.
+///
+/// On an OpenShell gateway every destination must be named in the policy,
+/// including our own proxy. The rule grants the *hop* to the proxy and nothing
+/// else: what the agent may actually reach is still decided per request by the
+/// proxy (ADR 0013), so it cannot widen access and it cannot be skipped.
+///
+/// It is deliberately `tcp`: a forward proxy speaks `CONNECT`, so there is no
+/// request inside the tunnel for OpenShell to parse at L7.
+pub fn rules_for_egress_proxy(
+    host: &str,
+    port: u16,
+    sandbox_id: Uuid,
+    environment_id: Uuid,
+) -> Vec<NetworkRule> {
+    let host = host.trim();
+    if host.is_empty() || port == 0 {
+        return Vec::new();
+    }
+    vec![NetworkRule {
+        id: Uuid::nil(),
+        environment_id,
+        policy_id: None,
+        sandbox_id: Some(sandbox_id),
+        name: "Egress proxy".into(),
+        action: RuleAction::Allow,
+        host: host.to_string(),
+        port: Some(i32::from(port)),
+        protocol: RuleProtocol::Tcp,
+        methods: vec![],
+        binaries: vec![],
+        matchers: vec![
+            Matcher { kind: MatcherKind::Host, value: Some(host.to_string()) },
+            Matcher { kind: MatcherKind::Port, value: Some(port.to_string()) },
+        ],
+        enforcement: Enforcement::Enforced,
+        priority: DOCUMENT_ALLOW_PRIORITY - 200,
+        enabled: true,
+        version: 1,
+    }]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

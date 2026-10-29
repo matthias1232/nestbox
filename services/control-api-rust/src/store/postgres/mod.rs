@@ -10,6 +10,7 @@ pub mod gateways;
 pub mod geography;
 pub mod jobs;
 pub mod mcp;
+pub mod media;
 pub mod metrics;
 pub mod model_installs;
 pub mod models;

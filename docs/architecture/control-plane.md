@@ -37,6 +37,7 @@ Grouped by tab, all under the frozen `/api/v1/` prefix (ADR 0015):
 | Stack diagram | `GET /sandboxes/{id}/stack-topology` (operator to internet, live state, a log per piece), `GET /system/components`, `GET /system/components/{service}/logs` |
 | Dashboard | `GET /sandboxes/{id}/metrics`, `GET /sandboxes/{id}/processes`, `GET /sandboxes/{id}/policies/effective` |
 | Traffic | `GET /sandboxes/{id}/traffic`, `GET /sandboxes/{id}/traffic/{event_id}/body`, SSE on `/telemetry/stream` |
+| Media | `GET/PUT /media/settings`, `GET/PUT /sandboxes/{id}/media`, `GET /sandboxes/{id}/media/renders`, `GET /media/renders/{id}/asset/{name}`, `POST /internal/media/render` (media token), `GET /internal/media/info`, `GET /internal/media/renders/{id}/asset` |
 | MCP | `GET/POST /mcp/servers`, `GET/PUT/DELETE /mcp/servers/{key}`, `GET/POST /sandboxes/{id}/mcp/servers`, `DELETE /sandboxes/{id}/mcp/servers/{key}`, `POST /sandboxes/{id}/mcp/servers/{key}/discover`, `GET /sandboxes/{id}/mcp/calls` |
 | Terminal | `GET /sandboxes/{id}/terminal` (WebSocket, `x-stream: ws`) |
 | Access | `GET /sandboxes/{id}/ssh-key`, `GET /sandboxes/{id}/ssh-key/download`, `POST /sandboxes/{id}/ssh-key/rotate`, `GET/POST /sandboxes/{id}/ports`, `DELETE /sandboxes/{id}/ports/{forward_id}`, `GET /sandboxes/{id}/sessions` |

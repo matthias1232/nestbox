@@ -512,6 +512,16 @@ pub async fn environment_for_pack(
                 environment.insert("NESTBOX_MCP_TOKEN".into(), token.to_string());
             }
         }
+        // The media MCP server authenticates with its own token, so a sandbox
+        // that is allowed to render does not also receive the filesystem hub's
+        // credential. Both are appliance-scoped, neither is per-sandbox.
+        if let Ok(token) = std::fs::read_to_string(ctx.secret_dir.join("media_mcp_token")) {
+            let token = token.trim();
+            if !token.is_empty() {
+                environment.insert("NESTBOX_MEDIA_TOKEN".into(), token.to_string());
+                environment.insert("NESTBOX_MEDIA_MCP_URL".into(), media_mcp_url());
+            }
+        }
     }
     Ok(environment)
 }
@@ -722,6 +732,15 @@ mod tests {
 
 /// Where an agent reaches the Nestbox MCP hub. A deployment sets it when the hub
 /// is not reachable as `mcp-hub` (an OpenShell supervisor cannot resolve that name).
+/// Where an agent reaches the media MCP server. Overridable for a deployment
+/// where the compose name is not resolvable from the sandbox.
+pub fn media_mcp_url() -> String {
+    match std::env::var("NESTBOX_MEDIA_MCP_URL") {
+        Ok(value) if !value.trim().is_empty() => value.trim().to_string(),
+        _ => "http://media-mcp:8080/mcp".to_string(),
+    }
+}
+
 pub fn mcp_hub_url() -> String {
     match std::env::var("NESTBOX_MCP_HUB_URL") {
         Ok(value) if !value.trim().is_empty() => value.trim().to_string(),

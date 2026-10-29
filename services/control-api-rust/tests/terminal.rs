@@ -230,6 +230,7 @@ async fn a_session_is_recorded_and_closed_with_a_reason_and_no_content() {
             idle: Duration::from_millis(150),
             ..Limits::default()
         },
+        String::new(),
     )
     .await
     .expect("a running sandbox accepts a terminal");
@@ -301,12 +302,12 @@ async fn the_fifth_terminal_in_one_sandbox_is_refused() {
     let principal = principal(environment);
 
     for slot in 0..terminal_service::MAX_PER_SANDBOX {
-        terminal_service::open(&ctx, &principal, sandbox_id, Limits::default())
+        terminal_service::open(&ctx, &principal, sandbox_id, Limits::default(), String::new())
             .await
             .unwrap_or_else(|error| panic!("slot {slot} should be open: {}", error.message));
     }
 
-    let refusal = terminal_service::open(&ctx, &principal, sandbox_id, Limits::default())
+    let refusal = terminal_service::open(&ctx, &principal, sandbox_id, Limits::default(), String::new())
         .await
         .expect_err("the fifth terminal must be refused");
     assert_eq!(refusal.code, ErrorCode::SANDBOX_TERMINAL_LIMIT);
@@ -351,7 +352,7 @@ async fn the_twenty_first_terminal_for_one_user_is_refused() {
     let runtime = Arc::new(FakeRuntime::new());
     let target = running_sandbox(&pool, environment, &unique("terminal-target")).await;
     let ctx = context(&pool, &runtime);
-    let refusal = terminal_service::open(&ctx, &principal(environment), target, Limits::default())
+    let refusal = terminal_service::open(&ctx, &principal(environment), target, Limits::default(), String::new())
         .await
         .expect_err("the twenty-first terminal must be refused");
     assert_eq!(refusal.code, ErrorCode::SANDBOX_TERMINAL_LIMIT);
@@ -387,7 +388,7 @@ async fn an_abandoned_row_is_swept_instead_of_blocking_a_slot() {
 
     // The next terminal sweeps it and is accepted, rather than being refused by
     // a ghost that would otherwise hold a slot for good.
-    terminal_service::open(&ctx, &principal(environment), sandbox_id, Limits::default())
+    terminal_service::open(&ctx, &principal(environment), sandbox_id, Limits::default(), String::new())
         .await
         .expect("the abandoned row must not block the slot");
 

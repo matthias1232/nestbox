@@ -17,6 +17,17 @@ export function logs(service, tail = 200) {
 }
 
 /**
+ * The same read, under the name the topology and log screens use.
+ *
+ * Two names for one route is deliberate: `logs` reads as "the component's log",
+ * `componentLogs` as "the log of a card I selected". Both call the one route, so
+ * the screens cannot drift onto two different sources.
+ */
+export function componentLogs(service, tail = 200) {
+  return logs(service, tail);
+}
+
+/**
  * Change CPU, memory or process limits. Docker applies them live; the answer
  * does not claim a restart that did not happen.
  */

@@ -169,6 +169,15 @@ impl ApiError {
         .with_details(serde_json::json!({ "required_permission": permission }))
     }
 
+    /// A request refused by a rule rather than by a missing role.
+    ///
+    /// Separate from `forbidden(permission)` because the message names the
+    /// rule ("not attached", "not on the allow-list") and a client that sees
+    /// `required_permission` would look for a grant that does not exist.
+    pub fn refused(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::FORBIDDEN, ErrorCode::FORBIDDEN, message)
+    }
+
     pub fn not_found(code: ErrorCode, what: impl Into<String>) -> Self {
         Self::new(StatusCode::NOT_FOUND, code, what)
     }

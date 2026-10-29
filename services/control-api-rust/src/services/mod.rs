@@ -14,6 +14,7 @@ pub mod geography_service;
 pub mod inventory_service;
 pub mod job_service;
 pub mod mcp_service;
+pub mod media_service;
 pub mod metrics_service;
 pub mod model_service;
 pub mod node_service;

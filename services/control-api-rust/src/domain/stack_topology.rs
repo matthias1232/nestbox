@@ -960,6 +960,11 @@ mod tests {
             started_at: None,
             restarts: 0,
             ports: serde_json::json!([]),
+            cpu_pct: None,
+            mem_bytes: None,
+            mem_limit_bytes: None,
+            pids: None,
+            limits: serde_json::json!({}),
         }
     }
 

@@ -1069,6 +1069,7 @@ pub async fn effective_rules(
         .map_err(ApiError::from)?;
     rules.extend(crate::domain::policy::rules_from_providers(&providers));
     rules.extend(attached_mcp_rules(scope, sandbox_id, environment_id).await?);
+    rules.extend(openshell_proxy_rules(sandbox_id, environment_id));
     rules.sort_by_key(|rule| rule.priority);
     Ok(rules)
 }
@@ -1224,6 +1225,7 @@ pub async fn check(ctx: &ServiceContext, input: CheckInput) -> Result<CheckOutco
         .map_err(ApiError::from)?;
     rules.extend(crate::domain::policy::rules_from_providers(&providers));
     rules.extend(attached_mcp_rules(&mut scope, sandbox_id, owner.environment_id).await?);
+    rules.extend(openshell_proxy_rules(sandbox_id, owner.environment_id));
     let windows = egress_store::open_windows(&mut scope, Some(sandbox_id))
         .await
         .map_err(ApiError::from)?;
@@ -1361,6 +1363,18 @@ pub async fn deployment(
 }
 
 
+
+/// The allow rule that lets a gateway sandbox reach the egress proxy.
+///
+/// Empty on the Docker runtime, where the sandbox reaches `egress-proxy:3128`
+/// on its own network and the policy is enforced by the proxy alone.
+fn openshell_proxy_rules(sandbox_id: Uuid, environment_id: Uuid) -> Vec<NetworkRule> {
+    if !crate::services::sandbox_service::openshell_runtime() {
+        return Vec::new();
+    }
+    let (host, port) = crate::services::sandbox_service::openshell_proxy_endpoint();
+    crate::domain::policy::rules_for_egress_proxy(&host, port, sandbox_id, environment_id)
+}
 
 /// Allow rules for the MCP servers attached (and enabled) on one sandbox.
 async fn attached_mcp_rules(

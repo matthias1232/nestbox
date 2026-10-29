@@ -38,14 +38,47 @@ fn get<'a>(environment: &'a BTreeMap<String, String>, key: &str) -> Option<&'a s
 /// files rather than empty ones: an empty config would shadow the agent's own
 /// defaults.
 pub fn files_for(pack_key: &str, environment: &BTreeMap<String, String>) -> Vec<AgentFile> {
+    files_for_with_servers(pack_key, environment, &[])
+}
+
+/// One MCP server as an agent's startup file needs it.
+///
+/// A locator-free shape on purpose: the token is named (an environment
+/// variable), never carried. A config file that held the value would put a
+/// credential on a persistent home, where it would outlive the sandbox.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpServerConfig {
+    pub key: String,
+    /// `stdio`, `http` or `sse`.
+    pub transport: String,
+    pub endpoint: Option<String>,
+    pub command: Option<String>,
+    pub args: Vec<String>,
+    /// The environment variable an HTTP server authenticates with.
+    pub token_env: Option<String>,
+    /// The sandbox name, sent as a header so a shared server can resolve which
+    /// sandbox is asking without trusting the request body.
+    pub sandbox: Option<String>,
+}
+
+/// The files for a pack, including the MCP servers attached to this sandbox.
+///
+/// A server is only written when it is attached: attaching it is the act that
+/// grants the tool, so a server that was detached must disappear from the
+/// config on the next re-apply rather than linger.
+pub fn files_for_with_servers(
+    pack_key: &str,
+    environment: &BTreeMap<String, String>,
+    servers: &[McpServerConfig],
+) -> Vec<AgentFile> {
     match pack_key {
-        "claude-code" => claude_code(environment),
-        "opencode" | "openchamber" => opencode(environment),
+        "claude-code" => claude_code(environment, servers),
+        "opencode" | "openchamber" => opencode(environment, servers),
         _ => Vec::new(),
     }
 }
 
-fn claude_code(environment: &BTreeMap<String, String>) -> Vec<AgentFile> {
+fn claude_code(environment: &BTreeMap<String, String>, servers: &[McpServerConfig]) -> Vec<AgentFile> {
     let mut env = serde_json::Map::new();
     // Through the egress proxy, like every other request from this sandbox.
     for key in ["HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY"] {
@@ -91,7 +124,7 @@ fn claude_code(environment: &BTreeMap<String, String>) -> Vec<AgentFile> {
         // Skip the first-run wizard: the endpoint and the credential are already set.
         AgentFile {
             path: state_path,
-            content: serde_json::to_string_pretty(&claude_state(environment)).unwrap_or_default(),
+            content: serde_json::to_string_pretty(&claude_state(environment, servers)).unwrap_or_default(),
             merge_json: true,
         },
     ]
@@ -100,21 +133,52 @@ fn claude_code(environment: &BTreeMap<String, String>) -> Vec<AgentFile> {
 /// `~/.claude.json`: skip the wizard and register the Nestbox MCP hub when there is one.
 /// The token is a `${NESTBOX_MCP_TOKEN}` reference, expanded by Claude Code from the
 /// environment, never written to the file.
-fn claude_state(environment: &BTreeMap<String, String>) -> serde_json::Value {
+fn claude_state(environment: &BTreeMap<String, String>, servers: &[McpServerConfig]) -> serde_json::Value {
     let mut state = json!({ "hasCompletedOnboarding": true, "theme": "dark" });
+    let mut configured = serde_json::Map::new();
     if let Some(url) = get(environment, "NESTBOX_MCP_URL") {
-        state["mcpServers"] = json!({
-            "nestbox-hub": {
+        configured.insert(
+            "nestbox-hub".into(),
+            json!({
                 "type": "http",
                 "url": url,
                 "headers": { "Authorization": "Bearer ${NESTBOX_MCP_TOKEN}" },
+            }),
+        );
+    }
+    for server in servers {
+        if server.key == "nestbox-hub" {
+            continue;
+        }
+        let entry = match server.transport.as_str() {
+            "stdio" => json!({
+                "command": server.command.clone().unwrap_or_default(),
+                "args": server.args,
+            }),
+            _ => {
+                let mut headers = serde_json::Map::new();
+                if let Some(variable) = &server.token_env {
+                    headers.insert("Authorization".into(), json!(format!("Bearer ${{{variable}}}")));
+                }
+                if let Some(sandbox) = &server.sandbox {
+                    headers.insert("X-Nestbox-Sandbox".into(), json!(sandbox));
+                }
+                json!({
+                    "type": "http",
+                    "url": server.endpoint.clone().unwrap_or_default(),
+                    "headers": headers,
+                })
             }
-        });
+        };
+        configured.insert(server.key.clone(), entry);
+    }
+    if !configured.is_empty() {
+        state["mcpServers"] = serde_json::Value::Object(configured);
     }
     state
 }
 
-fn opencode(environment: &BTreeMap<String, String>) -> Vec<AgentFile> {
+fn opencode(environment: &BTreeMap<String, String>, servers: &[McpServerConfig]) -> Vec<AgentFile> {
     let (Some(base), Some(model)) = (get(environment, "OPENAI_BASE_URL"), get(environment, "OPENAI_MODEL").or_else(|| get(environment, "ANTHROPIC_MODEL"))) else {
         return Vec::new();
     };
@@ -138,15 +202,48 @@ fn opencode(environment: &BTreeMap<String, String>) -> Vec<AgentFile> {
         "share": "disabled",
     });
     let mut config = config;
+    let mut configured = serde_json::Map::new();
     if let Some(url) = get(environment, "NESTBOX_MCP_URL") {
-        config["mcp"] = json!({
-            "nestbox-hub": {
+        configured.insert(
+            "nestbox-hub".into(),
+            json!({
                 "type": "remote",
                 "url": url,
                 "enabled": true,
                 "headers": { "Authorization": "Bearer {env:NESTBOX_MCP_TOKEN}" },
+            }),
+        );
+    }
+    for server in servers {
+        if server.key == "nestbox-hub" {
+            continue;
+        }
+        let entry = match server.transport.as_str() {
+            "stdio" => {
+                let mut command = vec![server.command.clone().unwrap_or_default()];
+                command.extend(server.args.iter().cloned());
+                json!({ "type": "local", "command": command, "enabled": true })
             }
-        });
+            _ => {
+                let mut headers = serde_json::Map::new();
+                if let Some(variable) = &server.token_env {
+                    headers.insert("Authorization".into(), json!(format!("Bearer {{env:{variable}}}")));
+                }
+                if let Some(sandbox) = &server.sandbox {
+                    headers.insert("X-Nestbox-Sandbox".into(), json!(sandbox));
+                }
+                json!({
+                    "type": "remote",
+                    "url": server.endpoint.clone().unwrap_or_default(),
+                    "enabled": true,
+                    "headers": headers,
+                })
+            }
+        };
+        configured.insert(server.key.clone(), entry);
+    }
+    if !configured.is_empty() {
+        config["mcp"] = serde_json::Value::Object(configured);
     }
     vec![AgentFile {
         merge_json: false,
@@ -233,6 +330,56 @@ mod tests {
         assert!(!state.content.contains("tok-secret"));
         let code = files_for("opencode", &environment);
         assert!(code[0].content.contains("{env:NESTBOX_MCP_TOKEN}") && !code[0].content.contains("tok-secret"));
+    }
+
+    fn servers() -> Vec<McpServerConfig> {
+        vec![
+            McpServerConfig {
+                key: "graphify".into(),
+                transport: "stdio".into(),
+                endpoint: None,
+                command: Some("graphify".into()),
+                args: vec!["--mcp".into(), "--graph".into(), "/home/nestbox/brain/graphify-out/graph.json".into()],
+                token_env: None,
+                sandbox: Some("nest".into()),
+            },
+            McpServerConfig {
+                key: "nestbox-media".into(),
+                transport: "http".into(),
+                endpoint: Some("http://media-mcp:8080/mcp".into()),
+                command: None,
+                args: vec![],
+                token_env: Some("NESTBOX_MEDIA_TOKEN".into()),
+                sandbox: Some("nest".into()),
+            },
+        ]
+    }
+
+    #[test]
+    fn an_attached_graphify_server_is_written_as_a_stdio_entry() {
+        let files = files_for_with_servers("claude-code", &env(), &servers());
+        let state = files.iter().find(|f| f.path == ".claude.json").expect("state");
+        let parsed: serde_json::Value = serde_json::from_str(&state.content).expect("valid json");
+        assert_eq!(parsed["mcpServers"]["graphify"]["command"], "graphify");
+        assert_eq!(parsed["mcpServers"]["graphify"]["args"][0], "--mcp");
+    }
+
+    #[test]
+    fn the_media_server_carries_the_sandbox_name_and_a_token_reference_only() {
+        let files = files_for_with_servers("opencode", &env(), &servers());
+        let parsed: serde_json::Value = serde_json::from_str(&files[0].content).expect("valid json");
+        let media = &parsed["mcp"]["nestbox-media"];
+        assert_eq!(media["url"], "http://media-mcp:8080/mcp");
+        assert_eq!(media["headers"]["Authorization"], "Bearer {env:NESTBOX_MEDIA_TOKEN}");
+        assert_eq!(media["headers"]["X-Nestbox-Sandbox"], "nest");
+        assert!(!files[0].content.contains("tok-secret"));
+    }
+
+    #[test]
+    fn a_detached_server_is_absent_from_the_next_config() {
+        let files = files_for_with_servers("opencode", &env(), &[]);
+        let parsed: serde_json::Value = serde_json::from_str(&files[0].content).expect("valid json");
+        assert!(parsed.get("mcp").is_none());
     }
 
     #[test]

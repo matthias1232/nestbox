@@ -21,6 +21,7 @@ import PersistentPage from './features/persistent/PersistentPage.jsx';
 import UsersPage from './features/users/UsersPage.jsx';
 import LogsPage from './features/logs/LogsPage.jsx';
 import McpPage from './features/mcp/McpPage.jsx';
+import MediaPage from './features/media/MediaPage.jsx';
 import BuilderPage from './features/builder/BuilderPage.jsx';
 import JobsPage from './features/jobs/JobsPage.jsx';
 import SkillsPage from './features/skills/SkillsPage.jsx';
@@ -49,6 +50,7 @@ const ROUTES = [
   { id: 'nodes', label: 'Nodes' },
   { id: 'providers', label: 'Providers' },
   { id: 'mcp', label: 'MCP servers' },
+  { id: 'media', label: 'Media rendering' },
   { id: 'models', label: 'Models' },
   { id: 'skills', label: 'Skills' },
   { id: 'cudax', label: 'CUDA-X' },
@@ -179,6 +181,7 @@ export default function App() {
                   <Show when={route() === 'operations'}><JobsPage /></Show>
                   <Show when={route() === 'users'}><UsersPage /></Show>
                   <Show when={route() === 'mcp'}><McpPage role={session.identity()?.role} /></Show>
+                  <Show when={route() === 'media'}><MediaPage role={session.identity()?.role} /></Show>
                   <Show when={route() === 'logs'}><LogsPage role={session.identity()?.role} /></Show>
                 </>
               }

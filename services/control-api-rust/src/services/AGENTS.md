@@ -82,7 +82,8 @@ shape it:
 | `inventory_service.rs` | Snapshot storage and age, the allow-list that keeps a value out, never an environment value |
 | `access_service.rs` | SSH key pair as a file with a locator, port pool, sessions; pushes the port set and key to the runner and records what it opened |
 | `stack_topology_service.rs` | Reads the facts for the stack diagram (timeouts, degrade to unknown) and the appliance components |
-| `mcp_service.rs` | Registry validation, attachments, discovery from inside the sandbox |
+| `mcp_service.rs` | Registry validation, attachments, discovery from inside the sandbox, and the agent-config rewrite an attach/detach triggers |
+| `media_service.rs` | Media settings, the effective model per sandbox, the provider call, renders and their assets |
 | `persist_service.rs` | Persistent roots: derived host paths, mounts, the one-read-write rule, honest usage |
 | `terminal_service.rs` | The browser terminal: permission, the four-per-sandbox and twenty-per-user limits, the idle clock, the session row and its two audit events (`feat/terminal`) |
 

@@ -486,3 +486,53 @@ pub async fn list_calls(
         .await?;
     rows.iter().map(row_to_call).collect()
 }
+
+/// One enabled server as an agent's configuration needs it.
+///
+/// The join is here rather than in the service because "what does this agent
+/// start with" is one query: an attachment without its definition would send a
+/// half-configured server into a config file.
+#[derive(Debug, Clone)]
+pub struct AgentServer {
+    pub key: String,
+    pub transport: McpTransport,
+    pub endpoint: Option<String>,
+    pub command: Option<String>,
+    pub args: Vec<String>,
+    pub env_slots: Vec<String>,
+    pub auth_type: McpAuth,
+}
+
+/// The enabled servers a sandbox's agents should be configured with.
+pub async fn agent_servers(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+) -> Result<Vec<AgentServer>, StoreError> {
+    let rows = sqlx::query(
+        "SELECT r.key, r.transport, r.endpoint, r.command, r.args, r.env_slots, r.auth_type
+           FROM sandbox_mcp_servers a
+           JOIN mcp_registry r ON r.key = a.server_key
+          WHERE a.sandbox_id = $1 AND a.environment_id = $2
+            AND a.enabled AND r.enabled
+          ORDER BY r.key",
+    )
+    .bind(sandbox_id)
+    .bind(scope.environment_id())
+    .fetch_all(scope.connection())
+    .await?;
+    rows.iter()
+        .map(|row| {
+            let transport: String = row.try_get("transport")?;
+            let auth: String = row.try_get("auth_type")?;
+            Ok(AgentServer {
+                key: row.try_get("key")?,
+                transport: McpTransport::parse(&transport).unwrap_or(McpTransport::Stdio),
+                endpoint: row.try_get("endpoint")?,
+                command: row.try_get("command")?,
+                args: row.try_get("args")?,
+                env_slots: row.try_get("env_slots")?,
+                auth_type: McpAuth::parse(&auth).unwrap_or(McpAuth::None),
+            })
+        })
+        .collect()
+}

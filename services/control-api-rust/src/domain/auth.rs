@@ -91,6 +91,12 @@ pub enum Permission {
     RecipeWrite,
     /// Persistent roots and mounts touch the node's filesystem.
     PersistWrite,
+    /// Which media model a sandbox used, and what it rendered.
+    MediaRead,
+    /// The environment default, the allow-list, and enabling the capability.
+    /// Admin because every sandbox inherits it and it decides what may be
+    /// billed; a sandbox's own choice is `SandboxWrite`, not this.
+    MediaConfigure,
 }
 
 impl Permission {
@@ -105,7 +111,8 @@ impl Permission {
             | Self::ProviderRead
             | Self::JobRead
             | Self::NodeRead
-            | Self::RecipeRead => Role::Viewer,
+            | Self::RecipeRead
+            | Self::MediaRead => Role::Viewer,
 
             Self::SandboxWrite
             | Self::SandboxExec
@@ -115,6 +122,8 @@ impl Permission {
             | Self::PersistWrite
             | Self::NodeManage
             | Self::JobWrite => Role::Operator,
+
+            Self::MediaConfigure => Role::Admin,
 
             // Providers and their keys are shared by every user of the environment, so an
             // admin sets them; a user picks from what the admin made available.
@@ -156,6 +165,8 @@ impl Permission {
             Self::RecipeRead => "recipe.read",
             Self::RecipeWrite => "recipe.write",
             Self::PersistWrite => "persist.write",
+            Self::MediaRead => "media.read",
+            Self::MediaConfigure => "media.configure",
         }
     }
 }

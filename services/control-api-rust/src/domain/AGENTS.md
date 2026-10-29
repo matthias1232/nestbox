@@ -62,6 +62,7 @@ microseconds is that it has none.
 | `pack_access.rs` | A pack's words for its ports and SSH line, joined with what the runner reports is open; pure |
 | `stack_topology.rs` | The stack diagram in nine layers, arranged from facts; the status vocabulary |
 | `mcp.rs` | MCP server definition, sandbox attachment, tool call, JSON-RPC recognition |
+| `media.rs` | Media kind, target, the sandbox-over-environment rule, the allow-list refusal |
 
 ## Extending this module
 

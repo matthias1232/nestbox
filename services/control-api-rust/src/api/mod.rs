@@ -11,6 +11,7 @@ pub mod events;
 pub mod inventory;
 pub mod jobs;
 pub mod mcp;
+pub mod media;
 pub mod metrics;
 pub mod models;
 pub mod nodes;
@@ -187,6 +188,18 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/sandboxes/{id}/mcp/servers/{key}/discover",
             post(mcp::discover),
         )
+        // Media rendering: the environment default, a sandbox's own choice,
+        // the renders and their assets.
+        .route(
+            "/api/v1/media/settings",
+            get(media::get_settings).put(media::put_settings),
+        )
+        .route(
+            "/api/v1/sandboxes/{id}/media",
+            get(media::sandbox_settings).put(media::put_sandbox_settings),
+        )
+        .route("/api/v1/sandboxes/{id}/media/renders", get(media::renders))
+        .route("/api/v1/media/renders/{id}/asset/{name}", get(media::asset))
         // Internal: node-token endpoints for the proxy and the runner.
         //
         // The policy check is registered twice and accepts any method, for one
@@ -197,6 +210,11 @@ pub fn router(state: AppState) -> Router {
         // ignores the suffix; without both routes every request would be a 404
         // and therefore (fail closed) a deny.
         .route("/api/v1/internal/metrics/batch", post(metrics::ingest_node))
+        // The media MCP server is the caller here, not a browser: it holds the
+        // appliance's media token and names the sandbox it renders for.
+        .route("/api/v1/internal/media/render", post(media::bridge_render))
+        .route("/api/v1/internal/media/info", get(media::bridge_info))
+        .route("/api/v1/internal/media/renders/{id}/asset", get(media::bridge_asset))
         .route("/api/v1/internal/ssh-sessions", post(access::ssh_session_event))
         .route(
             "/api/v1/internal/policy/check",

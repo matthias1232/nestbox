@@ -154,27 +154,27 @@ pub async fn settings(ctx: &ServiceContext, principal: &Principal) -> Result<Med
 pub async fn update_settings(
     ctx: &ServiceContext,
     principal: &Principal,
-    settings: MediaSettings,
+    input: MediaSettings,
 ) -> Result<MediaView, ApiError> {
     require(principal, Permission::MediaConfigure)?;
     let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
     let profiles = provider_store::list(&mut scope).await.map_err(ApiError::from)?;
     let known: Vec<Uuid> = profiles.iter().map(|profile| profile.id).collect();
-    for target in [&settings.image, &settings.video, &settings.music].into_iter().flatten() {
+    for target in [&input.image, &input.video, &input.music].into_iter().flatten() {
         if !known.contains(&target.provider_id) {
             return Err(ApiError::validation(
                 "The selected provider does not exist in this environment.",
             ));
         }
     }
-    for provider_id in &settings.allowed_provider_ids {
+    for provider_id in &input.allowed_provider_ids {
         if !known.contains(provider_id) {
             return Err(ApiError::validation(
                 "The allow-list names a provider that does not exist in this environment.",
             ));
         }
     }
-    store::save_settings(&mut scope, &settings, Some(principal.user_id))
+    store::save_settings(&mut scope, &input, Some(principal.user_id))
         .await
         .map_err(ApiError::from)?;
     crate::store::postgres::audit::record(
@@ -185,7 +185,7 @@ pub async fn update_settings(
             kind: "media.settings",
             subject_type: Some("environment"),
             subject_id: Some(principal.environment_id),
-            detail: &json!({ "enabled": settings.enabled, "allowed": settings.allowed_provider_ids.len() }),
+            detail: &json!({ "enabled": input.enabled, "allowed": input.allowed_provider_ids.len() }),
             request_id: None,
         },
     )
@@ -343,14 +343,54 @@ async fn sandbox_by_name(
     name: &str,
 ) -> Result<Uuid, ApiError> {
     let mut scope = TenantScope::begin(&ctx.pool, environment_id).await.map_err(ApiError::from)?;
-    let id: Option<Uuid> = sqlx::query_scalar("SELECT id FROM sandboxes WHERE name = $1 AND environment_id = $2")
-        .bind(name)
-        .bind(environment_id)
-        .fetch_optional(scope.connection())
-        .await
-        .map_err(|error| ApiError::from(crate::error::StoreError::Database(error)))?;
+    let id = store::sandbox_id_by_name(&mut scope, name).await.map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
     id.ok_or_else(|| ApiError::not_found(ErrorCode::NOT_FOUND, "No such sandbox in this environment."))
+}
+
+/// The environment the media bridge speaks for.
+///
+/// A deployment with one environment (Phase 1) needs no configuration; more
+/// than one must name it, because rendering for the wrong tenant is exactly
+/// the mistake a default would make silent.
+pub async fn bridge_environment(ctx: &ServiceContext) -> Result<Uuid, ApiError> {
+    if let Ok(value) = std::env::var("NESTBOX_MEDIA_ENVIRONMENT_ID") {
+        if let Ok(id) = Uuid::parse_str(value.trim()) {
+            return Ok(id);
+        }
+    }
+    let ids = store::environment_ids(&ctx.pool).await.map_err(ApiError::from)?;
+    match ids.as_slice() {
+        [only] => Ok(*only),
+        [] => Err(ApiError::not_found(ErrorCode::NOT_FOUND, "This appliance has no environment.")),
+        _ => Err(ApiError::validation(
+            "This appliance holds more than one environment; set NESTBOX_MEDIA_ENVIRONMENT_ID.",
+        )),
+    }
+}
+
+/// The bytes of one rendered asset, for the MCP bridge.
+///
+/// The bridge has no browser session, so it cannot use the viewer route; it
+/// presents the appliance token instead and the tenant comes from
+/// [`bridge_environment`]. The path is derived from the row, never from the
+/// caller.
+pub async fn bridge_asset(
+    ctx: &ServiceContext,
+    environment_id: Uuid,
+    render_id: Uuid,
+) -> Result<(PathBuf, String), ApiError> {
+    let mut scope = TenantScope::begin(&ctx.pool, environment_id).await.map_err(ApiError::from)?;
+    let row = store::get_render(&mut scope, render_id).await.map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    let Some(row) = row else {
+        return Err(ApiError::not_found(ErrorCode::NOT_FOUND, "No such render."));
+    };
+    let Some(asset_name) = row.asset_name else {
+        return Err(ApiError::conflict(ErrorCode::CONFLICT, "This render has no asset."));
+    };
+    let directory = media_dir().join(environment_id.to_string());
+    Ok((directory.join(asset_name), row.mime_type.unwrap_or_else(|| "application/octet-stream".into())))
 }
 
 /// Render one asset for a sandbox, from the MCP bridge.
@@ -382,20 +422,9 @@ pub async fn render(
     // The attachment is the grant: without it, an agent that learned the tool
     // name still cannot render. It is removed with the same one action that
     // removes the tool from the agent's config.
-    let attached: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM sandbox_mcp_servers \
-         WHERE sandbox_id = $1 AND server_key = 'nestbox-media' AND enabled)",
-    )
-    .bind(sandbox_id)
-    .fetch_one(scope.connection())
-    .await
-    .map_err(|error| ApiError::from(crate::error::StoreError::Database(error)))?;
+    let attached = store::media_attached(&mut scope, sandbox_id).await.map_err(ApiError::from)?;
     if !attached {
-        return Err(ApiError::new(
-            axum_status_forbidden(),
-            ErrorCode::FORBIDDEN,
-            "Media rendering is not attached to this sandbox.",
-        ));
+        return Err(ApiError::refused("Media rendering is not attached to this sandbox."));
     }
     let target = effective(&global, Some(&override_settings), kind).ok_or_else(|| {
         ApiError::validation(format!(
@@ -408,7 +437,7 @@ pub async fn render(
         .find(|profile| profile.id == target.provider_id)
         .ok_or_else(|| ApiError::validation("The selected media provider no longer exists."))?;
     if let Some(reason) = refusal(&global, kind, &target, true) {
-        return Err(ApiError::new(axum_status_forbidden(), ErrorCode::FORBIDDEN, reason));
+        return Err(ApiError::refused(reason));
     }
     let render_id = store::insert_render(
         &mut scope,
@@ -471,12 +500,6 @@ pub async fn render(
         .ok_or_else(|| ApiError::not_found(ErrorCode::NOT_FOUND, "No such render."))?;
     scope.commit().await.map_err(ApiError::from)?;
     Ok(render_view(row))
-}
-
-/// 403 without naming a permission, for a policy refusal rather than a role
-/// refusal. Kept as a function so the status code is written once.
-fn axum_status_forbidden() -> axum::http::StatusCode {
-    axum::http::StatusCode::FORBIDDEN
 }
 
 fn extension_for(mime: &str, kind: MediaKind) -> &'static str {
@@ -567,10 +590,10 @@ fn decode_asset(payload: &Value, kind: MediaKind) -> Result<(Vec<u8>, String), S
         .to_string();
     let encoded = payload
         .pointer("/data/0/b64_json")
-        .or_else(|| payload.get("/b64_json"))
-        .or_else(|| payload.get("/audio"))
-        .or_else(|| payload.get("/video"))
-        .or_else(|| payload.get("/image"))
+        .or_else(|| payload.get("b64_json"))
+        .or_else(|| payload.get("audio"))
+        .or_else(|| payload.get("video"))
+        .or_else(|| payload.get("image"))
         .and_then(Value::as_str);
     if let Some(encoded) = encoded {
         let cleaned = encoded.split(',').last().unwrap_or(encoded);

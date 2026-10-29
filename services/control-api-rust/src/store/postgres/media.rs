@@ -270,3 +270,48 @@ pub async fn get_render(scope: &mut TenantScope<'_>, id: Uuid) -> Result<Option<
     .await?;
     row.as_ref().map(row_to_render).transpose()
 }
+
+/// Resolve a sandbox by name inside one environment.
+///
+/// The bridge names a sandbox, not an environment; this is the lookup that
+/// turns the name into the id every other statement uses.
+pub async fn sandbox_id_by_name(
+    scope: &mut TenantScope<'_>,
+    name: &str,
+) -> Result<Option<Uuid>, StoreError> {
+    let id = sqlx::query_scalar("SELECT id FROM sandboxes WHERE name = $1 AND environment_id = $2")
+        .bind(name)
+        .bind(scope.environment_id())
+        .fetch_optional(scope.connection())
+        .await?;
+    Ok(id)
+}
+
+/// Whether the media MCP server is attached and enabled for this sandbox.
+///
+/// The attachment is the grant: a tool name the agent learned somewhere else is
+/// not enough to render, and removing the tool removes the ability with it.
+pub async fn media_attached(scope: &mut TenantScope<'_>, sandbox_id: Uuid) -> Result<bool, StoreError> {
+    let attached: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM sandbox_mcp_servers \
+         WHERE sandbox_id = $1 AND environment_id = $2 AND server_key = 'nestbox-media' AND enabled)",
+    )
+    .bind(sandbox_id)
+    .bind(scope.environment_id())
+    .fetch_one(scope.connection())
+    .await?;
+    Ok(attached)
+}
+
+/// The environments this appliance holds.
+///
+/// The media bridge is one appliance-side caller without a browser session, so
+/// it cannot name a tenant the way a principal does. It is allowed to proceed
+/// only when the answer is unambiguous; a multi-tenant deployment must set
+/// `NESTBOX_MEDIA_ENVIRONMENT_ID` instead of guessing.
+pub async fn environment_ids(pool: &sqlx::PgPool) -> Result<Vec<Uuid>, StoreError> {
+    let ids = sqlx::query_scalar("SELECT id FROM environments ORDER BY created_at")
+        .fetch_all(pool)
+        .await?;
+    Ok(ids)
+}

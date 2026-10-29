@@ -235,7 +235,17 @@ impl RuntimeAdapter for AnsweringRuntime {
         Ok(())
     }
 
-    async fn open_terminal(&self, _name: &str) -> Result<BoxTerminal, RuntimeError> {
+    async fn process_action(
+        &self,
+        name: &str,
+        _pid: i64,
+        _action: &str,
+        _nice: Option<i8>,
+    ) -> Result<(), RuntimeError> {
+        Err(RuntimeError::NotFound(name.to_string()))
+    }
+
+    async fn open_terminal(&self, _name: &str, _tab_id: &str) -> Result<BoxTerminal, RuntimeError> {
         Err(RuntimeError::Rejected("not used in this suite".into()))
     }
 }

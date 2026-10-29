@@ -15,6 +15,7 @@ pub mod geography;
 pub mod job;
 pub mod login;
 pub mod mcp;
+pub mod media;
 pub mod metrics;
 pub mod model;
 pub mod model_install;

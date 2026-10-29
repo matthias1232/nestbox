@@ -365,6 +365,15 @@ pub async fn attach(
             other => ApiError::from(other),
         })?;
     scope.commit().await.map_err(ApiError::from)?;
+    // Attaching is the grant, so the agent's config is rewritten now rather
+    // than on the next recreate: a tool the console shows as attached must be
+    // a tool the running agent can actually call. A stopped sandbox has no
+    // file to write; the config then lands on its next start.
+    if let Err(error) =
+        crate::services::sandbox_service::reconfigure_agent(ctx, principal, sandbox_id).await
+    {
+        tracing::debug!(code = error.code.0, "MCP attachment not applied to a running agent");
+    }
     Ok(attachment)
 }
 
@@ -389,6 +398,13 @@ pub async fn detach(
             other => ApiError::from(other),
         })?;
     scope.commit().await.map_err(ApiError::from)?;
+    // A removed tool must also disappear from the agent's config, or the
+    // console and the agent would disagree about what is available.
+    if let Err(error) =
+        crate::services::sandbox_service::reconfigure_agent(ctx, principal, sandbox_id).await
+    {
+        tracing::debug!(code = error.code.0, "MCP detachment not applied to a running agent");
+    }
     Ok(())
 }
 

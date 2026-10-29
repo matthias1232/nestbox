@@ -234,6 +234,16 @@ pub const OPERATIONS: &[Operation] = &[
     // Internal: node-token endpoints for the proxy and the runner
     op("POST", "/api/v1/internal/policy/check", "Decide one egress request (node token)", "policies", "node", false, StreamKind::None),
     op("POST", "/api/v1/internal/telemetry/batch", "Ingest a proxy access-log batch (node token)", "telemetry", "node", false, StreamKind::None),
+    op("POST", "/api/v1/internal/media/render", "Render an image, video or music asset through the selected model (media token)", "media", "node", false, StreamKind::None),
+    op("GET", "/api/v1/internal/media/info", "Whether the media bridge is available (media token)", "media", "node", false, StreamKind::None),
+    op("GET", "/api/v1/internal/media/renders/{id}/asset", "The bytes of one render, for the media bridge (media token)", "media", "node", false, StreamKind::None),
+    // Media settings and renders
+    op("GET", "/api/v1/media/settings", "Environment default and allowed media providers", "media", "viewer", false, StreamKind::None),
+    op("PUT", "/api/v1/media/settings", "Set the environment media default and allow-list", "media", "admin", true, StreamKind::None),
+    op("GET", "/api/v1/sandboxes/{id}/media", "Effective and overridden media models for a sandbox", "media", "viewer", false, StreamKind::None),
+    op("PUT", "/api/v1/sandboxes/{id}/media", "Choose a sandbox's own media models from the allowed set", "media", "operator", true, StreamKind::None),
+    op("GET", "/api/v1/sandboxes/{id}/media/renders", "Recent media renders for a sandbox", "media", "viewer", false, StreamKind::None),
+    op("GET", "/api/v1/media/renders/{id}/asset/{name}", "One rendered image, video or track", "media", "viewer", false, StreamKind::None),
 ];
 
 const fn op(
@@ -331,6 +341,7 @@ pub fn document() -> serde_json::Value {
             { "name": "sandboxes" }, { "name": "policies" }, { "name": "telemetry" },
             { "name": "cluster" }, { "name": "providers" }, { "name": "models" }, { "name": "jobs" },
             { "name": "nodes" }, { "name": "builder" }, { "name": "persistence" }, { "name": "mcp" },
+            { "name": "media" },
             { "name": "audit" }
         ],
         "paths": paths,
@@ -375,6 +386,7 @@ mod tests {
             "/api/v1/internal/policy/check",
             "/api/v1/internal/supervisors/{id}/report",
             "/api/v1/internal/telemetry/batch",
+            "/api/v1/internal/media/render",
         ];
         for operation in OPERATIONS {
             if matches!(operation.method, "POST" | "PUT" | "PATCH" | "DELETE") {
@@ -403,6 +415,7 @@ mod tests {
             "/api/v1/internal/policy/check",
             "/api/v1/internal/supervisors/{id}/report",
             "/api/v1/internal/telemetry/batch",
+            "/api/v1/internal/media/render",
         ];
         for path in NODE_TOKEN_MUTATIONS {
             let operation = OPERATIONS
