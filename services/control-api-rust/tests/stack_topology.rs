@@ -310,7 +310,7 @@ async fn resources_change_live_are_remembered_and_checked() {
         &ctx,
         &principal,
         created.id,
-        sandbox_service::ResourceRequest { memory_limit: Some("1Gi".into()), cpu_limit: Some(1.5), pids_limit: Some(300) },
+        sandbox_service::ResourceRequest { memory_limit: Some("1Gi".into()), cpu_limit: Some(1.5), pids_limit: Some(300), ..Default::default() },
     )
     .await
     .expect("change");
@@ -318,7 +318,9 @@ async fn resources_change_live_are_remembered_and_checked() {
     let changes = runtime.resource_changes();
     assert_eq!(changes.len(), 1);
     assert_eq!(changes[0].1, Some(1_073_741_824));
-    assert_eq!(changes[0].2, Some(1.5));
+    // (name, memory, reservation, cpus, shares, pids): no reservation was named.
+    assert_eq!(changes[0].2, None);
+    assert_eq!(changes[0].3, Some(1.5));
 
     // The desired state is stored, so a restart keeps it.
     let stored = sandbox_service::get(&ctx, &principal, created.id).await.expect("get");
