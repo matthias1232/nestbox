@@ -845,6 +845,8 @@ pub async fn unassign_policy_from_sandbox(
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
+    // The sandbox must be one this caller may see: someone else's is a not-found.
+    sandbox_store::get(&mut scope, sandbox_id).await.map_err(ApiError::from)?;
     store::unassign_policy(&mut scope, sandbox_id)
         .await
         .map_err(ApiError::from)?;
@@ -862,6 +864,7 @@ pub async fn policy_of_sandbox(
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
+    sandbox_store::get(&mut scope, sandbox_id).await.map_err(ApiError::from)?;
     let assignment = store::assignment_for_sandbox(&mut scope, sandbox_id)
         .await
         .map_err(ApiError::from)?;
@@ -1019,6 +1022,8 @@ pub async fn rules_for_sandbox(
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
+    // Only for a sandbox this caller may see: another user's rules name their hosts.
+    sandbox_store::get(&mut scope, sandbox_id).await.map_err(ApiError::from)?;
     let rules = effective_rules(&mut scope, sandbox_id, principal.environment_id).await?;
     scope.commit().await.map_err(ApiError::from)?;
     Ok(rules)

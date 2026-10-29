@@ -13,7 +13,7 @@ use nestbox_control_api::events::bus::LocalBus;
 use nestbox_control_api::runtime::fake::FakeRuntime;
 use nestbox_control_api::services::sandbox_service::{self, CreateSandbox};
 use nestbox_control_api::domain::pagination::ListParams;
-use nestbox_control_api::services::{user_service, ServiceContext};
+use nestbox_control_api::services::{backup_service, persist_service, user_service, ServiceContext};
 
 const ENVIRONMENT: &str = "00000000-0000-0000-0000-000000000002";
 
@@ -222,4 +222,47 @@ async fn only_an_admin_manages_users_and_the_guards_keep_an_admin_in_place() {
         .expect("owner");
     assert!(owner.is_none(), "a removed user's sandboxes become shared");
     assert!(user_service::list(&ctx, &admin).await.expect("list").iter().all(|u| u.email != "carol@example.test"));
+}
+
+#[tokio::test]
+async fn persistent_data_and_its_backups_belong_to_their_owner() {
+    let Some(owner_pool) = connect().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+    let _ = owner_pool;
+    let pool = app_pool().await;
+    let runtime = Arc::new(FakeRuntime::new());
+    let ctx = context(&pool, &runtime);
+
+    let admin = as_role(user(&pool).await, Role::Admin);
+    let a = user_service::create(&ctx, &admin, "ann@example.test", "Ann", "ann-password-123", "operator").await.expect("ann");
+    let b = user_service::create(&ctx, &admin, "ben@example.test", "Ben", "ben-password-123", "operator").await.expect("ben");
+    let (ann, ben) = (as_role(a.id, Role::Operator), as_role(b.id, Role::Operator));
+
+    let root = persist_service::create(
+        &ctx,
+        &ann,
+        persist_service::NewRoot { kind: "project".into(), slug: "ann-data".into(), node: None },
+    )
+    .await
+    .expect("ann's root");
+    let backup = backup_service::create(&ctx, &ann, root.id, None).await.expect("ann's backup");
+
+    let slugs = |principal: &Principal| {
+        let (ctx, principal) = (&ctx, principal.clone());
+        async move { persist_service::list(ctx, &principal).await.expect("list").into_iter().map(|r| r.slug).collect::<Vec<_>>() }
+    };
+    assert_eq!(slugs(&ann).await, vec!["ann-data"]);
+    assert!(slugs(&ben).await.is_empty(), "another user's data is not listed");
+    assert_eq!(slugs(&admin).await, vec!["ann-data"], "an admin sees it");
+
+    // Ben cannot read, back up, list the backups of, restore or delete Ann's data.
+    assert!(persist_service::get(&ctx, &ben, root.id).await.is_err());
+    assert!(backup_service::create(&ctx, &ben, root.id, None).await.is_err());
+    assert!(backup_service::list(&ctx, &ben, None).await.expect("list").is_empty());
+    assert!(backup_service::restore(&ctx, &ben, backup.id, None, false, true).await.is_err());
+    assert!(backup_service::delete(&ctx, &ben, backup.id).await.is_err());
+    // Ann can.
+    assert_eq!(backup_service::list(&ctx, &ann, None).await.expect("list").len(), 1);
 }
