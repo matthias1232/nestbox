@@ -43,7 +43,9 @@ openshell status | head -8
 
 # The runner's view: same gateway, reached by the name the server certificate
 # already carries (host.openshell.internal), with the client bundle only.
-mkdir -p "$CLIENT_DIR/gateways/openshell/mtls"
+# deploy/data is root-owned on the appliance; the bundle is made by this user.
+sudo mkdir -p "$CLIENT_DIR/gateways/openshell/mtls"
+sudo chown -R "$USER" "$CLIENT_DIR"
 src="$HOME/.config/openshell/gateways/openshell/mtls"
 install -m 0600 "$src/ca.crt" "$src/tls.crt" "$src/tls.key" "$CLIENT_DIR/gateways/openshell/mtls/"
 printf '{\n  "name": "openshell",\n  "gateway_endpoint": "https://host.openshell.internal:%s",\n  "is_remote": false,\n  "gateway_port": 0,\n  "auth_mode": "mtls"\n}\n' "$PORT" \
