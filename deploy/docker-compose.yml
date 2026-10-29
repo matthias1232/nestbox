@@ -54,7 +54,12 @@ services:
         mkdir -p /secrets/media /data/media
         cp /secrets/media_mcp_token /secrets/media/token
         cp /secrets/media_bridge_token /secrets/media/bridge
-        chmod 0400 /secrets/media/token /secrets/media/bridge
+        # The media server runs as its own unprivileged user (uid 10003 inside its
+        # image), so a 0400 root file would be unreadable and every call would be
+        # refused. These copies are readable inside the container's own mount and
+        # nowhere else on the host; the originals keep their restrictive mode.
+        chmod 0755 /secrets/media
+        chmod 0444 /secrets/media/token /secrets/media/bridge
         mkdir -p /secrets/mcp
         cp /secrets/mcp_hub_token /secrets/mcp/token
         chown -R 10002:10002 /secrets/mcp
