@@ -26,6 +26,7 @@ from app import system as appliance_components
 from app import telemetry_shipper
 from app import host as host_load
 from app import backups as root_backups
+from app import catalogue as package_catalogue
 from app import openshell_backend as osh
 from app import catalogue as package_catalogue
 from app.images import image_allowed
