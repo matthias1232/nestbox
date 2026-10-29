@@ -318,7 +318,10 @@ services:
     # Loopback only: the bearer token still guards every call.
     ports:
       - "127.0.0.1:18088:8080"
+    # `runtime` is internal, and Docker cannot publish a port of a container that
+    # is only on an internal network: the hub also joins `control`.
     networks:
+      - control
       - runtime
 
   tool-image-ubuntu-dev:
