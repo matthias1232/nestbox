@@ -130,6 +130,8 @@ services:
       # proxy and the API are attached to.
       NESTBOX_RUNTIME_NETWORK: ${COMPOSE_PROJECT_NAME:-nestbox}_runtime
       NESTBOX_SECRET_DIR: /secrets
+      # "openshell" creates new sandboxes on the OpenShell gateway.
+      NESTBOX_SANDBOX_RUNTIME: ${NESTBOX_SANDBOX_RUNTIME:-docker-development}
       NESTBOX_SESSION_COOKIE_SECURE: "false"
       # The same token the runner demands on the terminal upgrade. It comes from
       # the node directory rather than from a compose secret, because compose
@@ -228,6 +230,8 @@ services:
       NESTBOX_ENVIRONMENT_ID: ${NESTBOX_ENVIRONMENT_ID:-00000000-0000-0000-0000-000000000002}
       NESTBOX_FORWARD_RANGE: ${NESTBOX_FORWARD_RANGE:-22200-22299}
       NESTBOX_RUNNER_STATE: /var/lib/nestbox-runner
+      # OpenShell sandboxes (runtime "openshell") are driven through the gateway.
+      OPENSHELL_GATEWAY: openshell
     volumes:
       # Forwards, authorised keys and the SSH host key survive a redeploy.
       - nestbox-runner-state:/var/lib/nestbox-runner
@@ -240,6 +244,13 @@ services:
       - /var/lib/nestbox/models:/var/lib/nestbox/models
       - /proc:/host/proc:ro
       - ./secrets/node:/run/node:ro
+      # The client bundle for the OpenShell gateway on the host (written by
+      # deploy/openshell/install-openshell.sh): CA certificate, client certificate
+      # and key. Writable only because the CLI keeps its "last sandbox" note there.
+      - ./data/openshell-client:/root/.config/openshell
+    extra_hosts:
+      # The name the gateway's certificate already carries.
+      - "host.openshell.internal:host-gateway"
     expose:
       - "9000"
     ports:

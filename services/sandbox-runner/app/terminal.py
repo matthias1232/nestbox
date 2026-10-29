@@ -30,6 +30,7 @@ Three rules shape this file:
    mean "no check".
 """
 from __future__ import annotations
+from app.workload import get_container, list_workloads, sandbox_name
 
 import asyncio
 import codecs
@@ -401,7 +402,7 @@ async def terminal(websocket: WebSocket, name: str) -> None:
 
     client = docker.from_env()
     try:
-        container = await asyncio.to_thread(client.containers.get, container_name(name))
+        container = await asyncio.to_thread(get_container, client, name)
     except NotFound:
         await websocket.close(code=CLOSE_INTERNAL, reason="sandbox not found")
         return

@@ -15,6 +15,7 @@ Two facts this module is careful about:
   first when the second is true.
 """
 from __future__ import annotations
+from app.workload import get_container, list_workloads, sandbox_name
 
 import os
 import time
@@ -36,7 +37,7 @@ PACKAGE_LIMIT = 4000
 
 def container(name: str) -> Any:
     try:
-        return client.containers.get(f"nestbox-sandbox-{name}")
+        return get_container(client, name)
     except NotFound as exc:
         raise HTTPException(404, f"no such sandbox: {name}") from exc
 

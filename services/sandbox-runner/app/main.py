@@ -25,6 +25,8 @@ from app import forwards as published_ports
 from app import system as appliance_components
 from app import telemetry_shipper
 from app import host as host_load
+from app import openshell_backend as osh
+from app.workload import get_container, list_workloads, openshell_name, sandbox_name
 
 app = FastAPI(title="Nestbox Sandbox Runtime", version="1.0.0")
 client = docker.from_env()
@@ -355,10 +357,10 @@ def details(item: Any) -> dict[str, Any]:
     ports = attrs.get("NetworkSettings", {}).get("Ports") or {}
     return {
         "id": item.id,
-        "name": item.name.removeprefix("nestbox-sandbox-"),
+        "name": sandbox_name(item),
         "container_name": item.name,
         "status": item.status,
-        "runtime": labels.get("nestbox.runtime", "docker-development"),
+        "runtime": "openshell" if openshell_name(item.name) else labels.get("nestbox.runtime", "docker-development"),
         "pack_key": labels.get("nestbox.pack", ""),
         "tool_profile": labels.get("nestbox.tool_profile", ""),
         "image": attrs.get("Config", {}).get("Image", ""),
@@ -405,6 +407,12 @@ def healthz() -> dict[str, str]:
         "network_isolation": network_state,
         "egress_proxy": proxy.name if proxy else "missing",
     }
+
+
+@app.get("/v1/openshell")
+def openshell_status() -> dict[str, Any]:
+    """Whether the OpenShell gateway answers, and what version it is."""
+    return osh.status()
 
 
 @app.get("/v1/egress")
@@ -472,6 +480,8 @@ def create_sandbox(body: SandboxRequest) -> dict[str, Any]:
     if not image_allowed(body.image):
         raise HTTPException(422, "image is not in the approved phase-1 catalog")
     network = ensure_network()
+    if body.runtime == "openshell":
+        return create_openshell_sandbox(body)
     name = container_name(body.name)
     try:
         return details(client.containers.get(name))
@@ -529,6 +539,40 @@ def create_sandbox(body: SandboxRequest) -> dict[str, Any]:
         return details(container)
     except DockerException as exc:
         raise HTTPException(400, f"sandbox creation failed: {exc}") from exc
+
+
+def create_openshell_sandbox(body: SandboxRequest) -> dict[str, Any]:
+    """Create the sandbox on the OpenShell gateway and report it like any other."""
+    try:
+        existing = get_container(client, body.name)
+        return details(existing)
+    except NotFound:
+        pass
+    mounts = [validate_mount(mount) for mount in body.mounts]
+    try:
+        osh.create(
+            name=body.name,
+            image=body.image,
+            command=body.command,
+            environment=body.environment,
+            memory_limit=body.memory_limit,
+            cpu_limit=body.cpu_limit,
+            mounts=mounts,
+            labels={"nestbox.pack": body.pack_key, "nestbox.tool_profile": body.tool_profile},
+        )
+    except osh.OpenShellError as exc:
+        raise HTTPException(400, f"sandbox creation failed: {exc}") from exc
+    found = osh.wait_for_container(lambda n: _find_or_none(n), body.name)
+    if found is None:
+        raise HTTPException(504, "the gateway accepted the sandbox but no workload appeared")
+    return details(found)
+
+
+def _find_or_none(name: str) -> Any | None:
+    try:
+        return get_container(client, name)
+    except NotFound:
+        return None
 
 
 def container_gpu_available() -> bool:
@@ -876,13 +920,13 @@ def stop_model(key: str) -> dict[str, Any]:
 
 @app.get("/v1/sandboxes")
 def list_sandboxes() -> list[dict[str, Any]]:
-    return [details(item) for item in client.containers.list(all=True, filters={"label": "nestbox.managed=true"})]
+    return [details(item) for item in list_workloads(client)]
 
 
 @app.get("/v1/sandboxes/{name}")
 def inspect_sandbox(name: str) -> dict[str, Any]:
     try:
-        return details(client.containers.get(container_name(name)))
+        return details(get_container(client, name))
     except NotFound as exc:
         raise HTTPException(404, "sandbox not found") from exc
 
@@ -919,11 +963,19 @@ def exec_in_sandbox(name: str, body: ExecRequest) -> dict[str, Any]:
         if "\x00" in part:
             raise HTTPException(422, "command arguments must not contain NUL")
     try:
-        container = client.containers.get(container_name(name))
+        container = get_container(client, name)
     except NotFound as exc:
         raise HTTPException(404, "sandbox not found") from exc
     if container.status != "running":
         raise HTTPException(409, "sandbox is not running")
+
+    if openshell_name(container.name):
+        # Through the gateway, so the command runs inside the boundary.
+        try:
+            code, text = osh.exec_command(name, body.command, workdir=body.workdir, timeout=body.timeout_seconds)
+        except osh.OpenShellError as exc:
+            raise HTTPException(504 if "finish" in str(exc) else 400, str(exc)) from exc
+        return {"name": name, "exit_code": code, "output": text[: body.max_output_bytes], "truncated": len(text) > body.max_output_bytes}
 
     import threading
 
@@ -975,7 +1027,15 @@ def lifecycle(name: str, action: str) -> dict[str, Any]:
         egress_state = prepare_egress(ensure_network())
         logger.info("egress for %s before %s: %s", name, action, egress_state)
     try:
-        container = client.containers.get(container_name(name))
+        container = get_container(client, name)
+        if openshell_name(container.name):
+            try:
+                osh.lifecycle(name, action)
+            except osh.OpenShellError as exc:
+                raise HTTPException(400, f"lifecycle action failed: {exc}") from exc
+            if action == "remove":
+                return {"name": name, "status": "deleted"}
+            return details(osh.wait_for_container(_find_or_none, name) or container)
         if action == "remove":
             container.remove(force=True)
             return {"name": name, "status": "deleted"}
@@ -992,7 +1052,7 @@ def logs(name: str, tail: int = 200) -> dict[str, str | int]:
     if not 1 <= tail <= 1000:
         raise HTTPException(422, "tail must be between 1 and 1000")
     try:
-        container = client.containers.get(container_name(name))
+        container = get_container(client, name)
         return {"name": name, "tail": tail, "logs": container.logs(tail=tail, timestamps=True).decode(errors="replace")}
     except NotFound as exc:
         raise HTTPException(404, "sandbox not found") from exc

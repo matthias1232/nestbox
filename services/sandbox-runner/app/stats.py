@@ -15,6 +15,7 @@ the Admin Center packages can change one file without touching the request path
 that already exists.
 """
 from __future__ import annotations
+from app.workload import get_container, list_workloads, sandbox_name
 
 import json
 import os
@@ -40,7 +41,7 @@ SAMPLE_TIMEOUT_SECONDS = 10.0
 def container(name: str) -> Any:
     """Look up a managed container or answer 404, never a traceback."""
     try:
-        return client.containers.get(f"nestbox-sandbox-{name}")
+        return get_container(client, name)
     except NotFound as exc:
         raise HTTPException(404, f"no such sandbox: {name}") from exc
 
@@ -112,10 +113,7 @@ def sample(name: str) -> dict[str, Any]:
 
 def managed_sandboxes() -> list[str]:
     """Every sandbox container this runner knows, by short name."""
-    return [
-        item.name.removeprefix("nestbox-sandbox-")
-        for item in client.containers.list(filters={"label": "nestbox.managed=true"})
-    ]
+    return [sandbox_name(item) for item in list_workloads(client) if item.status == "running"]
 
 
 @router.get("/v1/sandboxes/{name}/stats")
