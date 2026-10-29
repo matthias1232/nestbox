@@ -60,7 +60,8 @@ export default function SystemPage(props) {
         cluster.gateways(),
         cluster.supervisors(),
       ]);
-      setComponents(platform.items || []);
+      // `/system/components` answers with the bare list; older builds wrapped it.
+      setComponents(Array.isArray(platform) ? platform : platform.items || []);
       setGateways(gatewayList.items || []);
       setSupervisors(supervisorList.items || []);
     } catch (failure) {

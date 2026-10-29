@@ -99,6 +99,13 @@ def describe(container: Any | None, service: str) -> dict[str, Any]:
     base: dict[str, Any] = {"service": service, "description": COMPONENTS[service]}
     if container is None:
         return {**base, "state": "missing", "health": None, "container": None}
+    # A just-updated container still reports the limits it was started with in
+    # the attributes this process cached; reload so the page shows what is true
+    # now rather than what was true before the last change.
+    try:
+        container.reload()
+    except Exception:  # noqa: BLE001 - a vanished container is described as before
+        pass
     state = (container.attrs.get("State") or {})
     ports = []
     for target, bindings in ((container.attrs.get("NetworkSettings") or {}).get("Ports") or {}).items():
