@@ -35,6 +35,14 @@ services:
         # a protocol token — the handshake would fail with a bare 400.
         [ -s /secrets/node/token ] || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > /secrets/node/token
         chown -R 10001:10001 /data /secrets
+        # The egress proxy runs as `envoy` (uid 101) and must present the node
+        # token on every policy check. It gets its own copy, in its own directory,
+        # readable by it alone: the proxy mounts nothing else from secrets/.
+        mkdir -p /secrets/proxy
+        cp /secrets/node/token /secrets/proxy/node-token
+        chown -R 101:101 /secrets/proxy
+        chmod 0500 /secrets/proxy
+        chmod 0400 /secrets/proxy/node-token
         chmod 0700 /secrets
         find /secrets -type f -exec chmod 0600 {} + 2>/dev/null || true
         echo "data and secret directories prepared"
@@ -250,12 +258,11 @@ services:
       # on every policy check; without them the control API refuses the check and
       # every request is denied. The id is the seeded local node.
       NESTBOX_NODE_ID: ${NESTBOX_NODE_ID:-00000000-0000-0000-0000-000000000003}
-      NESTBOX_NODE_TOKEN_FILE: /run/node/token
-    # Root only for the start script, which reads the 0600 token and writes the
-    # configuration copy, then drops to `envoy` (see start-egress-proxy.sh).
-    user: "0:0"
+      NESTBOX_NODE_TOKEN_FILE: /run/node/node-token
     volumes:
-      - ./secrets/node:/run/node:ro
+      # A copy of the node token that only the proxy's user can read (made by
+      # init-data). The proxy never sees the database URLs or the SSH keys.
+      - ./secrets/proxy:/run/node:ro
     cap_add:
       - NET_ADMIN
       - NET_RAW
