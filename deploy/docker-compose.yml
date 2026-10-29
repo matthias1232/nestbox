@@ -20,7 +20,7 @@ services:
       - sh
       - -c
       - |
-        mkdir -p /data/gateway /secrets /secrets/node
+        mkdir -p /data/gateway /secrets /secrets/node /secrets/ssh
         # The node token authenticates the control API to the runner's terminal
         # endpoint. It lives in its own directory because the runner mounts that
         # directory and must not see the database URLs next to it.
@@ -127,6 +127,11 @@ services:
     volumes:
       - ./data/gateway:/data/gateway:ro
       - ./secrets:/secrets:ro
+      # The one place the API writes a secret: each sandbox's SSH key pair, made at
+      # create time (ADR 0024). It must be writable, or no sandbox gets a key and
+      # provisioning fails with an internal error. The rest of /secrets stays
+      # read-only, and the runner never mounts this directory.
+      - ./secrets/ssh:/secrets/ssh
       - ./secrets/node:/run/node:ro
     depends_on:
       postgres:
