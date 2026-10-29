@@ -171,7 +171,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
-      NESTBOX_ALLOWED_IMAGES: ubuntu:24.04,nestbox-ubuntu-dev:local,nestbox-hermes:local,nestbox-openclaw:local,nestbox-tool-git:local
+      NESTBOX_ALLOWED_IMAGES: ubuntu:24.04,nestbox-ubuntu-dev:local,nestbox-hermes:local,nestbox-openclaw:local,nestbox-tool-git:local,nestbox-claude-code:local,nestbox-openchamber:local
       # See control-api: this must be the Compose network, or the runner creates
       # a second bridge and every sandbox/model lands on the wrong one.
       NESTBOX_RUNTIME_NETWORK: ${COMPOSE_PROJECT_NAME:-nestbox}_runtime
@@ -264,6 +264,18 @@ services:
     build:
       context: ../services/tool-images/hermes
     image: nestbox-hermes:local
+    profiles: ["build-tools"]
+
+  tool-image-claude-code:
+    build:
+      context: ../services/tool-images/claude-code
+    image: nestbox-claude-code:local
+    profiles: ["build-tools"]
+
+  tool-image-openchamber:
+    build:
+      context: ../services/tool-images/openchamber
+    image: nestbox-openchamber:local
     profiles: ["build-tools"]
 
   tool-image-openclaw:
