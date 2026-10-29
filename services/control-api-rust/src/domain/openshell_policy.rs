@@ -50,8 +50,13 @@ pub fn compile(rules: &[NetworkRule]) -> Compiled {
         match endpoint_for(rule) {
             Ok(endpoint) => {
                 let mut key = key_for(&rule.name, index);
+                let mut suffix = b'b';
                 while entries.contains_key(&key) {
-                    key.push('x');
+                    key = format!("{}_{}", key_for(&rule.name, index), suffix as char);
+                    suffix = suffix.saturating_add(1).min(b'z');
+                    if suffix == b'z' && entries.contains_key(&key) {
+                        key.push('z');
+                    }
                 }
                 entries.insert(key, json!({ "name": rule.name, "endpoints": [endpoint], "binaries": binaries_for(rule) }));
             }
@@ -83,8 +88,12 @@ fn key_for(name: &str, index: usize) -> String {
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect();
     let slug = slug.trim_matches('_');
-    let slug: String = slug.chars().take(48).collect();
-    format!("nb{index}_{slug}")
+    let slug: String = slug.chars().take(60).collect();
+    // No running number: a long name of letters and digits looks like a credential to the
+    // log redaction, which would blank the policy name in every connection event. A clash
+    // gets a letter suffix in `compile`.
+    let _ = index;
+    format!("nb_{slug}")
 }
 
 fn binaries_for(rule: &NetworkRule) -> Vec<Value> {
@@ -299,6 +308,19 @@ mod tests {
         let compiled = compile(&[ok, short]);
         assert_eq!(entries(&compiled).values().next().unwrap()["endpoints"][0]["host"], "*.example.com");
         assert_eq!(compiled.skipped.len(), 1);
+    }
+
+    #[test]
+    fn policy_names_carry_no_digits_the_redaction_would_mistake_for_a_credential() {
+        let compiled = compile(&[
+            rule("Safe defaults (best practice): package-registries", RuleAction::Allow, "a.example.com", Some(443), RuleProtocol::Rest),
+            rule("Safe defaults (best practice): package-registries", RuleAction::Allow, "b.example.com", Some(443), RuleProtocol::Rest),
+        ]);
+        let keys: Vec<&String> = entries(&compiled).keys().collect();
+        assert_eq!(keys.len(), 2, "two rules of one name both survive");
+        assert!(keys.iter().all(|key| key.starts_with("nb_") && !key.chars().any(|c| c.is_ascii_digit())), "{keys:?}");
+        let masked = crate::security::redact(keys[0]);
+        assert_eq!(&masked, keys[0], "the redaction leaves a policy name alone");
     }
 
     #[test]
