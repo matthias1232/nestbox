@@ -33,6 +33,8 @@ control plane.
 | `GET` | `/v1/sandboxes/{name}/inventory` | A fresh snapshot from the fixed probe |
 | `GET` | `/v1/sandboxes/{name}/terminal` | The terminal WebSocket |
 | `PUT`/`GET`/`DELETE` | `/v1/sandboxes/{name}/forwards` | Hold a sandbox's published ports open (complete set + public keys); report `listening` and `target_up`; close them |
+| `GET` | `/v1/host/load` | The host's CPU, memory, disk, load average, and what running sandboxes were promised |
+| `PATCH` | `/v1/sandboxes/{name}/resources` | `docker update` memory, CPU and PID limits of a running sandbox |
 | `GET` | `/v1/forwards` | Every forward and the published range |
 | `GET` | `/v1/system/components` | State and health of the appliance's own containers (fixed list, own project only) |
 | `GET` | `/v1/system/components/{service}/logs?tail=` | Last lines of one of them |

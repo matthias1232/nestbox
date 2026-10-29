@@ -25,6 +25,7 @@ pub mod policy;
 pub mod provider;
 pub mod runtime;
 pub mod sandbox;
+pub mod ssh_access;
 pub mod stack_topology;
 pub mod telemetry;
 

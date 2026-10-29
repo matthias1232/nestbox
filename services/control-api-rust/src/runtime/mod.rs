@@ -15,6 +15,7 @@ use crate::domain::pack_access::ForwardState;
 use crate::domain::runtime::{
     BuildRequest, BuildResult, ComponentState, ExecResult, ForwardRequest, HardwareReport,
     ModelDownload, ModelDownloadResult, ModelServe, ModelServeResult, RuntimeFacts, SandboxSpec,
+    SshCredential,
 };
 
 /// Fehler aus der Ausführungsschicht.
@@ -129,6 +130,7 @@ pub trait RuntimeAdapter: Send + Sync {
         _name: &str,
         _forwards: &[ForwardRequest],
         _authorized_keys: &[String],
+        _credentials: &[SshCredential],
     ) -> Result<Vec<ForwardState>, RuntimeError> {
         Err(RuntimeError::Unavailable("this runtime cannot publish ports".into()))
     }
@@ -137,6 +139,22 @@ pub trait RuntimeAdapter: Send + Sync {
     /// answers behind each port.
     async fn forward_states(&self, _name: &str) -> Result<Vec<ForwardState>, RuntimeError> {
         Err(RuntimeError::Unavailable("this runtime cannot publish ports".into()))
+    }
+
+    /// The host's own load: CPU, memory, disk, what the sandboxes were promised.
+    async fn host_load(&self) -> Result<serde_json::Value, RuntimeError> {
+        Err(RuntimeError::Unavailable("this runtime does not report host load".into()))
+    }
+
+    /// Change a running sandbox's memory, CPU and process limits without a restart.
+    async fn update_resources(
+        &self,
+        _name: &str,
+        _memory_bytes: Option<i64>,
+        _cpus: Option<f64>,
+        _pids_limit: Option<i64>,
+    ) -> Result<(), RuntimeError> {
+        Err(RuntimeError::Unavailable("this runtime cannot change limits live".into()))
     }
 
     /// Close every port of a sandbox. Idempotent.

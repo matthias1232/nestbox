@@ -89,3 +89,25 @@ export function rotateSshKey(id) {
 export function stackTopology(id, windowSpan = '5m') {
   return request(`sandboxes/${id}/stack-topology${query({ window: windowSpan })}`);
 }
+
+// Who else may open the SSH door: operator keys and temporary logins.
+export function sshAccess(id) {
+  return request(`sandboxes/${id}/ssh-access`);
+}
+
+export function addUserKey(id, label, publicKey) {
+  return request(`sandboxes/${id}/ssh-keys`, { method: 'POST', body: { label, public_key: publicKey } });
+}
+
+export function removeUserKey(id, keyId) {
+  return request(`sandboxes/${id}/ssh-keys/${keyId}`, { method: 'DELETE' });
+}
+
+// The password is in this answer once and nowhere else.
+export function issueCredential(id, minutes) {
+  return request(`sandboxes/${id}/ssh-credentials`, { method: 'POST', body: { minutes } });
+}
+
+export function revokeCredential(id, credentialId) {
+  return request(`sandboxes/${id}/ssh-credentials/${credentialId}`, { method: 'DELETE' });
+}

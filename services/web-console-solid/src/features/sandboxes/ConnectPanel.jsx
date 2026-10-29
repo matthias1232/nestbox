@@ -8,6 +8,7 @@
 import { For, Show, createResource, createSignal } from 'solid-js';
 import * as sandboxes from '../../api/sandboxes.js';
 import * as nodes from '../../api/nodes.js';
+import SshAccessSection from './SshAccessSection.jsx';
 import '../../styles/connect.css';
 
 async function copy(text) {
@@ -234,6 +235,8 @@ export default function ConnectPanel(props) {
                 <CopyButton text={data().ssh_config} what="the SSH config block" />
               </section>
             </Show>
+
+            <SshAccessSection sandboxId={props.sandboxId} info={data()} onChanged={refetch} />
 
             <section class="connect-block">
               <h3>SSH key</h3>

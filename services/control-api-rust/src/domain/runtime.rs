@@ -324,6 +324,17 @@ pub struct ComponentState {
     pub ports: serde_json::Value,
 }
 
+/// A temporary SSH login as the runner checks it: never the password itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SshCredential {
+    pub username: String,
+    pub salt: String,
+    /// `sha256(salt || password)`, hex (`domain::ssh_access::hash_password`).
+    pub hash: String,
+    /// Unix seconds. The runner refuses a login after it, whatever the clock says here.
+    pub expires_at: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

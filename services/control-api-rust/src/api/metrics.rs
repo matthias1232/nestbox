@@ -75,3 +75,45 @@ pub async fn processes(
     let table = metrics_service::processes(&state.services, &auth.principal, id).await?;
     Ok(Json(table))
 }
+
+
+/// Record a batch of samples from a node, authenticated by the node's token.
+///
+/// The runner is a node, not a user: it presents the same node id and token as
+/// the proxy's policy check, and names the environment it reports for. The batch
+/// is then ingested exactly as a user token's would be, by a principal that exists
+/// only for this call.
+pub async fn ingest_node(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(batch): Json<MetricBatch>,
+) -> Result<(StatusCode, Json<IngestOutcome>), ApiError> {
+    let text = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    };
+    let missing = || ApiError::unauthenticated("A node identifies itself with its id and token.");
+    let node_id = text("x-nestbox-node")
+        .and_then(|value| Uuid::parse_str(&value).ok())
+        .ok_or_else(missing)?;
+    let environment_id = text("x-nestbox-environment")
+        .and_then(|value| Uuid::parse_str(&value).ok())
+        .ok_or_else(missing)?;
+    let token = text("authorization")
+        .and_then(|raw| raw.split_once(' ').map(|(_, token)| token.trim().to_string()))
+        .ok_or_else(missing)?;
+    crate::services::policy_service::authenticate_node(&state.services, node_id, &token).await?;
+
+    let principal = crate::domain::auth::Principal {
+        user_id: Uuid::nil(),
+        environment_id,
+        role: crate::domain::auth::Role::Operator,
+        display_name: format!("node {node_id}"),
+        via: crate::domain::auth::CredentialSource::Token,
+    };
+    let outcome = metrics_service::ingest(&state.services, &principal, batch).await?;
+    Ok((StatusCode::ACCEPTED, Json(outcome)))
+}

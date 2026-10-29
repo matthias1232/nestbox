@@ -17,6 +17,7 @@ use crate::domain::pack_access::ForwardState;
 use crate::domain::runtime::{
     BuildRequest, BuildResult, ComponentState, ExecResult, ForwardRequest, HardwareReport,
     ModelDownload, ModelDownloadResult, ModelServe, ModelServeResult, RuntimeFacts, SandboxSpec,
+    SshCredential,
 };
 use crate::runtime::{BoxTerminal, RuntimeAdapter, RuntimeError, TerminalMessage, TerminalSocket};
 
@@ -70,12 +71,24 @@ pub struct FakeRuntime {
     /// What the control plane asked the runner to hold open, by sandbox, with
     /// the public keys sent alongside.
     forwards: Mutex<BTreeMap<String, (Vec<ForwardRequest>, Vec<String>)>>,
+    credentials: Mutex<BTreeMap<String, Vec<SshCredential>>>,
+    resource_changes: Mutex<Vec<(String, Option<i64>, Option<f64>, Option<i64>)>>,
     terminal: Arc<FakeTerminalState>,
 }
 
 impl FakeRuntime {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Every live resource change asked for, in order.
+    pub fn resource_changes(&self) -> Vec<(String, Option<i64>, Option<f64>, Option<i64>)> {
+        lock(&self.resource_changes).clone()
+    }
+
+    /// The temporary logins most recently sent for a sandbox.
+    pub fn credentials_for(&self, name: &str) -> Vec<SshCredential> {
+        lock(&self.credentials).get(name).cloned().unwrap_or_default()
     }
 
     /// The forwards and keys most recently sent for a sandbox.
@@ -404,7 +417,9 @@ impl RuntimeAdapter for FakeRuntime {
         name: &str,
         forwards: &[ForwardRequest],
         authorized_keys: &[String],
+        credentials: &[SshCredential],
     ) -> Result<Vec<ForwardState>, RuntimeError> {
+        lock(&self.credentials).insert(name.to_string(), credentials.to_vec());
         lock(&self.forwards).insert(name.to_string(), (forwards.to_vec(), authorized_keys.to_vec()));
         Ok(fake_forward_states(forwards))
     }
@@ -416,6 +431,26 @@ impl RuntimeAdapter for FakeRuntime {
 
     async fn clear_forwards(&self, name: &str) -> Result<(), RuntimeError> {
         lock(&self.forwards).remove(name);
+        Ok(())
+    }
+
+    async fn host_load(&self) -> Result<serde_json::Value, RuntimeError> {
+        Ok(serde_json::json!({
+            "cpu_percent": 12.5, "cpus": 4,
+            "memory": { "total": 8_000_000_000_i64, "available": 4_000_000_000_i64, "used": 4_000_000_000_i64, "swap_total": 0 },
+            "sandboxes": { "total": 1, "running": 1 },
+            "promised": { "memory_bytes": 1_000_000_000_i64, "cpus": 1.0 }
+        }))
+    }
+
+    async fn update_resources(
+        &self,
+        name: &str,
+        memory_bytes: Option<i64>,
+        cpus: Option<f64>,
+        pids_limit: Option<i64>,
+    ) -> Result<(), RuntimeError> {
+        lock(&self.resource_changes).push((name.to_string(), memory_bytes, cpus, pids_limit));
         Ok(())
     }
 

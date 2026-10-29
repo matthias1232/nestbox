@@ -276,3 +276,44 @@ pub async fn put_stack(
         sandbox_service::set_stack(&state.services, &auth.principal, id, body.parent_id).await?;
     Ok(Json(sandbox))
 }
+
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct ResourcesRequest {
+    /// `512Mi`, `2g`, ...
+    #[serde(default)]
+    pub memory_limit: Option<String>,
+    #[serde(default)]
+    pub cpu_limit: Option<f64>,
+    #[serde(default)]
+    pub pids_limit: Option<i64>,
+}
+
+/// Change a sandbox's memory, CPU and process limits; live when it runs.
+pub async fn put_resources(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ResourcesRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let result = sandbox_service::set_resources(
+        &state.services,
+        &auth.principal,
+        id,
+        sandbox_service::ResourceRequest {
+            memory_limit: body.memory_limit,
+            cpu_limit: body.cpu_limit,
+            pids_limit: body.pids_limit,
+        },
+    )
+    .await?;
+    Ok(Json(result))
+}
+
+/// The host's own load.
+pub async fn host_load(
+    State(state): State<AppState>,
+    auth: Auth,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(sandbox_service::host_load(&state.services, &auth.principal).await?))
+}

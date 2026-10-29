@@ -583,3 +583,23 @@ pub async fn stack_members(
         .await?;
     rows.iter().map(row_to_sandbox).collect()
 }
+
+/// Replace the stored spec (the desired resources and settings of a sandbox).
+pub async fn update_spec(
+    scope: &mut TenantScope<'_>,
+    id: Uuid,
+    spec: &serde_json::Value,
+) -> Result<(), StoreError> {
+    let result = sqlx::query(
+        "UPDATE sandboxes SET spec = $3, updated_at = now() WHERE environment_id = $1 AND id = $2",
+    )
+    .bind(scope.environment_id())
+    .bind(id)
+    .bind(spec)
+    .execute(scope.connection())
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(StoreError::NotFound);
+    }
+    Ok(())
+}

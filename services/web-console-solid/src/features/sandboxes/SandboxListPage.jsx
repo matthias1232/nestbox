@@ -3,6 +3,7 @@
 // Density is deliberate: an operator scanning for a problem wants many rows and
 // few pixels. Detail lives in the drawer.
 
+import HostLoad from '../../components/HostLoad.jsx';
 import { For, Show, onMount } from 'solid-js';
 import StatusBadge from '../../components/StatusBadge.jsx';
 import Empty from '../../components/Empty.jsx';
@@ -197,6 +198,7 @@ export default function SandboxListPage(props) {
           </button>
         </div>
       </header>
+      <HostLoad />
 
       <Show when={created()}>
         <p class="notice">{created()}</p>

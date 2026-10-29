@@ -213,6 +213,8 @@ services:
       # Where the proxy's access log is delivered, and who the runner says it is
       # when it delivers it (the same node token the terminal check uses).
       NESTBOX_CONTROL_API_URL: http://control-api:8000
+      # CPU, memory, network and disk of every sandbox, every five seconds.
+      NESTBOX_METRICS_POST_URL: http://control-api:8000/api/v1/internal/metrics/batch
       NESTBOX_NODE_ID: ${NESTBOX_NODE_ID:-00000000-0000-0000-0000-000000000003}
       NESTBOX_ENVIRONMENT_ID: ${NESTBOX_ENVIRONMENT_ID:-00000000-0000-0000-0000-000000000002}
       NESTBOX_FORWARD_RANGE: ${NESTBOX_FORWARD_RANGE:-22200-22299}

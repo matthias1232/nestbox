@@ -146,3 +146,64 @@ pub async fn put_node_endpoint(
     .await?;
     Ok(StatusCode::NO_CONTENT)
 }
+
+
+/// Operator keys and temporary logins of one sandbox.
+pub async fn ssh_access(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<access_service::SshAccessView>, ApiError> {
+    Ok(Json(access_service::ssh_access(&state.services, &auth.principal, id).await?))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct AddKeyRequest {
+    pub label: String,
+    pub public_key: String,
+}
+
+pub async fn add_user_key(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<AddKeyRequest>,
+) -> Result<(StatusCode, Json<crate::domain::ssh_access::UserKey>), ApiError> {
+    let key = access_service::add_user_key(&state.services, &auth.principal, id, &body.label, &body.public_key).await?;
+    Ok((StatusCode::CREATED, Json(key)))
+}
+
+pub async fn remove_user_key(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path((id, key)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, ApiError> {
+    access_service::remove_user_key(&state.services, &auth.principal, id, key).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct IssueCredentialRequest {
+    /// How long the login works, in minutes (1 to 1440; default 60).
+    #[serde(default)]
+    pub minutes: Option<i64>,
+}
+
+pub async fn issue_credential(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<IssueCredentialRequest>,
+) -> Result<(StatusCode, Json<crate::domain::ssh_access::IssuedCredential>), ApiError> {
+    let issued = access_service::issue_credential(&state.services, &auth.principal, id, body.minutes).await?;
+    Ok((StatusCode::CREATED, Json(issued)))
+}
+
+pub async fn revoke_credential(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path((id, credential)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, ApiError> {
+    access_service::revoke_credential(&state.services, &auth.principal, id, credential).await?;
+    Ok(StatusCode::NO_CONTENT)
+}

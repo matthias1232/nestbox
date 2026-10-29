@@ -51,6 +51,9 @@ on it.
 | `ConnectPanel.jsx`, `AccessTab.jsx` | How to reach a sandbox: the node's address and hostname (never the container's), every published port with its dial address, the `ssh` line, an SSH config block, the one-time key. Each port says what it is, how to connect to it, and whether it answers (open, and something behind it). One component, used by the Access tab and the list's Connect drawer |
 | `StackTopology.jsx`, `stackLayout.js` | The Topology tab: the stack from you to the internet in bands, live every 5 s, a card per piece with its facts, connections and log. `stackLayout.js` is pure (`node --test stackLayout.test.js`) |
 | `MapTab.jsx` | Hands the sandbox to `StackTopology.jsx`; the tab is registered as Topology |
+| `DashboardTab.jsx`, `ProcessesTab.jsx`, `InventoryTab.jsx`, `TrafficTab.jsx`, `McpTab.jsx`, `TerminalTab.jsx` | The deck's live tabs: usage and status, `docker top`, snapshot, every request with its decision (and "allow this"), MCP servers and calls, xterm.js over the terminal WebSocket. All poll every 4-5 s through `components/Poll.js` |
+| `ResourcesPanel.jsx` | Memory, CPU and process limits, changed on the running sandbox |
+| `SshAccessSection.jsx` | Operator keys and temporary user name/password logins, per sandbox |
 | `stacks.js` | Grouping the flat page into stacks; a member whose lead is on another page stays a row of its own and names its lead. Test: `node --test stacks.test.js` |
 | `CreateSandboxForm.jsx` | Name, pack, node, memory, CPU, PIDs; the node's free numbers beside them (`feat/ui-sandbox-resources`) |
 | `useCreateSandbox.js` | Nodes, packs, the draft, and the pre-check; no JSX (`feat/ui-sandbox-resources`) |
