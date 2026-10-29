@@ -81,14 +81,8 @@ impl Visibility {
 
     async fn refresh(&mut self) {
         let Some((pool, principal)) = &self.restricted else { return };
-        if let Ok(mut scope) = crate::store::TenantScope::begin_for(pool, principal).await {
-            if let Ok(rows) = sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM sandboxes")
-                .fetch_all(scope.connection())
-                .await
-            {
-                self.ids = rows.into_iter().collect();
-            }
-            let _ = scope.commit().await;
+        if let Some(ids) = crate::services::sandbox_service::visible_ids(pool, principal).await {
+            self.ids = ids;
         }
         self.loaded = Some(std::time::Instant::now());
     }
