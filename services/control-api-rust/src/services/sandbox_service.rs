@@ -1483,3 +1483,64 @@ pub async fn recreate(
         }
     }
 }
+
+
+/// Keep the stored state and the runtime in step, for every tenant.
+///
+/// The row is the desired state: a sandbox the operator left `running` should be
+/// running. After a host reboot or a crashed container the runtime says
+/// `exited` while the row still says `running`, and every endpoint that needs
+/// the container (terminal, processes, inventory, snapshots) answers 409. So a
+/// `running` row whose container is down is started again; if the start fails
+/// the row becomes `failed`, which is the truth. A `stopped` row is never
+/// started, so an operator's stop is respected.
+///
+/// Cross-tenant maintenance like the builder's boot routine: environments are
+/// listed unscoped, and every write happens inside its tenant scope.
+pub async fn reconcile_all(ctx: &ServiceContext) -> Result<u64, ApiError> {
+    let facts = ctx.runtime.list().await.map_err(|error| {
+        ApiError::conflict(ErrorCode::SANDBOX_INVALID_STATE, error.to_string())
+    })?;
+    let index: std::collections::HashMap<String, crate::domain::runtime::RuntimeFacts> =
+        facts.into_iter().map(|fact| (fact.name.clone(), fact)).collect();
+    let environments: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM environments")
+        .fetch_all(&ctx.pool)
+        .await
+        .map_err(|error| ApiError::from(StoreError::Database(error)))?;
+    let mut changed = 0;
+    for environment_id in environments {
+        let mut scope = TenantScope::begin(&ctx.pool, environment_id)
+            .await
+            .map_err(ApiError::from)?;
+        let rows: Vec<(Uuid, String, i64)> = sqlx::query_as(
+            "SELECT id, name, version FROM sandboxes WHERE status = 'running'",
+        )
+        .fetch_all(scope.connection())
+        .await
+        .map_err(|error| ApiError::from(StoreError::Database(error)))?;
+        scope.commit().await.map_err(ApiError::from)?;
+
+        for (id, name, version) in rows {
+            let Some(fact) = index.get(&name) else { continue };
+            if fact.status == "running" || settled_status_from_runtime(&fact.status).is_none() {
+                continue;
+            }
+            let (status, health) = match ctx.runtime.start(&name).await {
+                Ok(started) => (SandboxStatus::Running, health_from_runtime(&started)),
+                Err(error) => {
+                    tracing::warn!(sandbox = %name, error = %error, "could not bring a sandbox back");
+                    (SandboxStatus::Failed, SandboxHealth::Unhealthy)
+                }
+            };
+            let mut scope = TenantScope::begin(&ctx.pool, environment_id)
+                .await
+                .map_err(ApiError::from)?;
+            if store::update_status(&mut scope, id, version, status, health).await.is_ok() {
+                changed += 1;
+                tracing::info!(sandbox = %name, to = status.as_str(), "reconciled a sandbox with the runtime");
+            }
+            scope.commit().await.map_err(ApiError::from)?;
+        }
+    }
+    Ok(changed)
+}

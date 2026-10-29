@@ -54,6 +54,23 @@ app.include_router(appliance_components.router)
 app.include_router(host_load.router)
 
 
+def adopt_restart_policy() -> None:
+    """Give sandboxes created before the policy existed the same policy.
+
+    Only containers that are running now: a stopped one was stopped on purpose.
+    """
+    try:
+        for container in client.containers.list(filters={"label": "nestbox.managed=true"}):
+            labels = container.labels or {}
+            if labels.get("nestbox.kind") == "model":
+                continue
+            policy = (container.attrs.get("HostConfig", {}).get("RestartPolicy") or {}).get("Name")
+            if policy in (None, "", "no"):
+                container.update(restart_policy={"Name": "unless-stopped"})
+    except DockerException as exc:
+        logger.warning("could not adopt the restart policy: %s", exc)
+
+
 @app.on_event("startup")
 async def restore_published_ports() -> None:
     """Re-open the listeners the control plane last asked for.
@@ -62,6 +79,7 @@ async def restore_published_ports() -> None:
     unreachable until something pushed its forwards again.
     """
     await published_ports.manager.restore()
+    adopt_restart_policy()
     # The proxy's decisions are only visible once something reads its log.
     import asyncio
 
@@ -497,6 +515,9 @@ def create_sandbox(body: SandboxRequest) -> dict[str, Any]:
             pids_limit=body.pids_limit,
             cap_drop=["ALL"],
             security_opt=["no-new-privileges:true"],
+            # A host reboot must not leave the sandbox down; a stop through the
+            # console still holds, because Docker honours a manual stop.
+            restart_policy={"Name": "unless-stopped"},
             **extra,
             labels={
                 "nestbox.managed": "true",

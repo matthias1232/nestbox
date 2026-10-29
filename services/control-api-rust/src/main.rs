@@ -75,6 +75,22 @@ async fn main() {
         Err(error) => tracing::warn!(code = error.code.0, "could not settle interrupted installs"),
     }
 
+    // Bring back what a reboot took down, then keep checking: the stored state is
+    // the desired state, and the runtime is allowed to disagree only briefly.
+    {
+        let services = state.services.clone();
+        tokio::spawn(async move {
+            loop {
+                match nestbox_control_api::services::sandbox_service::reconcile_all(&services).await {
+                    Ok(0) => {}
+                    Ok(changed) => tracing::info!(changed, "reconciled sandboxes with the runtime"),
+                    Err(error) => tracing::debug!(code = error.code.0, "reconcile pass skipped"),
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            }
+        });
+    }
+
     let listener = match tokio::net::TcpListener::bind(&config.listen_addr).await {
         Ok(listener) => listener,
         Err(error) => {
