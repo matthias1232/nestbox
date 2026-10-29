@@ -19,6 +19,7 @@ Two rules:
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import docker
@@ -128,10 +129,23 @@ def describe(container: Any | None, service: str) -> dict[str, Any]:
 
 @router.get("/v1/system/components")
 def components() -> dict[str, Any]:
+    """Every component, with one live sample each.
+
+    The samples are taken **concurrently**: `docker stats` blocks for about a
+    second per container, and six of them one after another exceeded the control
+    plane's four-second budget, which turned a healthy page into a 500. In
+    parallel the whole answer stays inside a second or two.
+    """
     try:
         client = _client()
         project = own_project(client)
-        rows = [describe(_find(client, project, service), service) for service in COMPONENTS]
+        found = {service: _find(client, project, service) for service in COMPONENTS}
+
+        def sample(service: str) -> dict[str, Any]:
+            return describe(found[service], service)
+
+        with ThreadPoolExecutor(max_workers=len(COMPONENTS)) as pool:
+            rows = list(pool.map(sample, COMPONENTS))
     except DockerException as failure:
         raise HTTPException(503, f"docker unavailable: {failure}") from failure
     return {"project": project, "components": rows}
@@ -211,6 +225,12 @@ def set_limits(service: str, body: ComponentLimits) -> dict[str, Any]:
         update["pids_limit"] = body.pids_limit
     if not update:
         raise HTTPException(422, "nothing to change: name a memory, CPU or process limit")
+    # Docker refuses a memory limit above the container's swap limit, so a
+    # lowered memory limit has to move the swap limit with it. Both are set to the
+    # same number, which is "no swap": the honest limit for a component whose job
+    # is to answer quickly, not to swap.
+    if "mem_limit" in update:
+        update["memswap_limit"] = update["mem_limit"]
     try:
         container.update(**update)
     except DockerException as failure:
