@@ -168,36 +168,42 @@ export default function SandboxListPage(props) {
                       <button class="tiny" title="How to reach this sandbox: host, ports, SSH"
                               onClick={() => setConnecting(sandbox)}>Connect</button>
                       <button class="tiny" onClick={() => setOpenId(sandbox.id)}>Details</button>
-                      <button class="tiny" disabled={!state.canStart(sandbox)}
-                              onClick={() => state.act(sandbox.id, 'start')}>Start</button>
-                      <button class="tiny" disabled={!state.canStop(sandbox)}
-                              onClick={() => state.act(sandbox.id, 'stop')}>Stop</button>
-                      <button class="tiny" disabled={!sandbox.status.includes('running')}
-                              onClick={() => state.act(sandbox.id, 'restart')}>Restart</button>
-                      <Show when={row.role === 'lead'}>
-                        <button class="tiny" title="Start every member and the lead"
-                                onClick={() => state.actAll([sandbox, ...row.members].filter(state.canStart).map((s) => s.id), 'start')}>
-                          Start all
-                        </button>
-                        <button class="tiny" title="Stop every member and the lead"
-                                onClick={() => state.actAll([sandbox, ...row.members].filter(state.canStop).map((s) => s.id), 'stop')}>
-                          Stop all
-                        </button>
+                      <Show when={state.canStop(sandbox)}
+                            fallback={<button class="tiny" disabled={!state.canStart(sandbox)}
+                                              onClick={() => state.act(sandbox.id, 'start')}>Start</button>}>
+                        <button class="tiny" onClick={() => state.act(sandbox.id, 'stop')}>Stop</button>
                       </Show>
-                      <select
-                        class="tiny stack-select"
-                        aria-label={`Stack of ${sandbox.name}`}
-                        title="Which stack this sandbox belongs to"
-                        disabled={row.role === 'lead'}
-                        value={sandbox.parent_id || ''}
-                        onChange={(event) => state.setStack(sandbox.id, event.currentTarget.value)}
-                      >
-                        <option value="">{row.role === 'lead' ? 'Leads a stack' : 'No stack'}</option>
-                        <For each={possibleLeads(state.items(), sandbox)}>
-                          {(lead) => <option value={lead.id}>Part of {lead.name}</option>}
-                        </For>
-                      </select>
-                      <button class="tiny danger" onClick={() => confirmDestroy(sandbox)}>Delete</button>
+                      <details class="more-menu">
+                        <summary class="tiny" title="Restart, stack, delete">More</summary>
+                        <div class="more-pop">
+                          <button class="tiny" disabled={!sandbox.status.includes('running')}
+                                  onClick={() => state.act(sandbox.id, 'restart')}>Restart</button>
+                          <Show when={row.role === 'lead'}>
+                            <button class="tiny" title="Start every member and the lead"
+                                    onClick={() => state.actAll([sandbox, ...row.members].filter(state.canStart).map((s) => s.id), 'start')}>
+                              Start all
+                            </button>
+                            <button class="tiny" title="Stop every member and the lead"
+                                    onClick={() => state.actAll([sandbox, ...row.members].filter(state.canStop).map((s) => s.id), 'stop')}>
+                              Stop all
+                            </button>
+                          </Show>
+                          <select
+                            class="tiny stack-select"
+                            aria-label={`Stack of ${sandbox.name}`}
+                            title="Which stack this sandbox belongs to"
+                            disabled={row.role === 'lead'}
+                            value={sandbox.parent_id || ''}
+                            onChange={(event) => state.setStack(sandbox.id, event.currentTarget.value)}
+                          >
+                            <option value="">{row.role === 'lead' ? 'Leads a stack' : 'No stack'}</option>
+                            <For each={possibleLeads(state.items(), sandbox)}>
+                              {(lead) => <option value={lead.id}>Part of {lead.name}</option>}
+                            </For>
+                          </select>
+                          <button class="tiny danger" onClick={() => confirmDestroy(sandbox)}>Delete</button>
+                        </div>
+                      </details>
                     </td>
                   </tr>
   );
