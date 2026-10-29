@@ -87,8 +87,8 @@ def _run(image: str, script: str, environment: dict[str, str], timeout: int = 18
     Returns the exit code and stdout. The container is removed on every path,
     including a timeout, so a failed query cannot leave a process behind.
     """
-    try:
-        container = client.containers.create(
+    def create() -> Any:
+        return client.containers.create(
             _allowed(image),
             command=["sh", "-c", script],
             environment=environment,
@@ -100,8 +100,20 @@ def _run(image: str, script: str, environment: dict[str, str], timeout: int = 18
             labels={"nestbox.catalogue": "1"},
             detach=True,
         )
-    except ImageNotFound as exc:
-        raise HTTPException(422, f"image '{image}' is not available on this node") from exc
+
+    try:
+        container = create()
+    except ImageNotFound:
+        # The first search on a baseline pulls its image once; every later
+        # search and every build then finds it locally.
+        try:
+            client.images.pull(image)
+        except APIError as exc:
+            raise HTTPException(422, f"image '{image}' could not be pulled: {exc}") from exc
+        try:
+            container = create()
+        except APIError as exc:
+            raise HTTPException(503, f"the runtime refused the container: {exc}") from exc
     except APIError as exc:
         raise HTTPException(503, f"the runtime refused the container: {exc}") from exc
     try:
