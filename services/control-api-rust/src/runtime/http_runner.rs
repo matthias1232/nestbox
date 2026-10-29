@@ -45,6 +45,10 @@ struct RunnerSandbox {
     network: Vec<NetworkInterface>,
     #[serde(default)]
     resources: RuntimeResources,
+    #[serde(default)]
+    supervisor_status: String,
+    #[serde(default)]
+    supervisor_image: String,
 }
 
 impl From<RunnerSandbox> for RuntimeFacts {
@@ -66,6 +70,8 @@ impl From<RunnerSandbox> for RuntimeFacts {
             started_at: value.started_at,
             exit_code: value.exit_code,
             resources: value.resources,
+            supervisor_status: value.supervisor_status,
+            supervisor_image: value.supervisor_image,
         }
     }
 }

@@ -754,3 +754,70 @@ pub async fn queue_supervisor_action(
         "queued": true,
     }))
 }
+
+/// Give every sandbox that has none its supervisor, and report the real state of
+/// the ones that run under an OpenShell gateway.
+///
+/// Called from the reconcile loop. Idempotent: a sandbox that already has a
+/// supervisor row is not touched, so an existing one keeps its token and settings.
+/// Cross-tenant maintenance like the other boot routines: environments are listed
+/// unscoped and every write happens inside its tenant scope.
+pub async fn ensure_supervisors(ctx: &ServiceContext) -> Result<u64, ApiError> {
+    let facts = ctx.runtime.list().await.unwrap_or_default();
+    let on_gateway: std::collections::HashMap<String, crate::domain::runtime::RuntimeFacts> = facts
+        .into_iter()
+        .filter(|fact| fact.container_name.starts_with("openshell-default--"))
+        .map(|fact| (fact.name.clone(), fact))
+        .collect();
+    let environments: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM environments")
+        .fetch_all(&ctx.pool)
+        .await
+        .map_err(|error| ApiError::from(StoreError::Database(error)))?;
+    let mut changed = 0;
+    for environment_id in environments {
+        let mut scope = TenantScope::begin(&ctx.pool, environment_id)
+            .await
+            .map_err(ApiError::from)?;
+        let missing: Vec<(Uuid, Uuid, String)> = sqlx::query_as(
+            "SELECT s.id, s.gateway_id, s.name FROM sandboxes s
+              WHERE s.gateway_id IS NOT NULL
+                AND NOT EXISTS (SELECT 1 FROM supervisors v WHERE v.sandbox_id = s.id)",
+        )
+        .fetch_all(scope.connection())
+        .await
+        .map_err(|error| ApiError::from(StoreError::Database(error)))?;
+        for (sandbox_id, gateway_id, name) in missing {
+            let name = format!("sup-{name}");
+            if create_for_sandbox(&mut scope, gateway_id, sandbox_id, &name).await.is_ok() {
+                changed += 1;
+            }
+        }
+        let rows: Vec<(Uuid, String)> = sqlx::query_as(
+            "SELECT v.id, s.name FROM supervisors v JOIN sandboxes s ON s.id = v.sandbox_id",
+        )
+        .fetch_all(scope.connection())
+        .await
+        .map_err(|error| ApiError::from(StoreError::Database(error)))?;
+        for (supervisor_id, sandbox_name) in rows {
+            let Some(fact) = on_gateway.get(&sandbox_name) else { continue };
+            let status = match fact.supervisor_status.as_str() {
+                "running" | "degraded" | "stopped" | "starting" => fact.supervisor_status.as_str(),
+                "missing" => "failed",
+                _ => continue,
+            };
+            let version = fact.supervisor_image.rsplit(':').next().filter(|tag| !tag.is_empty());
+            sqlx::query(
+                "UPDATE supervisors SET status = $2, version = COALESCE($3, version), last_seen = now()
+                  WHERE id = $1 AND (status IS DISTINCT FROM $2 OR version IS DISTINCT FROM COALESCE($3, version))",
+            )
+            .bind(supervisor_id)
+            .bind(status)
+            .bind(version)
+            .execute(scope.connection())
+            .await
+            .map_err(|error| ApiError::from(StoreError::Database(error)))?;
+        }
+        scope.commit().await.map_err(ApiError::from)?;
+    }
+    Ok(changed)
+}

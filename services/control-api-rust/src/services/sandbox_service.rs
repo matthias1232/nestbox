@@ -608,6 +608,20 @@ pub async fn create(
     .await
     .map_err(ApiError::from)?;
 
+    // Every sandbox gets its supervisor row in the same transaction, so there is
+    // no moment in which a running sandbox has no one watching it. On OpenShell
+    // the row mirrors the supervisor container; elsewhere it stays `starting`.
+    if let Some(gateway_id) = gateway_id {
+        crate::services::gateway_service::create_for_sandbox(
+            &mut scope,
+            gateway_id,
+            sandbox.id,
+            &format!("sup-{}", sandbox.name),
+        )
+        .await
+        .map_err(ApiError::from)?;
+    }
+
     // The container receives the binds the database says this sandbox has. The
     // request cannot name a mount source: the only source is a persistent root's
     // stored host path. Read inside this transaction so a row written by the same
