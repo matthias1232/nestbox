@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use super::{access_service, require, traffic_service, ServiceContext};
 use crate::domain::auth::{Permission, Principal};
-use crate::domain::runtime::ComponentState;
+use crate::domain::runtime::{ComponentLimits, ComponentState};
 use crate::domain::stack_topology::{
     self, EgressFacts, GatewayFacts, HostFacts, McpFacts, PortFacts, SandboxFacts, StackInput,
     StackTopology, SupervisorFacts,
@@ -255,6 +255,75 @@ pub async fn components(
         Ok(Err(error)) => Err(ApiError::internal("The runner did not describe the components.")
             .with_internal(error.to_string())),
         Err(_) => Err(ApiError::internal("The runner did not answer in time.")),
+    }
+}
+
+/// Apply CPU/memory/process limits to one platform container.
+///
+/// Admin-only: these containers run every tenant's sandboxes, so a user editing
+/// them would be editing shared infrastructure. The runner re-checks the name
+/// against its own fixed list, and refuses a container that would cut the very
+/// request asking for the change.
+pub async fn set_component_limits(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    service: &str,
+    limits: ComponentLimits,
+) -> Result<(), ApiError> {
+    require(principal, Permission::GatewayWrite)?;
+    if limits.is_empty() {
+        return Err(ApiError::validation(
+            "Name a memory, CPU or process limit; an empty change does nothing.",
+        ));
+    }
+    check_service_name(service)?;
+    ctx.runtime
+        .set_component_limits(service, limits)
+        .await
+        .map_err(component_error)
+}
+
+/// Restart one platform container, admin-only, with the reason a refusal names.
+pub async fn restart_component(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    service: &str,
+) -> Result<(), ApiError> {
+    require(principal, Permission::GatewayWrite)?;
+    check_service_name(service)?;
+    ctx.runtime
+        .restart_component(service)
+        .await
+        .map_err(component_error)
+}
+
+/// A component name is lowercase letters, digits and dashes — the same rule the
+/// runner enforces before it looks anything up.
+fn check_service_name(service: &str) -> Result<(), ApiError> {
+    let valid = !service.is_empty()
+        && service
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if valid {
+        Ok(())
+    } else {
+        Err(ApiError::validation(
+            "A component name is lowercase letters, digits and dashes.",
+        ))
+    }
+}
+
+/// A refusal from the runner is the operator's problem (409 with the reason), a
+/// missing runtime is ours (500).
+fn component_error(error: crate::runtime::RuntimeError) -> ApiError {
+    match error {
+        crate::runtime::RuntimeError::NotFound(_) => {
+            ApiError::not_found(ErrorCode::NOT_FOUND, "No such platform component.")
+        }
+        crate::runtime::RuntimeError::Rejected(reason) => ApiError::validation(reason),
+        crate::runtime::RuntimeError::Unavailable(reason) => {
+            ApiError::internal("The runner could not change that component.").with_internal(reason)
+        }
     }
 }
 

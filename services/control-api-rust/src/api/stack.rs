@@ -11,7 +11,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::api::principal::Auth;
-use crate::domain::runtime::ComponentState;
+use crate::domain::runtime::{ComponentLimits, ComponentState};
 use crate::domain::stack_topology::StackTopology;
 use crate::error::ApiError;
 use crate::services::stack_topology_service;
@@ -42,6 +42,28 @@ pub async fn components(
     auth: Auth,
 ) -> Result<Json<Vec<ComponentState>>, ApiError> {
     Ok(Json(stack_topology_service::components(&state.services, &auth.principal).await?))
+}
+
+/// Apply CPU/memory/process limits to one platform container.
+pub async fn set_component_limits(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(service): Path<String>,
+    Json(body): Json<ComponentLimits>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    stack_topology_service::set_component_limits(&state.services, &auth.principal, &service, body)
+        .await?;
+    Ok(Json(serde_json::json!({ "service": service, "applied": "live" })))
+}
+
+/// Restart one platform container.
+pub async fn restart_component(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(service): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    stack_topology_service::restart_component(&state.services, &auth.principal, &service).await?;
+    Ok(Json(serde_json::json!({ "service": service, "state": "restarting" })))
 }
 
 #[derive(Debug, Deserialize)]

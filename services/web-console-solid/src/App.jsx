@@ -25,6 +25,7 @@ import BuilderPage from './features/builder/BuilderPage.jsx';
 import JobsPage from './features/jobs/JobsPage.jsx';
 import SkillsPage from './features/skills/SkillsPage.jsx';
 import CudaXPage from './features/cudax/CudaXPage.jsx';
+import SystemPage from './features/system/SystemPage.jsx';
 import AdminCenter from './features/sandboxes/AdminCenter.jsx';
 
 // The Admin Center is the only view with an address of its own: an operator
@@ -44,6 +45,7 @@ const ROUTES = [
   { id: 'logs', label: 'Live logs' },
   { id: 'policies', label: 'Policies' },
   { id: 'cluster', label: 'Cluster' },
+  { id: 'system', label: 'System containers' },
   { id: 'nodes', label: 'Nodes' },
   { id: 'providers', label: 'Providers' },
   { id: 'mcp', label: 'MCP servers' },
@@ -163,6 +165,7 @@ export default function App() {
                   <Show when={route() === 'traffic'}><TrafficPage /></Show>
                   <Show when={route() === 'policies'}><PoliciesPage /></Show>
                   <Show when={route() === 'cluster'}><ClusterPage /></Show>
+                  <Show when={route() === 'system'}><SystemPage role={session.identity()?.role} /></Show>
                   <Show when={route() === 'nodes'}>
                     <NodesPage onOpenSandbox={openAdmin} />
                   </Show>

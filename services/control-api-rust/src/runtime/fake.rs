@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use crate::domain::metrics::{InventoryProbe, ProcessEntry, ProcessTable};
 use crate::domain::pack_access::ForwardState;
-use crate::domain::runtime::{
+use crate::domain::runtime::{ComponentLimits, 
     BuildRequest, BuildResult, ComponentState, ExecResult, ForwardRequest, HardwareReport,
     ModelDownload, ModelDownloadResult, ModelServe, ModelServeResult, RuntimeFacts, SandboxSpec,
     SshCredential,
@@ -502,6 +502,11 @@ impl RuntimeAdapter for FakeRuntime {
             started_at: None,
             restarts: 0,
             ports: serde_json::json!([]),
+            cpu_pct: Some(1.5),
+            mem_bytes: Some(64 * 1024 * 1024),
+            mem_limit_bytes: Some(512 * 1024 * 1024),
+            pids: Some(4),
+            limits: serde_json::json!({"memory_limit_bytes": 512 * 1024 * 1024}),
         };
         Ok(vec![
             row("control-api", "The control plane."),
@@ -509,6 +514,37 @@ impl RuntimeAdapter for FakeRuntime {
             row("sandbox-runner", "Runs sandboxes."),
             row("egress-proxy", "The only way out."),
         ])
+    }
+
+    async fn set_component_limits(
+        &self,
+        service: &str,
+        limits: ComponentLimits,
+    ) -> Result<(), RuntimeError> {
+        if limits.is_empty() {
+            return Err(RuntimeError::Rejected("nothing to change".into()));
+        }
+        let known = self
+            .components()
+            .await?
+            .into_iter()
+            .any(|component| component.service == service);
+        if !known {
+            return Err(RuntimeError::NotFound(service.to_string()));
+        }
+        Ok(())
+    }
+
+    async fn restart_component(&self, service: &str) -> Result<(), RuntimeError> {
+        let known = self
+            .components()
+            .await?
+            .into_iter()
+            .any(|component| component.service == service);
+        if !known {
+            return Err(RuntimeError::NotFound(service.to_string()));
+        }
+        Ok(())
     }
 
     async fn component_logs(&self, service: &str, _tail: u32) -> Result<String, RuntimeError> {

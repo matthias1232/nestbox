@@ -13,6 +13,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use crate::domain::metrics::{InventoryProbe, ProcessTable};
 use crate::domain::pack_access::ForwardState;
 use crate::domain::runtime::{
+    ComponentLimits,
     BuildRequest, BuildResult, ComponentState, ExecResult, ForwardRequest, HardwareReport,
     ModelDownload, ModelDownloadResult, ModelServe, ModelServeResult, RuntimeFacts, SandboxSpec,
     SshCredential,
@@ -222,6 +223,23 @@ pub trait RuntimeAdapter: Send + Sync {
     /// names `components` returns; the runner refuses any other.
     async fn component_logs(&self, _service: &str, _tail: u32) -> Result<String, RuntimeError> {
         Err(RuntimeError::Unavailable("this runtime does not report components".into()))
+    }
+
+    /// Apply CPU/memory/process limits to one platform container.
+    ///
+    /// Refused by default: a runtime that does not report components cannot
+    /// safely change them either.
+    async fn set_component_limits(
+        &self,
+        _service: &str,
+        _limits: ComponentLimits,
+    ) -> Result<(), RuntimeError> {
+        Err(RuntimeError::Unavailable("this runtime does not manage components".into()))
+    }
+
+    /// Restart one platform container. Refused by default, like the limits.
+    async fn restart_component(&self, _service: &str) -> Result<(), RuntimeError> {
+        Err(RuntimeError::Unavailable("this runtime does not manage components".into()))
     }
 }
 
