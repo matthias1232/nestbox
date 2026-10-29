@@ -132,6 +132,8 @@ class _Exec:
             environment={**TERM_ENV, "TERM": "xterm-256color"} if tty else TERM_ENV,
         )
         self.exec_id: str = created["Id"]
+        self.bytes_in = 0
+        self.bytes_out = 0
         self.tty = tty
         self.sock = PtySocket(client.api.exec_start(self.exec_id, tty=tty, socket=True))
         if tty:
@@ -159,6 +161,7 @@ async def _pump(process: Any, run: _Exec) -> None:
             chunk = await asyncio.to_thread(run.sock.read, READ_CHUNK)
             if not chunk:
                 return
+            run.bytes_out += len(chunk)
             if run.tty:
                 process.stdout.write(chunk)
                 continue
@@ -185,6 +188,7 @@ async def _pump(process: Any, run: _Exec) -> None:
                     except OSError:
                         pass
                 return
+            run.bytes_in += len(data)
             await asyncio.to_thread(run.sock.write, data)
 
     reader = asyncio.create_task(to_client())
@@ -208,15 +212,30 @@ def make_process_handler(client: Any, sandbox: str):
             process.stderr.write(f"nestbox: {failure}\r\n".encode())
             process.exit(1)
             return
+        # Who, when, how long and how many bytes go to the control plane's audit
+        # table; what was typed or printed never does.
+        from app.telemetry_shipper import post_json
+
+        opened = await asyncio.to_thread(post_json, "/api/v1/internal/ssh-sessions", {"event": "open", "sandbox": sandbox})
+        session_id = (opened or {}).get("session_id")
+        reason = "user"
         try:
             await _pump(process, run)
             process.exit(await asyncio.to_thread(run.exit_code))
         except Exception:  # noqa: BLE001
             logger.exception("ssh session for %s ended with an error", sandbox)
+            reason = "error"
             process.exit(1)
         finally:
             run.close()
             logger.info("ssh session for %s closed", sandbox)
+            if session_id:
+                await asyncio.to_thread(
+                    post_json,
+                    "/api/v1/internal/ssh-sessions",
+                    {"event": "close", "sandbox": sandbox, "session_id": session_id, "reason": reason,
+                     "bytes_in": run.bytes_in, "bytes_out": run.bytes_out},
+                )
 
     return handle
 

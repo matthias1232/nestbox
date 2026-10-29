@@ -179,6 +179,7 @@ pub fn router(state: AppState) -> Router {
         // ignores the suffix; without both routes every request would be a 404
         // and therefore (fail closed) a deny.
         .route("/api/v1/internal/metrics/batch", post(metrics::ingest_node))
+        .route("/api/v1/internal/ssh-sessions", post(access::ssh_session_event))
         .route(
             "/api/v1/internal/policy/check",
             any(policies::internal_check),

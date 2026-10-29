@@ -254,7 +254,14 @@ class Manager:
                     "target_port": item.spec.target_port,
                     "purpose": item.spec.purpose,
                     "listening": item.server is not None,
-                    "target_up": target_listening(item.sandbox, item.spec.target_port),
+                    # For SSH the runner is the server: "something answers" means the
+                    # door is open and the sandbox is running, not that port 22 is
+                    # listening inside the container (nothing is, by design).
+                    "target_up": (
+                        item.server is not None and sandbox_address(item.sandbox) is not None
+                        if item.spec.purpose == "ssh"
+                        else target_listening(item.sandbox, item.spec.target_port)
+                    ),
                     "error": item.error,
                     "connections": item.connections,
                     "bytes_in": item.bytes_in,

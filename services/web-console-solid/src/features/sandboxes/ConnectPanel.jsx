@@ -228,8 +228,8 @@ export default function ConnectPanel(props) {
               <section class="connect-block">
                 <h3>~/.ssh/config</h3>
                 <p class="muted small">
-                  With this, <span class="mono">ssh {data().sandbox_name}</span> works, and so does
-                  VS Code Remote-SSH or any tool that reads your SSH config.
+                  With this, <span class="mono">ssh {data().sandbox_name}</span> works in any client that reads your SSH
+                  config. (VS Code Remote-SSH does not: the SSH door has no SFTP.)
                 </p>
                 <pre class="mono">{data().ssh_config}</pre>
                 <CopyButton text={data().ssh_config} what="the SSH config block" />

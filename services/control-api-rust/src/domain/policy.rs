@@ -1422,6 +1422,69 @@ pub fn dns_rule_for<'a>(
     candidates.into_iter().next()
 }
 
+/// Host and port of an endpoint URL: `http://10.0.0.5:20128/v1` -> (`10.0.0.5`, 20128).
+/// The scheme decides a missing port. `None` for something that is not a URL.
+pub fn endpoint_host_port(endpoint: &str) -> Option<(String, i32)> {
+    let (scheme, rest) = endpoint.split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let authority = authority.rsplit('@').next().unwrap_or(authority);
+    if authority.is_empty() {
+        return None;
+    }
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) if port.chars().all(|c| c.is_ascii_digit()) && !port.is_empty() => {
+            (host, port.parse::<i32>().ok()?)
+        }
+        _ => (authority, if scheme.eq_ignore_ascii_case("https") { 443 } else { 80 }),
+    };
+    if host.is_empty() {
+        return None;
+    }
+    Some((host.to_string(), port))
+}
+
+/// The inference endpoints an operator configured, as allow rules.
+///
+/// A provider profile *is* the statement "agents may talk to this model endpoint",
+/// so needing a second, hand-written rule for the same host and port was a trap:
+/// the agent was told to use the endpoint and the proxy then refused it. A
+/// reachable profile whose host is a real address or name (not a bare container
+/// name on the sandbox network, which bypasses the proxy) becomes an allow rule
+/// behind every stored rule. A deny rule still wins over it.
+pub fn rules_from_providers(profiles: &[crate::domain::provider::ProviderProfile]) -> Vec<NetworkRule> {
+    profiles
+        .iter()
+        .filter(|profile| profile.status == crate::domain::provider::ProviderStatus::Reachable)
+        .filter_map(|profile| {
+            let (host, port) = endpoint_host_port(&profile.endpoint)?;
+            if !host.contains('.') && !host.contains(':') {
+                return None;
+            }
+            Some(NetworkRule {
+                id: Uuid::nil(),
+                environment_id: profile.environment_id,
+                policy_id: None,
+                sandbox_id: None,
+                name: format!("Inference provider: {}", profile.name),
+                action: RuleAction::Allow,
+                host: host.clone(),
+                port: Some(port),
+                protocol: RuleProtocol::Tcp,
+                methods: vec![],
+                binaries: vec![],
+                matchers: vec![
+                    Matcher { kind: MatcherKind::Host, value: Some(host) },
+                    Matcher { kind: MatcherKind::Port, value: Some(port.to_string()) },
+                ],
+                enforcement: Enforcement::Enforced,
+                priority: DOCUMENT_ALLOW_PRIORITY - 100,
+                enabled: true,
+                version: profile.version,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1837,5 +1900,13 @@ mod tests {
         ];
         assert_eq!(dns_rule_for(&rules, sandbox, None, "a.example.net").map(|r| r.action), Some(RuleAction::Deny));
         assert!(dns_rule_for(&rules, sandbox, None, "a.other.net").is_none(), "another sandbox's rule does not apply");
+    }
+
+    #[test]
+    fn an_endpoint_url_gives_its_host_and_port() {
+        assert_eq!(endpoint_host_port("http://10.90.92.30:20128/v1"), Some(("10.90.92.30".into(), 20128)));
+        assert_eq!(endpoint_host_port("https://api.example.com/v1"), Some(("api.example.com".into(), 443)));
+        assert_eq!(endpoint_host_port("http://gw.local/v1"), Some(("gw.local".into(), 80)));
+        assert_eq!(endpoint_host_port("nonsense"), None);
     }
 }

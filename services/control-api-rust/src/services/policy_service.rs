@@ -1030,6 +1030,10 @@ pub async fn rules_for_sandbox(
     if let Some(policy) = &governing {
         rules.extend(crate::domain::policy::rules_from_policy(policy));
     }
+    let providers = crate::store::postgres::providers::list(&mut scope)
+        .await
+        .map_err(ApiError::from)?;
+    rules.extend(crate::domain::policy::rules_from_providers(&providers));
     rules.sort_by_key(|rule| rule.priority);
     scope.commit().await.map_err(ApiError::from)?;
     Ok(rules)
@@ -1180,6 +1184,11 @@ pub async fn check(ctx: &ServiceContext, input: CheckInput) -> Result<CheckOutco
     if let Some(policy) = &governing {
         rules.extend(crate::domain::policy::rules_from_policy(policy));
     }
+    // The model endpoints the operator configured are allowed by that very fact.
+    let providers = crate::store::postgres::providers::list(&mut scope)
+        .await
+        .map_err(ApiError::from)?;
+    rules.extend(crate::domain::policy::rules_from_providers(&providers));
     let windows = egress_store::open_windows(&mut scope, Some(sandbox_id))
         .await
         .map_err(ApiError::from)?;

@@ -207,3 +207,67 @@ pub async fn revoke_credential(
     access_service::revoke_credential(&state.services, &auth.principal, id, credential).await?;
     Ok(StatusCode::NO_CONTENT)
 }
+
+
+#[derive(Debug, Deserialize)]
+pub struct SshSessionEvent {
+    /// `open` or `close`.
+    pub event: String,
+    pub sandbox: String,
+    #[serde(default)]
+    pub session_id: Option<Uuid>,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub bytes_in: i64,
+    #[serde(default)]
+    pub bytes_out: i64,
+}
+
+/// The runner reports an SSH session opening and closing, authenticated by the node
+/// token. Who, when and how long are recorded (`sandbox_sessions`); never content.
+pub async fn ssh_session_event(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<SshSessionEvent>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    use crate::store::TenantScope;
+    use crate::store::postgres::access as store;
+    let text = |name: &str| {
+        headers.get(name).and_then(|v| v.to_str().ok()).map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+    };
+    let missing = || ApiError::unauthenticated("A node identifies itself with its id and token.");
+    let node_id = text("x-nestbox-node").and_then(|v| Uuid::parse_str(&v).ok()).ok_or_else(missing)?;
+    let environment_id = text("x-nestbox-environment").and_then(|v| Uuid::parse_str(&v).ok()).ok_or_else(missing)?;
+    let token = text("authorization")
+        .and_then(|raw| raw.split_once(' ').map(|(_, token)| token.trim().to_string()))
+        .ok_or_else(missing)?;
+    crate::services::policy_service::authenticate_node(&state.services, node_id, &token).await?;
+
+    let mut scope = TenantScope::begin(&state.services.pool, environment_id).await.map_err(ApiError::from)?;
+    let result = match body.event.as_str() {
+        "open" => {
+            let sandbox_id = crate::store::postgres::egress::sandbox_id_by_name(&state.services.pool, &body.sandbox)
+                .await
+                .map_err(ApiError::from)?
+                .ok_or_else(|| ApiError::validation("No such sandbox."))?;
+            let id = store::open_session(
+                &mut scope,
+                store::NewSession { sandbox_id, user_id: None, kind: crate::domain::access::SessionKind::Ssh, close_reason: None },
+            )
+            .await
+            .map_err(ApiError::from)?;
+            serde_json::json!({ "session_id": id })
+        }
+        "close" => {
+            let id = body.session_id.ok_or_else(|| ApiError::validation("A close names its session."))?;
+            store::close_session(&mut scope, id, body.reason.as_deref().unwrap_or("user"), body.bytes_in, body.bytes_out)
+                .await
+                .map_err(ApiError::from)?;
+            serde_json::json!({ "closed": true })
+        }
+        _ => return Err(ApiError::validation("An event is open or close.")),
+    };
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(Json(result))
+}

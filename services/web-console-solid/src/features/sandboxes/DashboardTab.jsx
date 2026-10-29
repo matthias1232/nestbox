@@ -34,7 +34,7 @@ export default function DashboardTab(props) {
     const [m, p, t, s] = await Promise.all([
       deck.metrics(id(), '1h').catch(() => null),
       deck.processes(id()).catch(() => null),
-      deck.traffic(id(), { window: '1h', filter: 'denied', limit: 5 }).catch(() => null),
+      deck.traffic(id(), { window: '1h', filter: 'blocked', limit: 5 }).catch(() => null),
       deck.mcpAttached(id()).catch(() => null),
     ]);
     return { m, p, t, s };
@@ -53,6 +53,7 @@ export default function DashboardTab(props) {
   const last = () => series()[series().length - 1];
   const runtime = () => props.sandbox?.runtime || {};
   const spec = () => props.sandbox?.spec || {};
+  const memoryLimitBytes = () => { const m = String(spec().memory_limit || '').match(/^(\d+)b$/); return m ? Number(m[1]) : null; };
 
   return (
     <section class="tab-panel">

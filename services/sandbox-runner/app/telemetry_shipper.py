@@ -168,6 +168,28 @@ def post_batch(entries: list[dict[str, Any]]) -> bool:
     return False
 
 
+def post_json(path: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    """POST one JSON document to the control API as this node; the answer, or `None`."""
+    base = os.getenv("NESTBOX_CONTROL_API_URL", "http://control-api:8000")
+    request = urllib.request.Request(
+        f"{base}{path}",
+        data=json.dumps(payload).encode(),
+        method="POST",
+        headers={
+            "content-type": "application/json",
+            "x-nestbox-node": os.getenv("NESTBOX_NODE_ID", ""),
+            "x-nestbox-environment": os.getenv("NESTBOX_ENVIRONMENT_ID", "00000000-0000-0000-0000-000000000002"),
+            "authorization": f"Bearer {node_token()}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=8) as response:  # noqa: S310 - internal URL
+            return json.loads(response.read() or b"{}")
+    except (OSError, ValueError) as failure:
+        logger.warning("could not report to %s: %s", path, failure)
+        return None
+
+
 def read_new_lines(since: float, seen: set[str]) -> tuple[list[str], float]:
     """The proxy's log lines newer than `since`, minus ones already shipped."""
     from app import system
