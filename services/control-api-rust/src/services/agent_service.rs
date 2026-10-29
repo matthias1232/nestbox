@@ -78,7 +78,7 @@ pub async fn list(
 ) -> Result<SandboxAgents, ApiError> {
     require(principal, Permission::SandboxRead)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     sandbox_store::get(&mut scope, sandbox_id)
@@ -163,7 +163,7 @@ pub async fn add(
     require(principal, Permission::SandboxWrite)?;
     let instance = validate_instance(&request.instance)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     sandbox_store::get(&mut scope, sandbox_id)
@@ -283,7 +283,7 @@ pub async fn remove(
         return Err(agent_not_found(instance));
     }
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     sandbox_store::get(&mut scope, sandbox_id)

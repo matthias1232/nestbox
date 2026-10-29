@@ -92,7 +92,7 @@ pub async fn list(
     params: &ListParams,
 ) -> Result<Page<SandboxSummary>, ApiError> {
     require(principal, Permission::SandboxRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let page = store::list(&mut scope, params).await.map_err(ApiError::from)?;
@@ -104,6 +104,16 @@ pub async fn list(
             .map_err(|error| ApiError::from(crate::error::StoreError::Database(error)))?
             .into_iter()
             .collect();
+    let owners: std::collections::HashMap<Uuid, (Uuid, String)> =
+        sqlx::query_as::<_, (Uuid, Uuid, String)>(
+            "SELECT s.id, u.id, u.display_name FROM sandboxes s JOIN users u ON u.id = s.owner_user_id",
+        )
+        .fetch_all(scope.connection())
+        .await
+        .map_err(|error| ApiError::from(crate::error::StoreError::Database(error)))?
+        .into_iter()
+        .map(|(sandbox, user, name)| (sandbox, (user, name)))
+        .collect();
     let supervisors: std::collections::HashMap<Uuid, (String, String)> =
         sqlx::query_as::<_, (Uuid, String, String)>("SELECT id, name, status FROM supervisors")
             .fetch_all(scope.connection())
@@ -134,6 +144,8 @@ pub async fn list(
             let live = index.get(&sandbox.name);
             let supervisor = sandbox.supervisor_id.and_then(|id| supervisors.get(&id));
             SandboxSummary {
+                owner_user_id: owners.get(&sandbox.id).map(|(user, _)| *user),
+                owner_name: owners.get(&sandbox.id).map(|(_, name)| name.clone()),
                 cluster_name: clusters.get(&sandbox.cluster_id).cloned(),
                 supervisor_name: supervisor.map(|(name, _)| name.clone()),
                 supervisor_status: supervisor.map(|(_, status)| status.clone()),
@@ -164,7 +176,7 @@ pub async fn get(
     id: Uuid,
 ) -> Result<SandboxDetail, ApiError> {
     require(principal, Permission::SandboxRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let sandbox = store::get(&mut scope, id).await.map_err(ApiError::from)?;
@@ -275,7 +287,7 @@ pub async fn set_stack(
     parent_id: Option<Uuid>,
 ) -> Result<Sandbox, ApiError> {
     require(principal, Permission::SandboxWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     // Read first: a sandbox that is not here is a 404 before any rule is argued.
@@ -547,7 +559,7 @@ pub async fn create(
     let memory_limit = crate::domain::runtime::normalize_memory_limit(&request.memory_limit)
         .map_err(ApiError::validation)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 
@@ -677,6 +689,15 @@ pub async fn create(
     )
     .await
     .map_err(ApiError::from)?;
+
+    // The creator owns the sandbox: they manage it from start to end, and other users
+    // (not admins) do not see it.
+    sqlx::query("UPDATE sandboxes SET owner_user_id = $1 WHERE id = $2")
+        .bind(principal.user_id)
+        .bind(sandbox.id)
+        .execute(scope.connection())
+        .await
+        .map_err(|error| ApiError::from(StoreError::Database(error)))?;
 
     // Every sandbox gets its supervisor row in the same transaction, so there is
     // no moment in which a running sandbox has no one watching it. On OpenShell
@@ -911,7 +932,7 @@ pub async fn act(
 ) -> Result<Sandbox, ApiError> {
     require(principal, Permission::SandboxWrite)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let sandbox = store::get(&mut scope, id).await.map_err(ApiError::from)?;
@@ -980,7 +1001,7 @@ pub async fn delete(
 ) -> Result<(), ApiError> {
     require(principal, Permission::SandboxWrite)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let sandbox = store::get(&mut scope, id).await.map_err(ApiError::from)?;
@@ -1030,7 +1051,7 @@ pub async fn logs(
     tail: u32,
 ) -> Result<String, ApiError> {
     require(principal, Permission::SandboxRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let sandbox = store::get(&mut scope, id).await.map_err(ApiError::from)?;
@@ -1066,7 +1087,7 @@ pub async fn exec(
         return Err(ApiError::validation("Command arguments must not contain NUL."));
     }
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let sandbox = store::get(&mut scope, id).await.map_err(ApiError::from)?;
@@ -1120,7 +1141,7 @@ async fn set_status(
     status: SandboxStatus,
     health: SandboxHealth,
 ) -> Result<Sandbox, ApiError> {
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let sandbox = store::update_status(&mut scope, id, expected_version, status, health)
@@ -1416,7 +1437,7 @@ pub async fn set_resources(
         return Err(ApiError::validation("Nothing to change."));
     }
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let sandbox = store::get(&mut scope, id).await.map_err(ApiError::from)?;
@@ -1568,7 +1589,7 @@ pub async fn reconfigure_agent(
     id: Uuid,
 ) -> Result<serde_json::Value, ApiError> {
     require(principal, Permission::SandboxWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let sandbox = store::get(&mut scope, id).await.map_err(ApiError::from)?;
@@ -1610,7 +1631,7 @@ pub async fn recreate(
     id: Uuid,
 ) -> Result<serde_json::Value, ApiError> {
     require(principal, Permission::SandboxWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let sandbox = store::get(&mut scope, id).await.map_err(ApiError::from)?;

@@ -27,6 +27,7 @@ pub mod secret_service;
 pub mod stack_topology_service;
 pub mod telemetry_service;
 pub mod terminal_service;
+pub mod user_service;
 pub mod traffic_service;
 
 pub use access_control::require;

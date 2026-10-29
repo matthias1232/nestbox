@@ -26,7 +26,7 @@ pub async fn list_baselines(
     principal: &Principal,
 ) -> Result<Vec<Baseline>, ApiError> {
     require(principal, Permission::RecipeRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let baselines = store::list_baselines(&mut scope)
@@ -46,7 +46,7 @@ pub async fn list_agent_packs(
     baseline: Option<&str>,
 ) -> Result<Vec<AgentPack>, ApiError> {
     require(principal, Permission::RecipeRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let wanted = match requested_baseline(baseline) {
@@ -78,7 +78,7 @@ pub async fn tool_catalog(
     baseline: Option<&str>,
 ) -> Result<Vec<ToolForBaseline>, ApiError> {
     require(principal, Permission::RecipeRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let manager = match requested_baseline(baseline) {

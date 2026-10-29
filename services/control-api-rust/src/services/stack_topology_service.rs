@@ -40,7 +40,7 @@ pub async fn stack(
 ) -> Result<StackTopology, ApiError> {
     require(principal, Permission::SandboxRead)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let subject = sandbox_store::get(&mut scope, sandbox_id)

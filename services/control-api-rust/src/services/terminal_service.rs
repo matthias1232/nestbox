@@ -244,7 +244,7 @@ pub async fn open(
 ) -> Result<Ticket, ApiError> {
     require(principal, Permission::SandboxExec)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 

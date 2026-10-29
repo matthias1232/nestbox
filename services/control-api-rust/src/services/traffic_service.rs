@@ -240,7 +240,7 @@ pub async fn traffic(
     let after = cursor_of(request.cursor.as_deref());
 
     let (from, to) = window.bounds();
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 
@@ -328,7 +328,7 @@ pub async fn body(
     event_id: Uuid,
 ) -> Result<BodyView, ApiError> {
     require(principal, Permission::TelemetryRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 
@@ -395,7 +395,7 @@ pub async fn map(
     let window = parse_window(window)?.capped(MAX_LIVE_WINDOW_SECONDS);
     let (from, to) = window.bounds();
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 
@@ -484,7 +484,7 @@ pub async fn mcp_calls(
     let after = cursor_of(request.cursor.as_deref());
     let (from, to) = window.bounds();
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 
@@ -652,7 +652,7 @@ pub async fn effective_policies(
     sandbox_id: Uuid,
 ) -> Result<EffectivePolicies, ApiError> {
     require(principal, Permission::PolicyRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 
@@ -741,7 +741,7 @@ pub async fn live_edges(
     let (from, to) = window.bounds();
     let limit = 300i64;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let rows = store::live_edges(&mut scope, from, to, limit + 1)

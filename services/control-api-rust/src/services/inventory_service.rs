@@ -78,7 +78,7 @@ pub async fn load(
 ) -> Result<InventoryView, ApiError> {
     require(principal, Permission::SandboxRead)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let inventory = store::read_inventory(&mut scope, sandbox_id)

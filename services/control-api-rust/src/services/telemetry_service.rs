@@ -897,7 +897,7 @@ pub async fn history(
 ) -> Result<Vec<store::StoredEvent>, ApiError> {
     require(principal, Permission::TelemetryRead)?;
     let since = Utc::now() - Duration::minutes(minutes.clamp(1, 10_080));
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let events = store::list(&mut scope, kind, since, limit.clamp(1, 500))
@@ -915,7 +915,7 @@ pub async fn facets(
 ) -> Result<std::collections::BTreeMap<String, i64>, ApiError> {
     require(principal, Permission::TelemetryRead)?;
     let since = Utc::now() - Duration::minutes(minutes.clamp(1, 10_080));
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let facets = store::facets(&mut scope, since).await.map_err(ApiError::from)?;
@@ -931,7 +931,7 @@ pub async fn sandbox_inference(
     limit: i64,
 ) -> Result<Vec<serde_json::Value>, ApiError> {
     require(principal, Permission::TelemetryRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let rows = store::inference_for_sandbox(&mut scope, sandbox_id, limit.clamp(1, 500))

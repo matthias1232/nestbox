@@ -52,7 +52,7 @@ async fn audit(
 
 pub async fn list(ctx: &ServiceContext, principal: &Principal, root_id: Option<Uuid>) -> Result<Vec<Backup>, ApiError> {
     require(principal, Permission::SandboxRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id).await.map_err(ApiError::from)?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
     let items = store::list(&mut scope, root_id).await.map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
     Ok(items)
@@ -70,7 +70,7 @@ pub async fn create(
     if note.is_some_and(|text| text.len() > 200) {
         return Err(ApiError::validation("A backup note is at most 200 characters."));
     }
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id).await.map_err(ApiError::from)?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
     let root = roots::get_root(&mut scope, root_id).await.map_err(|error| match error {
         StoreError::NotFound => ApiError::not_found(ErrorCode::ROOT_NOT_FOUND, "No persistent root with that id."),
         other => ApiError::from(other),
@@ -84,7 +84,7 @@ pub async fn create(
         .await
         .map_err(runtime_error)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id).await.map_err(ApiError::from)?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
     let backup = store::insert(
         &mut scope,
         &store::NewBackup {
@@ -116,7 +116,7 @@ pub async fn restore(
     force: bool,
 ) -> Result<serde_json::Value, ApiError> {
     require(principal, Permission::PersistWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id).await.map_err(ApiError::from)?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
     let backup = store::get(&mut scope, backup_id).await.map_err(|error| match error {
         StoreError::NotFound => not_found(),
         other => ApiError::from(other),
@@ -156,7 +156,7 @@ pub async fn restore(
         .await
         .map_err(runtime_error)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id).await.map_err(ApiError::from)?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
     audit(
         &mut scope,
         principal,
@@ -172,7 +172,7 @@ pub async fn restore(
 /// Delete a backup and its archive.
 pub async fn delete(ctx: &ServiceContext, principal: &Principal, backup_id: Uuid) -> Result<(), ApiError> {
     require(principal, Permission::PersistWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id).await.map_err(ApiError::from)?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
     let backup = store::get(&mut scope, backup_id).await.map_err(|error| match error {
         StoreError::NotFound => not_found(),
         other => ApiError::from(other),
@@ -180,7 +180,7 @@ pub async fn delete(ctx: &ServiceContext, principal: &Principal, backup_id: Uuid
     scope.commit().await.map_err(ApiError::from)?;
     // The archive first: a row without a file is harmless, a file without a row is a leak.
     ctx.runtime.backup_delete(&backup.id.to_string()).await.map_err(runtime_error)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id).await.map_err(ApiError::from)?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
     store::delete(&mut scope, backup_id).await.map_err(ApiError::from)?;
     audit(&mut scope, principal, "root.backup.delete", backup_id, serde_json::json!({ "root": backup.root_slug })).await?;
     scope.commit().await.map_err(ApiError::from)?;

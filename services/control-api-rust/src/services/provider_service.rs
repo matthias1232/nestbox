@@ -40,7 +40,7 @@ pub async fn list(
     principal: &Principal,
 ) -> Result<Vec<ProviderProfile>, ApiError> {
     require(principal, Permission::ProviderRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let profiles = store::list(&mut scope).await.map_err(ApiError::from)?;
@@ -55,7 +55,7 @@ pub async fn get(
     id: Uuid,
 ) -> Result<ProviderProfile, ApiError> {
     require(principal, Permission::ProviderRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let profile = store::get(&mut scope, id).await.map_err(ApiError::from)?;
@@ -172,7 +172,7 @@ pub async fn create(
         validate_locator(locator)?;
     }
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let profile = store::insert(
@@ -231,7 +231,7 @@ pub async fn update(
         validate_locator(locator)?;
     }
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let profile = store::update(
@@ -282,7 +282,7 @@ pub async fn delete(
     id: Uuid,
 ) -> Result<(), ApiError> {
     require(principal, Permission::ProviderWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let profile = store::get(&mut scope, id).await.map_err(ApiError::from)?;
@@ -328,7 +328,7 @@ pub async fn probe(
     } else {
         ProviderStatus::Unreachable
     };
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     store::set_status(&mut scope, id, status)

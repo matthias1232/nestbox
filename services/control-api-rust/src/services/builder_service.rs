@@ -155,7 +155,7 @@ pub struct BuildQueued {
 /// Every recipe in the environment.
 pub async fn list(ctx: &ServiceContext, principal: &Principal) -> Result<Vec<Recipe>, ApiError> {
     require(principal, Permission::RecipeRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let recipes = store::list(&mut scope).await.map_err(ApiError::from)?;
@@ -170,7 +170,7 @@ pub async fn get(
     id: Uuid,
 ) -> Result<Recipe, ApiError> {
     require(principal, Permission::RecipeRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let recipe = store::get(&mut scope, id).await.map_err(recipe_error)?;
@@ -189,7 +189,7 @@ pub async fn create(
     input: RecipeInput,
 ) -> Result<Recipe, ApiError> {
     require(principal, Permission::RecipeWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let prepared = prepare(&mut scope, &input, None).await?;
@@ -234,7 +234,7 @@ pub async fn update(
     input: RecipeInput,
 ) -> Result<Recipe, ApiError> {
     require(principal, Permission::RecipeWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     // The existing node is the default: a PATCH that does not name a node must
@@ -277,7 +277,7 @@ pub async fn delete(
     id: Uuid,
 ) -> Result<(), ApiError> {
     require(principal, Permission::RecipeWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let recipe = store::get(&mut scope, id).await.map_err(recipe_error)?;
@@ -309,7 +309,7 @@ pub async fn build(
     id: Uuid,
 ) -> Result<BuildQueued, ApiError> {
     require(principal, Permission::RecipeWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let recipe = store::get(&mut scope, id).await.map_err(recipe_error)?;
@@ -667,7 +667,7 @@ pub async fn instantiate(
     require(principal, Permission::SandboxWrite)?;
     let sandbox_name = SandboxName::new(name).map_err(ApiError::validation)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let recipe = store::get(&mut scope, id).await.map_err(recipe_error)?;
