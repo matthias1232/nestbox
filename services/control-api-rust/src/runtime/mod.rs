@@ -157,6 +157,13 @@ pub trait RuntimeAdapter: Send + Sync {
         Err(RuntimeError::Unavailable("this runtime cannot change limits live".into()))
     }
 
+    /// Network decisions the runtime's own enforcement logged recently, as raw
+    /// events (OpenShell supervisors). Empty for a runtime whose decisions already
+    /// flow through the egress proxy's access log.
+    async fn openshell_events(&self, _since_seconds: u32) -> Result<Vec<serde_json::Value>, RuntimeError> {
+        Ok(Vec::new())
+    }
+
     /// Hand the sandbox its network policy, compiled to the runtime's own format.
     ///
     /// Only a runtime that enforces policy itself (an OpenShell gateway) has
