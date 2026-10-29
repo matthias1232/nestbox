@@ -77,3 +77,42 @@ class PasswordTest(unittest.TestCase):
 
     def test_no_logins_means_no_password_works(self) -> None:
         self.assertFalse(ssh_gateway.password_matches([], "tmp-1", "pw", now=1.0))
+
+
+class ClientVanishesTests(unittest.IsolatedAsyncioTestCase):
+    async def test_a_terminal_session_ends_when_the_client_disappears(self) -> None:
+        import asyncio
+        import threading
+
+        from app import ssh_gateway
+
+        release = threading.Event()
+
+        class Sock:
+            written: list[bytes] = []
+
+            def read(self, _n: int) -> bytes:
+                release.wait(5)  # the shell is idle: nothing arrives until it ends
+                return b""
+
+            def write(self, data: bytes) -> None:
+                self.written.append(data)
+                release.set()  # Ctrl-D ends the shell
+
+        class Run:
+            tty = True
+            bytes_in = bytes_out = 0
+            sock = Sock()
+
+            def close(self) -> None:
+                release.set()
+
+        class Stdin:
+            async def read(self, _n: int) -> bytes:
+                return b""  # the client is gone
+
+        class Process:
+            stdin = Stdin()
+
+        await asyncio.wait_for(ssh_gateway._pump(Process(), Run()), 3)
+        self.assertIn(b"\x04\x04", Sock.written, "the idle shell is told to end instead of leaking")

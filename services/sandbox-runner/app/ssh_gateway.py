@@ -195,9 +195,24 @@ async def _pump(process: Any, run: _Exec) -> None:
     reader = asyncio.create_task(to_client())
     writer = asyncio.create_task(to_sandbox())
     try:
-        await reader
+        if run.tty:
+            # A terminal ends when either side does. If the client vanished first (a dropped
+            # network, a closed PuTTY window) nothing would ever end the shell, `reader` would
+            # wait on it for ever, and the session and its `bash` would leak. Ctrl-D twice ends
+            # an idle shell; closing the socket releases the reader either way.
+            await asyncio.wait({reader, writer}, return_when=asyncio.FIRST_COMPLETED)
+            if not reader.done():
+                try:
+                    await asyncio.to_thread(run.sock.write, b"\x04\x04")
+                except Exception:  # noqa: BLE001 - the shell may already be gone
+                    pass
+                run.close()
+                reader.cancel()
+        else:
+            await reader
     finally:
         writer.cancel()
+        reader.cancel()
 
 
 def make_process_handler(client: Any, sandbox: str):
@@ -300,6 +315,9 @@ async def serve(
         agent_forwarding=False,
         x11_forwarding=False,
         allow_pty=True,
+        # A dead client is noticed within a minute instead of never.
+        keepalive_interval=20,
+        keepalive_count_max=3,
         line_editor=False,
         # No sftp_factory: SFTP is not offered. `-L`/`-R`/`-D` are
         # refused because `Door` does not override `connection_requested` or
