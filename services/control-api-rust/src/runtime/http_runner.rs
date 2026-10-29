@@ -414,6 +414,35 @@ impl RuntimeAdapter for HttpRunner {
         Ok(())
     }
 
+    async fn backup_create(&self, root_path: &str, backup_id: &str) -> Result<(i64, String), RuntimeError> {
+        #[derive(Deserialize)]
+        struct Answer {
+            bytes: i64,
+            sha256: String,
+        }
+        let payload = serde_json::json!({ "root_path": root_path, "backup_id": backup_id });
+        let answer: Answer = self.send(reqwest::Method::POST, "/v1/backups", Some(&payload)).await?;
+        Ok((answer.bytes, answer.sha256))
+    }
+
+    async fn backup_restore(
+        &self,
+        backup_id: &str,
+        root_path: &str,
+        sha256: &str,
+        replace: bool,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        let payload = serde_json::json!({ "root_path": root_path, "sha256": sha256, "replace": replace });
+        self.send(reqwest::Method::POST, &format!("/v1/backups/{backup_id}/restore"), Some(&payload)).await
+    }
+
+    async fn backup_delete(&self, backup_id: &str) -> Result<(), RuntimeError> {
+        let _: serde_json::Value = self
+            .send(reqwest::Method::DELETE, &format!("/v1/backups/{backup_id}"), None)
+            .await?;
+        Ok(())
+    }
+
     async fn openshell_view(&self, name: &str) -> Result<serde_json::Value, RuntimeError> {
         self.send(reqwest::Method::GET, &format!("/v1/sandboxes/{name}/openshell"), None).await
     }

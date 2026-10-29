@@ -15,6 +15,7 @@ pub mod metrics;
 pub mod models;
 pub mod nodes;
 pub mod packs;
+pub mod backups;
 pub mod persistent_roots;
 pub mod policies;
 pub mod principal;
@@ -341,6 +342,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/persistent-roots/{id}/mount", post(persistent_roots::mount))
         .route("/api/v1/persistent-roots/{id}/dismount", post(persistent_roots::dismount))
         .route("/api/v1/persistent-roots/{id}/usage", get(persistent_roots::usage))
+        .route("/api/v1/persistent-roots/{id}/backups", get(backups::list_for_root).post(backups::create))
+        .route("/api/v1/backups", get(backups::list_all))
+        .route("/api/v1/backups/{id}/restore", post(backups::restore))
+        .route("/api/v1/backups/{id}", axum::routing::delete(backups::delete))
         // Sandbox agents
         .route(
             "/api/v1/sandboxes/{id}/agents",

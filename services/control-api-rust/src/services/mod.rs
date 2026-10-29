@@ -4,6 +4,7 @@ pub mod access_control;
 pub mod access_service;
 pub mod agent_service;
 pub mod audit_service;
+pub mod backup_service;
 pub mod auth_service;
 pub mod builder_service;
 pub mod catalog_sync;

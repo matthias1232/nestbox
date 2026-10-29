@@ -61,3 +61,26 @@ export function remove(id, purge = false) {
     { method: 'DELETE' },
   );
 }
+
+/** The backups of one root, newest first. */
+export function backups(rootId) {
+  return request(`persistent-roots/${rootId}/backups`);
+}
+
+/** Back a root up now. `note` is an optional reminder of up to 200 characters. */
+export function createBackup(rootId, note) {
+  return request(`persistent-roots/${rootId}/backups`, { method: 'POST', body: { note: note || null } });
+}
+
+/**
+ * Restore a backup. By default into the root it came from; `replace` moves the current
+ * content aside first, `force` restores although a running sandbox writes to the root.
+ */
+export function restoreBackup(id, { rootId = null, replace = false, force = false } = {}) {
+  return request(`backups/${id}/restore`, { method: 'POST', body: { root_id: rootId, replace, force } });
+}
+
+/** Delete a backup and its archive on the node. */
+export function deleteBackup(id) {
+  return request(`backups/${id}`, { method: 'DELETE' });
+}

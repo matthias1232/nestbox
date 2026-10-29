@@ -12,13 +12,11 @@ use uuid::Uuid;
 use nestbox_control_api::domain::auth::{CredentialSource, Principal, Role};
 use nestbox_control_api::events::bus::LocalBus;
 use nestbox_control_api::runtime::fake::FakeRuntime;
-use nestbox_control_api::runtime::RuntimeAdapter;
 use nestbox_control_api::services::sandbox_service::{self, CreateSandbox};
 use nestbox_control_api::domain::policy::{Enforcement, NetworkRule, RuleAction, RuleProtocol};
 use nestbox_control_api::services::{policy_service, ServiceContext};
 
 const ENVIRONMENT: &str = "00000000-0000-0000-0000-000000000002";
-const LOCAL_NODE: &str = "00000000-0000-0000-0000-000000000003";
 
 fn uuid(value: &str) -> Uuid {
     Uuid::from_str(value).unwrap_or_else(|_| Uuid::nil())

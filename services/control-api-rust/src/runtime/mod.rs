@@ -157,6 +157,27 @@ pub trait RuntimeAdapter: Send + Sync {
         Err(RuntimeError::Unavailable("this runtime cannot change limits live".into()))
     }
 
+    /// Archive a directory under the node's persistent base. Returns `(bytes, sha256)`.
+    async fn backup_create(&self, _root_path: &str, _backup_id: &str) -> Result<(i64, String), RuntimeError> {
+        Err(RuntimeError::Unavailable("this runtime cannot back up a root".into()))
+    }
+
+    /// Unpack an archive into a root, after checking its checksum.
+    async fn backup_restore(
+        &self,
+        _backup_id: &str,
+        _root_path: &str,
+        _sha256: &str,
+        _replace: bool,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        Err(RuntimeError::Unavailable("this runtime cannot restore a root".into()))
+    }
+
+    /// Remove an archive from the node.
+    async fn backup_delete(&self, _backup_id: &str) -> Result<(), RuntimeError> {
+        Err(RuntimeError::Unavailable("this runtime cannot delete a backup".into()))
+    }
+
     /// What the OpenShell gateway and supervisor report about one sandbox.
     async fn openshell_view(&self, _name: &str) -> Result<serde_json::Value, RuntimeError> {
         Err(RuntimeError::Unavailable("this sandbox is not on an OpenShell gateway".into()))
