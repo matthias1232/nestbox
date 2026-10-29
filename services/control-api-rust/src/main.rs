@@ -102,7 +102,7 @@ async fn main() {
                 if let Err(error) =
                     nestbox_control_api::services::telemetry_service::pull_openshell_events(&services).await
                 {
-                    tracing::debug!(code = error.code.0, "OpenShell event pull skipped");
+                    tracing::warn!(code = error.code.0, message = %error.message, "OpenShell event pull failed");
                 }
                 if let Err(error) =
                     nestbox_control_api::services::gateway_service::ensure_supervisors(&services).await
