@@ -217,6 +217,15 @@ pub fn apply_login_choice(environment: &mut BTreeMap<String, String>, login: Opt
     }
 }
 
+/// The hosts an agent contacts to sign a user in with their own account. Only these:
+/// everything else stays under the sandbox's policy.
+pub fn own_login_hosts(pack_key: &str) -> &'static [&'static str] {
+    match pack_key {
+        "claude-code" => &["claude.ai", "console.anthropic.com", "platform.claude.com", "api.anthropic.com"],
+        _ => &[],
+    }
+}
+
 /// Whether an agent pack has a login of its own to offer.
 pub fn pack_has_own_login(pack_key: &str) -> bool {
     matches!(pack_key, "claude-code" | "opencode" | "openchamber")
@@ -762,6 +771,41 @@ pub async fn create(
     // exactly what every sandbox had before this feature, and failing the create
     // over it would trade a working sandbox for a tidy one.
     policy_service::apply_safe_defaults(ctx, principal.environment_id, sandbox.id).await;
+
+    // Signing in with an own account needs the identity hosts of the agent's vendor,
+    // which the default policy rightly does not allow. They are written as ordinary rules
+    // of this sandbox, so they are visible and removable like any other.
+    if sandbox.spec.get("login").and_then(|v| v.as_str()) == Some("own_account") {
+        for host in own_login_hosts(&sandbox.pack_key) {
+            let rule = crate::domain::policy::NetworkRule {
+                id: Uuid::nil(),
+                environment_id: principal.environment_id,
+                policy_id: None,
+                sandbox_id: Some(sandbox.id),
+                name: format!("Sign-in: {host}"),
+                action: crate::domain::policy::RuleAction::Allow,
+                host: (*host).to_string(),
+                port: Some(443),
+                protocol: crate::domain::policy::RuleProtocol::Rest,
+                methods: vec![],
+                binaries: vec![],
+                matchers: crate::domain::policy::matchers_from_flat(
+                    host,
+                    Some(443),
+                    crate::domain::policy::RuleProtocol::Rest,
+                    &[],
+                    &[],
+                ),
+                enforcement: crate::domain::policy::Enforcement::Enforced,
+                priority: 100,
+                enabled: true,
+                version: 1,
+            };
+            if let Err(error) = policy_service::create_rule(ctx, principal, rule).await {
+                tracing::warn!(sandbox = %sandbox.name, host, code = error.code.0, "could not allow a sign-in host");
+            }
+        }
+    }
 
     // Now ask the runtime. A failure here is recorded on the row, so the console
     // shows a failed sandbox instead of nothing at all.

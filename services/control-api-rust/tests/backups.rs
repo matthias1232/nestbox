@@ -229,6 +229,12 @@ async fn an_own_account_sandbox_carries_no_gateway_key_and_a_bad_choice_is_refus
     assert!(spec.mounts.iter().any(|m| m.target == "/home/nestbox/.agent-state"));
     assert!(spec.environment.iter().any(|(k, _)| k == "CLAUDE_CONFIG_DIR"));
 
+    // The sign-in hosts are allowed as ordinary rules of this sandbox, and only those.
+    let rules = nestbox_control_api::services::policy_service::rules_for_sandbox(&ctx, &principal, created.id).await.expect("rules");
+    let own: Vec<&str> = rules.iter().filter(|r| r.name.starts_with("Sign-in:")).map(|r| r.host.as_str()).collect();
+    assert!(own.contains(&"claude.ai") && own.contains(&"console.anthropic.com"));
+    assert!(!rules.iter().any(|r| r.host == "example.com"));
+
     let mut bad = request("bad-login", "claude-code");
     bad.login = Some("magic".into());
     assert!(sandbox_service::create(&ctx, &principal, bad).await.is_err());
