@@ -1386,6 +1386,42 @@ pub fn rules_for_sandbox_view(
         .collect()
 }
 
+/// Whether a DNS pattern covers a host: an exact name, or `.suffix` for the domain
+/// and everything under it.
+pub fn dns_pattern_matches(pattern: &str, host: &str) -> bool {
+    let pattern = pattern.trim().to_ascii_lowercase();
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    if pattern.is_empty() || host.is_empty() {
+        return false;
+    }
+    match pattern.strip_prefix('.') {
+        Some(suffix) => host == suffix || host.ends_with(&format!(".{suffix}")),
+        None => host == pattern,
+    }
+}
+
+/// The DNS rule that decides for `host`, by ascending priority, among the rules
+/// that apply to this sandbox (its own, its governing policy's, and unscoped ones).
+pub fn dns_rule_for<'a>(
+    rules: &'a [DnsRule],
+    sandbox_id: Uuid,
+    governing_policy: Option<Uuid>,
+    host: &str,
+) -> Option<&'a DnsRule> {
+    let mut candidates: Vec<&DnsRule> = rules
+        .iter()
+        .filter(|rule| rule.enabled)
+        .filter(|rule| match (rule.sandbox_id, rule.policy_id) {
+            (Some(target), _) => target == sandbox_id,
+            (None, None) => true,
+            (None, Some(policy)) => Some(policy) == governing_policy,
+        })
+        .filter(|rule| dns_pattern_matches(&rule.pattern, host))
+        .collect();
+    candidates.sort_by_key(|rule| rule.priority);
+    candidates.into_iter().next()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1776,5 +1812,30 @@ mod tests {
         );
         assert_eq!(kept.len(), 3, "mine, global, and this sandbox's own");
         assert!(rules_for_sandbox_view(vec![mk(Some(mine), None)], sandbox, None).is_empty());
+    }
+
+    #[test]
+    fn a_dns_suffix_covers_the_domain_and_its_subdomains_but_not_a_lookalike() {
+        assert!(dns_pattern_matches(".tracker.example", "tracker.example"));
+        assert!(dns_pattern_matches(".tracker.example", "a.b.tracker.example"));
+        assert!(!dns_pattern_matches(".tracker.example", "nottracker.example"));
+        assert!(dns_pattern_matches("exact.example", "EXACT.example."));
+        assert!(!dns_pattern_matches("exact.example", "sub.exact.example"));
+    }
+
+    #[test]
+    fn the_lowest_priority_dns_rule_that_applies_decides() {
+        let sandbox = Uuid::new_v4();
+        let rule = |action: RuleAction, pattern: &str, priority: i32, sandbox_id: Option<Uuid>| DnsRule {
+            id: Uuid::new_v4(), environment_id: Uuid::nil(), policy_id: None, sandbox_id, action,
+            pattern: pattern.into(), priority, enabled: true, version: 1,
+        };
+        let rules = vec![
+            rule(RuleAction::Allow, ".example.net", 200, None),
+            rule(RuleAction::Deny, ".example.net", 100, None),
+            rule(RuleAction::Deny, ".other.net", 1, Some(Uuid::new_v4())),
+        ];
+        assert_eq!(dns_rule_for(&rules, sandbox, None, "a.example.net").map(|r| r.action), Some(RuleAction::Deny));
+        assert!(dns_rule_for(&rules, sandbox, None, "a.other.net").is_none(), "another sandbox's rule does not apply");
     }
 }
