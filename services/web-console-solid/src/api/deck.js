@@ -15,7 +15,7 @@ export const mcpAttach = (id, serverKey) =>
   request(`sandboxes/${id}/mcp/servers`, { method: 'POST', body: { server_key: serverKey, enabled: true } });
 export const mcpDetach = (id, key) => request(`sandboxes/${id}/mcp/servers/${key}`, { method: 'DELETE' });
 export const mcpDiscover = (id, key) => request(`sandboxes/${id}/mcp/servers/${key}/discover`, { method: 'POST' });
-export const mcpCalls = (id, limit = 30) => request(`sandboxes/${id}/mcp/calls${query({ limit })}`);
+export const mcpCalls = (id, limit = 30) => request(`sandboxes/${id}/mcp/calls${query({ limit, window: '24h' })}`);
 
 export const setResources = (id, body) => request(`sandboxes/${id}/resources`, { method: 'PUT', body });
 export const hostLoad = () => request('host/load');
