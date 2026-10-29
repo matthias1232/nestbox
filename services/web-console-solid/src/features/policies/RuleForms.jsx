@@ -9,6 +9,7 @@ import {
   MATCHER_KINDS, blankRuleForm, dnsProblem, dnsToPayload, ruleProblem, ruleToPayload,
 } from './policyForms.js';
 import * as api from '../../api/policies.js';
+import { RULE_HELP, MATCHER_HELP, DNS_HELP } from './ruleHelp.js';
 import '../../styles/policy-forms.css';
 
 function ScopePicker(props) {
@@ -21,6 +22,7 @@ function ScopePicker(props) {
           <option value="policy">one policy (every sandbox that carries it)</option>
           <option value="sandbox">one sandbox</option>
         </select>
+        <small class="help">{RULE_HELP.scope}</small>
       </label>
       <Show when={props.value.kind === 'policy'}>
         <label>
@@ -29,6 +31,7 @@ function ScopePicker(props) {
             <option value="">choose…</option>
             <For each={props.policies || []}>{(item) => <option value={item.id}>{item.name}</option>}</For>
           </select>
+          <small class="help">{RULE_HELP.policy}</small>
         </label>
       </Show>
       <Show when={props.value.kind === 'sandbox'}>
@@ -38,6 +41,7 @@ function ScopePicker(props) {
             <option value="">choose…</option>
             <For each={props.sandboxes || []}>{(item) => <option value={item.id}>{item.name}</option>}</For>
           </select>
+          <small class="help">{RULE_HELP.sandbox}</small>
         </label>
       </Show>
     </>
@@ -89,29 +93,35 @@ export function NetworkRuleForm(props) {
     <form class="rule-form" onSubmit={submit}>
       <h3>New network rule</h3>
       <div class="row">
-        <label>Name<input value={form().name} onInput={(e) => set({ name: e.currentTarget.value })} placeholder="allow npm" /></label>
+        <label>Name<input value={form().name} onInput={(e) => set({ name: e.currentTarget.value })} placeholder="allow npm" />
+          <small class="help">{RULE_HELP.name}</small></label>
         <label>Action
           <select value={form().action} onChange={(e) => set({ action: e.currentTarget.value })}>
             <option value="allow">allow</option><option value="deny">deny</option>
           </select>
+          <small class="help">{RULE_HELP.action}</small>
         </label>
         <label>Enforcement
           <select value={form().enforcement} onChange={(e) => set({ enforcement: e.currentTarget.value })}>
             <option value="enforced">enforced (blocks)</option><option value="audit">audit (records, allows)</option>
           </select>
+          <small class="help">{RULE_HELP.enforcement}</small>
         </label>
         <label>Protocol
           <select value={form().protocol} onChange={(e) => set({ protocol: e.currentTarget.value })}>
             <option value="">any protocol</option>
             <For each={['rest', 'http', 'websocket', 'graphql', 'mcp', 'jsonrpc', 'tcp']}>{(p) => <option value={p}>{p}</option>}</For>
           </select>
+          <small class="help">{RULE_HELP.protocol}</small>
         </label>
-        <label>Priority<input type="number" value={form().priority} onInput={(e) => set({ priority: e.currentTarget.value })} style="width:80px" /></label>
+        <label>Priority<input type="number" value={form().priority} onInput={(e) => set({ priority: e.currentTarget.value })} style="width:80px" />
+          <small class="help">{RULE_HELP.priority}</small></label>
       </div>
 
       <div>
         <strong class="small">Conditions</strong>
         <span class="muted small"> · all of them must match; for several methods or hosts, create one rule each</span>
+        <p class="help">{RULE_HELP.conditions}</p>
         <For each={form().matchers}>
           {(matcher, index) => (
             <div class="matcher-row">
@@ -126,6 +136,7 @@ export function NetworkRuleForm(props) {
                 />
               </Show>
               <button type="button" class="tiny" onClick={() => set({ matchers: form().matchers.filter((_, i) => i !== index()) })}>Remove</button>
+              <small class="help">{MATCHER_HELP[matcher.kind]}</small>
             </div>
           )}
         </For>
@@ -133,8 +144,10 @@ export function NetworkRuleForm(props) {
       </div>
 
       <div class="row">
-        <label>HTTP method (optional)<input value={form().method} onInput={(e) => set({ method: e.currentTarget.value })} placeholder="GET" /></label>
-        <label>Executable (optional)<input value={form().binary} onInput={(e) => set({ binary: e.currentTarget.value })} placeholder="/usr/bin/curl" /></label>
+        <label>HTTP method (optional)<input value={form().method} onInput={(e) => set({ method: e.currentTarget.value })} placeholder="GET" />
+          <small class="help">{RULE_HELP.method}</small></label>
+        <label>Executable (optional)<input value={form().binary} onInput={(e) => set({ binary: e.currentTarget.value })} placeholder="/usr/bin/curl" />
+          <small class="help">{RULE_HELP.binary}</small></label>
         <ScopePicker value={scope()} onChange={setScope} policies={props.policies} sandboxes={props.sandboxes} />
       </div>
 
@@ -174,9 +187,12 @@ export function DnsRuleForm(props) {
           <select value={form().action} onChange={(e) => set({ action: e.currentTarget.value })}>
             <option value="deny">deny (block the name)</option><option value="allow">allow</option>
           </select>
+          <small class="help">{DNS_HELP.action}</small>
         </label>
-        <label>Name or .suffix<input value={form().pattern} onInput={(e) => set({ pattern: e.currentTarget.value })} placeholder=".tracker.example" /></label>
-        <label>Priority<input type="number" value={form().priority} onInput={(e) => set({ priority: e.currentTarget.value })} style="width:80px" /></label>
+        <label>Name or .suffix<input value={form().pattern} onInput={(e) => set({ pattern: e.currentTarget.value })} placeholder=".tracker.example" />
+          <small class="help">{DNS_HELP.pattern}</small></label>
+        <label>Priority<input type="number" value={form().priority} onInput={(e) => set({ priority: e.currentTarget.value })} style="width:80px" />
+          <small class="help">{DNS_HELP.priority}</small></label>
         <ScopePicker value={scope()} onChange={setScope} policies={props.policies} sandboxes={props.sandboxes} />
       </div>
       <Show when={problem()}><p class="error">{problem()}</p></Show>
