@@ -41,6 +41,7 @@ supersedes the old one and note the supersession in both files.
 | [0031](0031-a-sandbox-is-reached-through-its-nodes-address.md) | A sandbox is reached through its node's address, never the container's | Accepted |
 | [0032](0032-the-stack-is-drawn-from-facts-and-helpers-link-themselves.md) | The stack diagram is arranged from facts, and a lone helper links itself | Accepted |
 | [0033](0033-published-ports-are-held-open-by-the-runner.md) | Published ports are held open by the runner, and SSH is answered by it | Accepted |
+| [0034](0034-the-proxy-identifies-by-address-and-asks-before-it-tunnels.md) | The proxy identifies a sandbox by its address, and asks before it tunnels | Accepted |
 
 ## Writing a new ADR
 

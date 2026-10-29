@@ -31,6 +31,16 @@ then un-terminate it. This is why the CA certificate ships in every sandbox imag
 trusted root). An image without it is a broken image, and the log shows the
 CONNECT with no readable request rather than pretending the request was empty.
 
+## Update (ADR 0034)
+
+The default HTTPS path is a *decided tunnel*, not the broker described below: the
+Lua filter asks the control API about a CONNECT (`check_tunnel` in `extensions/mcp.lua`)
+and refuses on anything but 200. Sandboxes are identified by `x-nestbox-source-ip`,
+which the filter sets from the socket after removing every `x-nestbox-*` header the
+client sent. The node id and token are written into `/tmp/envoy.yaml` and
+`/tmp/mcp.lua` by `start-egress-proxy.sh`. The broker and the loopback listener are
+kept for a deliberate TLS-reading mode.
+
 ## How a request flows
 
 ```text
