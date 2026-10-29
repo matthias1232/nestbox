@@ -6,6 +6,8 @@ import Tabs from '../../components/Tabs.jsx';
 import * as api from '../../api/policies.js';
 import * as sandboxApi from '../../api/sandboxes.js';
 import PolicyForm from './PolicyForm.jsx';
+import SandboxPicker from './SandboxPicker.jsx';
+import '../../styles/sandbox-hierarchy.css';
 import { DnsRuleForm, NetworkRuleForm } from './RuleForms.jsx';
 import { blankSpec } from './policyForms.js';
 
@@ -39,6 +41,9 @@ export default function PoliciesPage() {
   const [mode, setMode] = createSignal('form'); // form | json
   const [spec, setSpec] = createSignal(null);
   const [creating, setCreating] = createSignal(false);
+  // An open bulk panel: assigning a policy to several sandboxes, or copying a rule.
+  const [bulk, setBulk] = createSignal(null);
+  const [notice, setNotice] = createSignal(null);
   const [draft, setDraft] = createSignal({ name: '', scope: 'sandbox', template: '', spec: blankSpec() });
 
   onMount(load);
@@ -127,6 +132,38 @@ export default function PoliciesPage() {
     }
   }
 
+  async function cloneSelected() {
+    const name = window.prompt('Name of the copy', `${selected().name} (copy)`);
+    if (!name) return;
+    setError(null);
+    try {
+      const saved = await api.clonePolicy(selected().id, name);
+      setNotice(`Created “${saved.policy.name}”. Edit it, then assign it to sandboxes.`);
+      await load();
+    } catch (failure) {
+      setError(failure.message);
+    }
+  }
+
+  async function confirmBulk(ids, all) {
+    setError(null);
+    const panel = bulk();
+    try {
+      let result;
+      if (panel.kind === 'assign') {
+        result = await api.assignMany(panel.policy.id, ids);
+      } else {
+        result = await api.copyRules({ rule_ids: [panel.rule.id], to_sandbox_ids: ids, to_all: all });
+      }
+      const failed = result.failed?.length ? ` ${result.failed.length} failed: ${result.failed.map((f) => f[1]).join('; ')}` : '';
+      setNotice(`${result.done} done.${failed}`);
+      setBulk(null);
+      await load();
+    } catch (failure) {
+      setError(failure.message);
+    }
+  }
+
   async function decide(draft, approve) {
     setError(null);
     try {
@@ -153,6 +190,21 @@ export default function PoliciesPage() {
       </header>
 
       <Show when={error()}><p class="error">{error()}</p></Show>
+      <Show when={notice()}><p class="notice">{notice()}</p></Show>
+
+      <Show when={bulk()}>
+        <SandboxPicker
+          title={bulk().kind === 'assign' ? `Assign “${bulk().policy.name}” to sandboxes` : `Copy the rule for ${bulk().rule.host}`}
+          hint={bulk().kind === 'assign'
+            ? 'Each chosen sandbox gets this policy instead of the one it has. Network changes apply to running sandboxes within a minute.'
+            : 'A copy keeps the destination, ports, protocol, methods, programs and enforcement. Choose sandboxes, or all of them.'}
+          sandboxes={sandboxes()}
+          allowAll={bulk().kind === 'copy'}
+          confirmLabel={bulk().kind === 'assign' ? 'Assign' : 'Copy'}
+          onConfirm={confirmBulk}
+          onCancel={() => setBulk(null)}
+        />
+      </Show>
 
       <Show when={globalPolicy()}>
         <p class="notice">
@@ -240,6 +292,9 @@ export default function PoliciesPage() {
               </Show>
               <div class="actions">
                 <button onClick={save}>Validate and save</button>
+                <button class="secondary" title="Make a copy under a new name to edit" onClick={cloneSelected}>Clone…</button>
+                <button class="secondary" title="Give this policy to several sandboxes at once"
+                        onClick={() => setBulk({ kind: 'assign', policy: selected() })}>Assign to sandboxes…</button>
                 <button class="secondary" onClick={removeSelected}>Delete policy</button>
               </div>
               <Show when={outcome()}>
@@ -263,7 +318,7 @@ export default function PoliciesPage() {
             <table>
               <thead>
                 <tr><th>Action</th><th>Host</th><th class="narrow">Port</th>
-                    <th>Protocol</th><th>Enforcement</th><th>Binaries</th><th /></tr>
+                    <th>Protocol</th><th>Enforcement</th><th>Binaries</th><th>Applies to</th><th /></tr>
               </thead>
               <tbody>
                 <For each={rules()}>
@@ -275,7 +330,11 @@ export default function PoliciesPage() {
                       <td class="small">{rule.protocol}</td>
                       <td class="small">{rule.enforcement}</td>
                       <td class="mono small">{rule.binaries.join(', ') || 'any'}</td>
-                      <td><button class="tiny" onClick={async () => { await api.removeRule(rule.id); load(); }}>Delete</button></td>
+                      <td class="small">{rule.sandbox_id ? (sandboxes().find((x) => x.id === rule.sandbox_id)?.name || 'one sandbox') : 'every sandbox'}</td>
+                      <td>
+                        <button class="tiny" title="Copy to other sandboxes, or to all" onClick={() => setBulk({ kind: 'copy', rule })}>Copy…</button>
+                        <button class="tiny" onClick={async () => { await api.removeRule(rule.id); load(); }}>Delete</button>
+                      </td>
                     </tr>
                   )}
                 </For>

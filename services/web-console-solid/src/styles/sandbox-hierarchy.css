@@ -15,3 +15,6 @@ td .runtime-tag { white-space: nowrap; }
 .supervisor-tab ul.conditions, .supervisor-tab ul.rules { list-style: none; padding: 0; margin: .5rem 0 0; }
 .supervisor-tab ul.rules li { margin-bottom: .5rem; }
 .supervisor-tab pre.log { max-height: 20rem; overflow: auto; font-size: .75rem; margin: 0; white-space: pre-wrap; }
+.sandbox-picker .picker-list { max-height: 14rem; overflow: auto; border: 1px solid var(--border, #333); border-radius: 6px; margin: .5rem 0; }
+.sandbox-picker .picker-row { display: flex; gap: .75rem; align-items: center; padding: .35rem .6rem; border-bottom: 1px solid var(--border, #2a2a2a); }
+.sandbox-picker .pf-field.inline { display: flex; gap: .5rem; align-items: center; }
