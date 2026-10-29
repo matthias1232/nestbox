@@ -57,9 +57,12 @@ CACHE_LIMIT = 128
 _CACHE: dict[tuple[str, str, str], tuple[float, dict[str, Any]]] = {}
 
 SEARCH_SCRIPT = {
+    # `APT::Sandbox::User=root` keeps apt from chowning its lists to `_apt`,
+    # which needs CAP_CHOWN. The container has every capability dropped, and a
+    # catalogue read is not worth handing one back for.
     "apt": (
         "export DEBIAN_FRONTEND=noninteractive; "
-        'apt-get update -qq >/dev/null 2>&1 || exit 3; '
+        'apt-get -o APT::Sandbox::User=root update -qq >/dev/null 2>&1 || exit 3; '
         'apt-cache search --names-only "$NESTBOX_QUERY"'
     ),
     "dnf": 'dnf -q --refresh list --available "$NESTBOX_QUERY*"',
