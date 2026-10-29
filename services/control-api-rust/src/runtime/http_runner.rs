@@ -290,6 +290,12 @@ impl RuntimeAdapter for HttpRunner {
         .await
     }
 
+    async fn process_action(&self, name: &str, pid: i64, action: &str, nice: Option<i8>) -> Result<(), RuntimeError> {
+        let payload = serde_json::json!({"action": action, "nice": nice});
+        let _: serde_json::Value = self.send(reqwest::Method::POST, &format!("/v1/sandboxes/{name}/processes/{pid}/action"), Some(&payload)).await?;
+        Ok(())
+    }
+
     async fn inventory(&self, name: &str) -> Result<InventoryProbe, RuntimeError> {
         /// The runner's envelope: its own name for the sandbox, the moment, the
         /// sections, and why a snapshot may be partial.
