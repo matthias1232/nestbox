@@ -150,7 +150,15 @@ def poster_loop(url: str, token: str, interval: float = SAMPLE_INTERVAL_SECONDS)
     while True:
         started = time.monotonic()
         try:
-            samples = [sample(name) for name in managed_sandboxes()]
+            # One sample at a time: a stopped or vanished sandbox raises, and a
+            # list comprehension would throw away every other sandbox's sample
+            # with it (which is how the sampler reported nothing at all).
+            samples = []
+            for name in managed_sandboxes():
+                try:
+                    samples.append(sample(name))
+                except Exception:  # noqa: BLE001, S112
+                    continue
             if samples:
                 body = json.dumps({"samples": samples}).encode()
                 request = urllib.request.Request(

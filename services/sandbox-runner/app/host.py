@@ -151,20 +151,24 @@ def change_resources(name: str, body: ResourceChange) -> dict[str, Any]:
         container = client.containers.get(f"{PREFIX}{name}")
     except NotFound as exc:
         raise HTTPException(404, "sandbox not found") from exc
+    # The Docker SDK's `update()` has no NanoCpus or PidsLimit, and a container
+    # created with NanoCpus refuses a CPU quota instead, so the engine's own update
+    # call is used directly with the same field names the engine documents.
     changes: dict[str, Any] = {}
     if body.memory_bytes is not None:
         # Memory and memory+swap are set together: Docker refuses a memory limit
         # above the existing swap limit, and a sandbox has no swap.
-        changes["mem_limit"] = body.memory_bytes
-        changes["memswap_limit"] = body.memory_bytes
+        changes["Memory"] = body.memory_bytes
+        changes["MemorySwap"] = body.memory_bytes
     if body.cpus is not None:
-        changes["nano_cpus"] = int(body.cpus * 1_000_000_000)
+        changes["NanoCpus"] = int(body.cpus * 1_000_000_000)
     if body.pids_limit is not None:
-        changes["pids_limit"] = body.pids_limit
+        changes["PidsLimit"] = body.pids_limit
     if not changes:
         raise HTTPException(422, "nothing to change")
     try:
-        container.update(**changes)
+        response = client.api.post(client.api._url("/containers/{0}/update", container.id), json=changes)  # noqa: SLF001
+        client.api._raise_for_status(response)  # noqa: SLF001
     except APIError as exc:
         raise HTTPException(409, f"Docker refused the change: {exc.explanation or exc}") from exc
     container.reload()
