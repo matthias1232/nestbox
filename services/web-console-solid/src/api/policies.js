@@ -64,3 +64,52 @@ export function openWindow(sandboxId, minutes, reason) {
 export function closeWindow(id) {
   return request(`traffic-windows/${id}`, { method: 'DELETE' });
 }
+
+// The sections and fields a policy document may contain; the forms render from this.
+export function schema() {
+  return request('policy-schema');
+}
+
+export function templates() {
+  return request('policy-templates');
+}
+
+export function instantiateTemplate(id, assignTo = null) {
+  return request(`policy-templates/${id}/instantiate`, { method: 'POST', body: { assign_to: assignTo } });
+}
+
+export function dnsRules() {
+  return request('dns-rules');
+}
+
+export function createDnsRule(body) {
+  return request('dns-rules', { method: 'POST', body });
+}
+
+export function removeDnsRule(id) {
+  return request(`dns-rules/${id}`, { method: 'DELETE' });
+}
+
+export function sandboxPolicy(sandboxId) {
+  return request(`sandboxes/${sandboxId}/policy`);
+}
+
+export function assignPolicy(sandboxId, policyId) {
+  return request(`sandboxes/${sandboxId}/policy`, { method: 'PUT', body: { policy_id: policyId } });
+}
+
+export function unassignPolicy(sandboxId) {
+  return request(`sandboxes/${sandboxId}/policy`, { method: 'DELETE' });
+}
+
+export function sandboxRules(sandboxId) {
+  return request(`sandboxes/${sandboxId}/rules`);
+}
+
+export function egressMode(sandboxId) {
+  return request(`sandboxes/${sandboxId}/egress-mode`);
+}
+
+export function setEgressMode(sandboxId, mode) {
+  return request(`sandboxes/${sandboxId}/egress-mode`, { method: 'PUT', body: { mode } });
+}

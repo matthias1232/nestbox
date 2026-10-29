@@ -112,6 +112,20 @@ local function classify(body)
 end
 
 function envoy_on_request(handle)
+  -- Who is asking is the connection's address, not anything the client wrote.
+  -- Any `x-nestbox-*` header the sandbox sent is removed first, then the source
+  -- address is set from the socket, so a sandbox cannot claim to be another.
+  local request_headers = handle:headers()
+  request_headers:remove("x-nestbox-sandbox")
+  request_headers:remove("x-nestbox-sandbox-id")
+  request_headers:remove("x-nestbox-node")
+  request_headers:remove("x-nestbox-node-token")
+  request_headers:remove("x-nestbox-source-ip")
+  local peer = handle:streamInfo():downstreamDirectRemoteAddress()
+  if peer then
+    local address = string.match(peer, "^(.-):%d+$") or peer
+    request_headers:add("x-nestbox-source-ip", address)
+  end
   local headers = handle:headers()
 
   local host, port = split_authority(headers:get(":authority"))

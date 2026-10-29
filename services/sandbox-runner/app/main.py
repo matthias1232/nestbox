@@ -23,6 +23,7 @@ from app import stats as resource_stats
 from app import terminal as terminal_transport
 from app import forwards as published_ports
 from app import system as appliance_components
+from app import telemetry_shipper
 
 app = FastAPI(title="Nestbox Sandbox Runtime", version="1.0.0")
 client = docker.from_env()
@@ -59,6 +60,10 @@ async def restore_published_ports() -> None:
     unreachable until something pushed its forwards again.
     """
     await published_ports.manager.restore()
+    # The proxy's decisions are only visible once something reads its log.
+    import asyncio
+
+    asyncio.create_task(telemetry_shipper.run())
 NETWORK = os.getenv("NESTBOX_RUNTIME_NETWORK", "nestbox-runtime")
 # The only way out of a sandbox. It is joined to the sandbox network by this
 # adapter rather than by compose, because this adapter is what creates that

@@ -44,6 +44,41 @@ pub struct SandboxScope {
     pub node_id: Uuid,
 }
 
+/// The sandbox with this name, if one exists in any environment.
+///
+/// Used to turn "the container at 172.30.0.5" into a sandbox row: the runner
+/// knows addresses and names, the database knows ids. Names are unique within an
+/// environment, and the appliance has one, so the first match is the answer.
+pub async fn sandbox_id_by_name(
+    pool: &sqlx::PgPool,
+    name: &str,
+) -> Result<Option<Uuid>, StoreError> {
+    let candidates: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM environments ORDER BY created_at, id")
+            .fetch_all(pool)
+            .await?;
+    for environment_id in candidates {
+        let mut tx = pool.begin().await?;
+        sqlx::query("SELECT set_config('app.environment_id', $1, true)")
+            .bind(environment_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        let found: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM sandboxes
+              WHERE environment_id = $1 AND name = $2 AND status <> 'deleted'",
+        )
+        .bind(environment_id)
+        .bind(name)
+        .fetch_optional(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        if found.is_some() {
+            return Ok(found);
+        }
+    }
+    Ok(None)
+}
+
 /// Resolve the tenant and the node of one sandbox.
 ///
 /// This is the one read a node-authenticated decision cannot avoid doing before
