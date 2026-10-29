@@ -251,6 +251,8 @@ services:
       # so a bind source the runner validates is the path Docker mounts.
       - /var/lib/nestbox/persistent:/var/lib/nestbox/persistent
       - /var/lib/nestbox/models:/var/lib/nestbox/models
+      # Backups of persistent roots: one tar.gz each, written and read only by the runner.
+      - /var/lib/nestbox/backups:/var/lib/nestbox/backups
       - /proc:/host/proc:ro
       - ./secrets/node:/run/node:ro
       # The client bundle for the OpenShell gateway on the host (written by

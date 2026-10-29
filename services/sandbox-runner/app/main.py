@@ -25,6 +25,7 @@ from app import forwards as published_ports
 from app import system as appliance_components
 from app import telemetry_shipper
 from app import host as host_load
+from app import backups as root_backups
 from app import openshell_backend as osh
 from app.workload import get_container, list_workloads, openshell_name, sandbox_name
 
@@ -54,6 +55,7 @@ app.include_router(terminal_transport.router)
 app.include_router(published_ports.router)
 app.include_router(appliance_components.router)
 app.include_router(host_load.router)
+app.include_router(root_backups.router)
 
 
 def adopt_restart_policy() -> None:

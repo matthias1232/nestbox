@@ -68,6 +68,9 @@ pub struct FakeRuntime {
     /// them, so a test can assert what the service asked for.
     models: Mutex<BTreeMap<String, ModelServe>>,
     downloads: Mutex<Vec<ModelDownload>>,
+    /// Backup calls as `(verb, backup_id, root_path)`, so a test can assert what was
+    /// asked of the node.
+    backups: Mutex<Vec<(String, String, String)>>,
     /// What the control plane asked the runner to hold open, by sandbox, with
     /// the public keys sent alongside.
     forwards: Mutex<BTreeMap<String, (Vec<ForwardRequest>, Vec<String>)>>,
@@ -77,6 +80,11 @@ pub struct FakeRuntime {
 }
 
 impl FakeRuntime {
+    /// The backup calls made so far.
+    pub fn backup_calls(&self) -> Vec<(String, String, String)> {
+        lock(&self.backups).clone()
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -431,6 +439,27 @@ impl RuntimeAdapter for FakeRuntime {
 
     async fn clear_forwards(&self, name: &str) -> Result<(), RuntimeError> {
         lock(&self.forwards).remove(name);
+        Ok(())
+    }
+
+    async fn backup_create(&self, root_path: &str, backup_id: &str) -> Result<(i64, String), RuntimeError> {
+        lock(&self.backups).push(("create".into(), backup_id.into(), root_path.into()));
+        Ok((4096, "ab".repeat(32)))
+    }
+
+    async fn backup_restore(
+        &self,
+        backup_id: &str,
+        root_path: &str,
+        _sha256: &str,
+        replace: bool,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        lock(&self.backups).push((if replace { "restore-replace" } else { "restore" }.into(), backup_id.into(), root_path.into()));
+        Ok(serde_json::json!({ "restored": 3, "previous_content_kept_at": null }))
+    }
+
+    async fn backup_delete(&self, backup_id: &str) -> Result<(), RuntimeError> {
+        lock(&self.backups).push(("delete".into(), backup_id.into(), String::new()));
         Ok(())
     }
 

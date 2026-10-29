@@ -8,6 +8,7 @@
 import { For, Show } from 'solid-js';
 import Drawer from '../../components/Drawer.jsx';
 import { usageLabel } from './usePersistent.js';
+import BackupsSection from './BackupsSection.jsx';
 
 export default function PersistentDetail(props) {
   const root = () => props.root;
@@ -145,6 +146,8 @@ export default function PersistentDetail(props) {
           </p>
         </Show>
       </Show>
+
+      <BackupsSection root={root()} />
 
       <h3>Archive or delete</h3>
       <p class="muted small">
