@@ -482,6 +482,51 @@ pub async fn inference_environment(
     Ok(environment)
 }
 
+/// The environment for a pack, by what it speaks.
+///
+/// The agents (Hermes, Claude Code, OpenCode, OpenChamber) use the OmniRoute profile
+/// when there is one that has answered and has a credential: it answers both the
+/// Anthropic and the OpenAI API with a capable model, which a small local model does
+/// not. Without one, Hermes falls back to the closest OpenAI-shaped endpoint (a model
+/// on this node first, see `select_inference_profile`) and the coding agents get
+/// nothing. A pack that needs none gets nothing.
+pub async fn environment_for_pack(
+    ctx: &ServiceContext,
+    environment_id: Uuid,
+    pack_key: &str,
+) -> Result<BTreeMap<String, String>, ApiError> {
+    match pack_key {
+        "hermes" | "claude-code" | "opencode" | "openchamber" => {
+            let mut scope = TenantScope::begin(&ctx.pool, environment_id)
+                .await
+                .map_err(ApiError::from)?;
+            let profiles = store::list(&mut scope).await.map_err(ApiError::from)?;
+            scope.commit().await.map_err(ApiError::from)?;
+            let Some(profile) = profiles
+                .iter()
+                .find(|p| p.kind == ProviderKind::Omniroute && p.status == ProviderStatus::Reachable && p.secret_ref.is_some())
+            else {
+                // No gateway: Hermes falls back to the closest endpoint (a model on
+                // this node); the coding agents have nothing to talk to.
+                return if pack_key == "hermes" {
+                    inference_environment(ctx, environment_id).await
+                } else {
+                    Ok(BTreeMap::new())
+                };
+            };
+            let key = match profile.secret_ref.as_deref().map(|locator| secrets::resolve(locator, &ctx.secret_dir)) {
+                Some(Ok(value)) => value,
+                _ => {
+                    tracing::warn!(provider = %profile.name, "gateway credential could not be resolved; sandbox gets no endpoint");
+                    return Ok(BTreeMap::new());
+                }
+            };
+            Ok(crate::domain::agent_config::gateway_environment(&profile.endpoint, profile.model.as_deref(), &key))
+        }
+        _ => Ok(BTreeMap::new()),
+    }
+}
+
 /// Reject a locator this phase cannot resolve, at write time.
 fn validate_locator(locator: &str) -> Result<(), ApiError> {
     if !locator.starts_with("file://") {

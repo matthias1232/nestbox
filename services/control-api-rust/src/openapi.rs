@@ -86,6 +86,7 @@ pub const OPERATIONS: &[Operation] = &[
     op("DELETE", "/api/v1/sandboxes/{id}/ssh-credentials/{credential}", "Revoke a temporary login", "sandboxes", "operator", true, StreamKind::None),
     op("PUT", "/api/v1/sandboxes/{id}/resources", "Change a sandbox's memory, CPU and process limits, live when it runs", "sandboxes", "operator", true, StreamKind::None),
     op("GET", "/api/v1/host/load", "CPU, memory, disk and promised resources of the host", "system", "viewer", false, StreamKind::None),
+    op("POST", "/api/v1/sandboxes/{id}/agent-config", "Write the agent's configuration (model endpoint, proxy) into a running sandbox", "sandboxes", "operator", true, StreamKind::None),
     op("PUT", "/api/v1/nodes/{id}/endpoint", "Set the address and hostname clients dial on a node", "nodes", "admin", true, StreamKind::None),
     op("PUT", "/api/v1/sandboxes/{id}/stack", "Put a sandbox into a stack or take it out", "sandboxes", "operator", true, StreamKind::None),
     op("GET", "/api/v1/sandboxes/{id}/rules", "Network rules attached to a sandbox", "policies", "viewer", false, StreamKind::None),

@@ -309,7 +309,7 @@ pub fn health_from_runtime(facts: &crate::domain::runtime::RuntimeFacts) -> Sand
 /// to change when a second agent pack arrives, and so the test suite can assert
 /// the list deliberately.
 pub fn pack_needs_inference(pack_key: &str) -> bool {
-    matches!(pack_key, "hermes")
+    matches!(pack_key, "hermes" | "claude-code" | "opencode" | "openchamber")
 }
 
 /// The proxy URL used when a node does not name one.
@@ -356,6 +356,12 @@ pub fn add_inference_bypass(environment: &mut BTreeMap<String, String>) {
         .next()
         .unwrap_or("")
         .to_string();
+    // Only a container on the sandbox network (a bare name such as `model-qwen`)
+    // is kept off the proxy. A gateway with a dotted name or an address is egress:
+    // it goes through the proxy, where it is decided and logged like everything else.
+    if host.contains('.') || host.contains(':') {
+        return;
+    }
     add_host_bypass(environment, &host);
 }
 
@@ -634,9 +640,10 @@ pub async fn create(
     // locator at this moment and never stored (ADR 0005), so recreating the
     // sandbox picks up a rotated key without an edit here.
     let mut environment = if pack_needs_inference(&sandbox.pack_key) {
-        match crate::services::provider_service::inference_environment(
+        match crate::services::provider_service::environment_for_pack(
             ctx,
             principal.environment_id,
+            &sandbox.pack_key,
         )
         .await
         {
@@ -674,8 +681,14 @@ pub async fn create(
         gpu_count: 0,
     };
 
+    let configured_environment: BTreeMap<String, String> =
+        runtime_spec.environment.iter().cloned().collect();
     match ctx.runtime.create(runtime_spec).await {
         Ok(facts) => {
+            // The agent starts already connected: its own config files are written
+            // before anyone opens a shell. Best effort; a failure is logged and the
+            // environment still carries the same facts.
+            apply_agent_files(ctx, &sandbox.name, &sandbox.pack_key, &configured_environment).await;
             let health = health_from_runtime(&facts);
             let updated = set_status(
                 ctx,
@@ -1024,8 +1037,22 @@ mod tests {
     #[test]
     fn only_agent_packs_receive_an_inference_environment() {
         assert!(pack_needs_inference("hermes"));
+        assert!(pack_needs_inference("claude-code") && pack_needs_inference("opencode") && pack_needs_inference("openchamber"));
         assert!(!pack_needs_inference("ubuntu-dev"));
         assert!(!pack_needs_inference("openclaw"));
+    }
+
+    #[test]
+    fn a_gateway_with_an_address_goes_through_the_proxy_not_around_it() {
+        use std::collections::BTreeMap;
+        let mut environment: BTreeMap<String, String> = [
+            ("OPENAI_BASE_URL".to_string(), "http://10.90.92.30:20128/v1".to_string()),
+            ("NO_PROXY".to_string(), "localhost,egress-proxy".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        add_inference_bypass(&mut environment);
+        assert_eq!(environment.get("NO_PROXY").map(String::as_str), Some("localhost,egress-proxy"));
     }
 
     #[test]
@@ -1288,4 +1315,69 @@ pub async fn host_load(ctx: &ServiceContext, principal: &Principal) -> Result<se
         Ok(Err(error)) => Err(ApiError::internal("The runner did not report the host's load.").with_internal(error.to_string())),
         Err(_) => Err(ApiError::internal("The runner did not answer in time.")),
     }
+}
+
+
+/// Write an agent's configuration files into a running sandbox.
+///
+/// The content is passed base64-encoded as an argument of a fixed script, so no
+/// value from the files can become shell syntax. Each file is written for the
+/// sandbox user's home (`$HOME`), and an existing file is replaced: this is the
+/// control plane's configuration, and re-applying it is how a changed model or
+/// proxy reaches an agent.
+pub async fn apply_agent_files(
+    ctx: &ServiceContext,
+    sandbox_name: &str,
+    pack_key: &str,
+    environment: &BTreeMap<String, String>,
+) -> usize {
+    use base64::Engine;
+    let files = crate::domain::agent_config::files_for(pack_key, environment);
+    let mut written = 0;
+    for file in &files {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(file.content.as_bytes());
+        let command = vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "target=\"$HOME/$1\"; mkdir -p \"$(dirname \"$target\")\" && printf %s \"$2\" | base64 -d > \"$target\"".to_string(),
+            "sh".to_string(),
+            file.path.clone(),
+            encoded,
+        ];
+        match ctx.runtime.exec(sandbox_name, &command, 20).await {
+            Ok(result) if result.exit_code == Some(0) => written += 1,
+            Ok(result) => tracing::warn!(sandbox = sandbox_name, path = %file.path, exit = ?result.exit_code, "agent config not written"),
+            Err(error) => tracing::warn!(sandbox = sandbox_name, path = %file.path, error = %error, "agent config not written"),
+        }
+    }
+    written
+}
+
+/// Re-apply an agent's configuration to an existing sandbox (a changed model, a
+/// sandbox from before the files existed).
+pub async fn reconfigure_agent(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    id: Uuid,
+) -> Result<serde_json::Value, ApiError> {
+    require(principal, Permission::SandboxWrite)?;
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let sandbox = store::get(&mut scope, id).await.map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    if sandbox.status != SandboxStatus::Running {
+        return Err(ApiError::conflict(
+            ErrorCode::SANDBOX_INVALID_STATE,
+            "Configuration is written into a running sandbox; start it first.",
+        ));
+    }
+    let mut environment: BTreeMap<String, String> =
+        crate::services::provider_service::environment_for_pack(ctx, principal.environment_id, &sandbox.pack_key)
+            .await?
+            .into_iter()
+            .collect();
+    environment.extend(egress_environment(&egress_proxy_url()));
+    let written = apply_agent_files(ctx, &sandbox.name, &sandbox.pack_key, &environment).await;
+    Ok(serde_json::json!({ "files_written": written }))
 }
