@@ -1381,3 +1381,98 @@ pub async fn reconfigure_agent(
     let written = apply_agent_files(ctx, &sandbox.name, &sandbox.pack_key, &environment).await;
     Ok(serde_json::json!({ "files_written": written }))
 }
+
+
+/// Recreate a sandbox's container with the mounts the database now says it has.
+///
+/// A bind mount is fixed when a container is created, and Docker cannot add or
+/// remove one on a running container, so "mount it live" is: replace the
+/// container with a new one that has the right binds. What survives is everything
+/// on a persistent root and the sandbox's identity (name, ports, keys, policy,
+/// stack, history). What does not is anything written *outside* a persistent root
+/// inside the old container (installed packages, a home that was never mounted).
+/// The console says so before it asks.
+///
+/// Only a sandbox created from a pack's own image can be recreated this way: a
+/// recipe sandbox's entrypoint is generated at build time and is not reproduced
+/// here, so recreating it would start something else.
+pub async fn recreate(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    id: Uuid,
+) -> Result<serde_json::Value, ApiError> {
+    require(principal, Permission::SandboxWrite)?;
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let sandbox = store::get(&mut scope, id).await.map_err(ApiError::from)?;
+    if sandbox.image.starts_with("nestbox-recipe/") {
+        return Err(ApiError::conflict(
+            ErrorCode::SANDBOX_INVALID_STATE,
+            "This sandbox was built from a recipe; its entrypoint is generated at build time, so it cannot be recreated here. Rebuild it from its recipe instead.",
+        ));
+    }
+    let defaults = pack_service::pack_defaults(&mut scope, &sandbox.pack_key, None).await?;
+    let mounts = crate::services::persist_service::mount_specs_for_sandbox(&mut scope, sandbox.id).await?;
+    let memory_limit = sandbox
+        .spec
+        .get("memory_limit")
+        .and_then(|value| value.as_str())
+        .unwrap_or("1g")
+        .to_string();
+    let cpu_limit = sandbox.spec.get("cpu_limit").and_then(|value| value.as_f64()).unwrap_or(1.0);
+    let pids_limit = sandbox.spec.get("pids_limit").and_then(|value| value.as_i64()).unwrap_or(256);
+    crate::store::postgres::audit::record(
+        &mut scope,
+        crate::store::postgres::audit::NewAuditEvent {
+            actor_id: Some(principal.user_id),
+            actor_label: &principal.display_name,
+            kind: "sandbox.recreate",
+            subject_type: Some("sandbox"),
+            subject_id: Some(id),
+            detail: &serde_json::json!({ "mounts": mounts.len() }),
+            request_id: None,
+        },
+    )
+    .await
+    .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+
+    let mut environment: Vec<(String, String)> =
+        crate::services::provider_service::environment_for_pack(ctx, principal.environment_id, &sandbox.pack_key)
+            .await
+            .map(|values| values.into_iter().collect())
+            .unwrap_or_default();
+    environment.extend(egress_environment(&egress_proxy_url()));
+    add_inference_bypass_vec(&mut environment);
+    let configured: BTreeMap<String, String> = environment.iter().cloned().collect();
+
+    if let Err(error) = ctx.runtime.remove(&sandbox.name).await {
+        tracing::warn!(sandbox = %sandbox.name, error = %error, "remove before recreate failed; continuing");
+    }
+    let spec = SandboxSpec {
+        name: sandbox.name.clone(),
+        image: sandbox.image.clone(),
+        command: defaults.command,
+        environment,
+        pack_key: sandbox.pack_key.clone(),
+        tool_profile: String::new(),
+        memory_limit,
+        cpu_limit,
+        pids_limit,
+        mounts: mounts.clone(),
+        gpu_count: 0,
+    };
+    match ctx.runtime.create(spec).await {
+        Ok(facts) => {
+            apply_agent_files(ctx, &sandbox.name, &sandbox.pack_key, &configured).await;
+            let _ = set_status(ctx, principal, sandbox.id, sandbox.version, SandboxStatus::Running, health_from_runtime(&facts)).await;
+            Ok(serde_json::json!({ "recreated": true, "mounts": mounts.len() }))
+        }
+        Err(error) => {
+            tracing::error!(sandbox = %sandbox.name, error = %error, "recreate failed");
+            let _ = set_status(ctx, principal, sandbox.id, sandbox.version, SandboxStatus::Failed, SandboxHealth::Unhealthy).await;
+            Err(ApiError::internal("The sandbox could not be recreated; its container is gone. Start it again or recreate once more.").with_internal(error.to_string()))
+        }
+    }
+}
