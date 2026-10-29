@@ -822,6 +822,26 @@ pub async fn connect(
     require(principal, Permission::SandboxRead)?;
     let sandbox = load_sandbox(ctx, principal, sandbox_id).await?;
 
+    // A sandbox created before ports were published has no key and no forwards.
+    // "A sandbox never exists without a way in" is a promise of `provision`, so a
+    // reader who is allowed to write gives it one here, once; a viewer only sees
+    // that nothing is published yet. Best effort: the panel must still render.
+    if require(principal, Permission::SandboxWrite).is_ok() {
+        let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+            .await
+            .map_err(ApiError::from)?;
+        let none_yet = store::list_forwards(&mut scope, sandbox.id)
+            .await
+            .map_err(ApiError::from)?
+            .is_empty();
+        scope.commit().await.map_err(ApiError::from)?;
+        if none_yet {
+            if let Err(error) = provision(ctx, principal, &sandbox).await {
+                tracing::warn!(sandbox = %sandbox.name, code = error.code.0, "late provisioning failed");
+            }
+        }
+    }
+
     let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
         .await
         .map_err(ApiError::from)?;
