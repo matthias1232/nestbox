@@ -58,6 +58,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/auth/login", post(auth::login))
         .route("/api/v1/auth/logout", post(auth::logout))
         .route("/api/v1/auth/me", get(auth::me))
+        .route("/api/v1/auth/csrf", post(auth::csrf))
         // Environments
         .route("/api/v1/users", get(users::list).post(users::create))
         .route("/api/v1/users/{id}", axum::routing::put(users::update).delete(users::remove))

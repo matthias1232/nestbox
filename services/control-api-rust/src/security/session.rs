@@ -78,6 +78,11 @@ fn random_token() -> String {
 
 /// The cookie name for the session.
 pub const SESSION_COOKIE: &str = "nestbox_session";
+/// A new CSRF token, for a session that lost its own.
+pub fn issue_csrf_token() -> String {
+    random_token()
+}
+
 /// The header carrying the CSRF token on a mutating request.
 pub const CSRF_HEADER: &str = "x-csrf-token";
 

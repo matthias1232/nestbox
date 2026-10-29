@@ -1155,6 +1155,18 @@ def logs(name: str, tail: int = 200) -> dict[str, str | int]:
         raise HTTPException(422, "tail must be between 1 and 1000")
     try:
         container = get_container(client, name)
-        return {"name": name, "tail": tail, "logs": container.logs(tail=tail, timestamps=True).decode(errors="replace")}
+        agent = container.logs(tail=tail, timestamps=True).decode(errors="replace")
+        if not openshell_name(container.name):
+            return {"name": name, "tail": tail, "logs": agent}
+        # An OpenShell workload usually prints little itself; what happened to it is in the
+        # supervisor's and the gateway's log. One list, oldest first, each line tagged.
+        try:
+            shell = osh.run(["logs", name, "-n", str(tail), "--source", "all"], timeout=20)
+        except osh.OpenShellError as exc:
+            shell = ""
+            logger.warning("could not read the OpenShell log of %s: %s", name, exc)
+        from app import log_merge
+
+        return {"name": name, "tail": tail, "logs": log_merge.merge(agent, shell, tail)}
     except NotFound as exc:
         raise HTTPException(404, "sandbox not found") from exc

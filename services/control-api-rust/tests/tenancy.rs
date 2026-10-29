@@ -327,3 +327,36 @@ async fn telemetry_rules_and_supervisors_follow_the_sandbox_they_belong_to() {
     assert!(nestbox_control_api::services::audit_service::list(&ctx, &admin, 10).await.is_ok());
     assert!(nestbox_control_api::services::secret_service::list(&ctx, &uma).await.is_err());
 }
+
+#[tokio::test]
+async fn a_live_session_gets_a_new_csrf_token_and_the_old_one_stops_working() {
+    let Some(owner_pool) = connect().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+    use nestbox_control_api::security::session;
+    use nestbox_control_api::services::auth_service;
+    let admin_id = user(&owner_pool).await;
+    let issued = session::issue();
+    sqlx::query(
+        "INSERT INTO sessions (user_id, token_hash, csrf_hash, expires_at, idle_deadline)
+         VALUES ($1, $2, $3, now() + interval '1 hour', now() + interval '1 hour')",
+    )
+    .bind(admin_id)
+    .bind(&issued.token_hash)
+    .bind(&issued.csrf_hash)
+    .execute(&owner_pool)
+    .await
+    .expect("session");
+
+    let fresh = auth_service::rotate_csrf(&owner_pool, &issued.token).await.expect("rotate");
+    assert_ne!(fresh, issued.csrf_token);
+    let stored: String = sqlx::query_scalar("SELECT csrf_hash FROM sessions WHERE token_hash = $1")
+        .bind(&issued.token_hash)
+        .fetch_one(&owner_pool)
+        .await
+        .expect("hash");
+    assert!(auth_service::verify_csrf(&fresh, &stored).is_ok(), "the new token is accepted");
+    assert!(auth_service::verify_csrf(&issued.csrf_token, &stored).is_err(), "the old one is not");
+    assert!(auth_service::rotate_csrf(&owner_pool, "no-such-session-token").await.is_err());
+}

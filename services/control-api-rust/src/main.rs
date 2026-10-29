@@ -105,6 +105,11 @@ async fn main() {
                     tracing::warn!(code = error.code.0, message = %error.message, "OpenShell event pull failed");
                 }
                 if let Err(error) =
+                    nestbox_control_api::services::mcp_service::check_attached(&services).await
+                {
+                    tracing::debug!(code = error.code.0, "mcp health check skipped");
+                }
+                if let Err(error) =
                     nestbox_control_api::services::gateway_service::ensure_supervisors(&services).await
                 {
                     tracing::debug!(code = error.code.0, "supervisor sync skipped");
