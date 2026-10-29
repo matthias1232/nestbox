@@ -30,8 +30,9 @@ use nestbox_control_api::domain::auth::{CredentialSource, Principal, Role};
 use nestbox_control_api::domain::mcp::McpStatus;
 use nestbox_control_api::domain::metrics::{InventoryProbe, ProcessTable};
 use nestbox_control_api::domain::runtime::{
-    ModelDownload, ModelDownloadResult, ModelServe, ModelServeResult,
-    BuildRequest, BuildResult, ExecResult, HardwareReport, RuntimeFacts, SandboxSpec,
+    CatalogueAnswer, CatalogueRequest, ImageVerification, ModelDownload, ModelDownloadResult,
+    ModelServe, ModelServeResult, BuildRequest, BuildResult, ExecResult, HardwareReport,
+    RuntimeFacts, SandboxSpec, VerificationAnswer,
 };
 use nestbox_control_api::error::ErrorCode;
 use nestbox_control_api::runtime::{BoxTerminal, RuntimeAdapter, RuntimeError};
@@ -243,6 +244,17 @@ impl RuntimeAdapter for AnsweringRuntime {
         _nice: Option<i8>,
     ) -> Result<(), RuntimeError> {
         Err(RuntimeError::NotFound(name.to_string()))
+    }
+
+    async fn catalogue(&self, _request: CatalogueRequest) -> Result<CatalogueAnswer, RuntimeError> {
+        Ok(CatalogueAnswer::default())
+    }
+
+    async fn verify_image(
+        &self,
+        _request: ImageVerification,
+    ) -> Result<VerificationAnswer, RuntimeError> {
+        Ok(VerificationAnswer::default())
     }
 
     async fn open_terminal(&self, _name: &str, _tab_id: &str) -> Result<BoxTerminal, RuntimeError> {
