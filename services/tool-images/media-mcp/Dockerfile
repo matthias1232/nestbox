@@ -1,12 +1,12 @@
 # The media MCP server: render image/video/music, over HTTP.
-
-HTTP, not stdio, for the same reason as the Nestbox hub: an HTTP MCP server is
-reached through the sandbox's egress proxy, so every `tools/call` appears in the
-traffic log with a tool name, its redacted arguments and a duration. A stdio
-server would be invisible by construction.
-
-Standard library only. This image has no package manager step, so a rebuild
-cannot be affected by a registry outage or a hijacked dependency.
+#
+# HTTP, not stdio, for the same reason as the Nestbox hub: an HTTP MCP server is
+# reached through the sandbox's egress proxy, so every `tools/call` appears in the
+# traffic log with a tool name, its redacted arguments and a duration. A stdio
+# server would be invisible by construction.
+#
+# Standard library only. This image has no package manager step, so a rebuild
+# cannot be affected by a registry outage or a hijacked dependency.
 
 FROM python:3.12-slim
 
