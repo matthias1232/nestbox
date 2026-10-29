@@ -504,7 +504,7 @@ pub async fn environment_for_pack(
         if let Ok(token) = std::fs::read_to_string(ctx.secret_dir.join("mcp_hub_token")) {
             let token = token.trim();
             if !token.is_empty() {
-                environment.insert("NESTBOX_MCP_URL".into(), "http://mcp-hub:8080/mcp".into());
+                environment.insert("NESTBOX_MCP_URL".into(), mcp_hub_url());
                 environment.insert("NESTBOX_MCP_TOKEN".into(), token.to_string());
             }
         }
@@ -697,5 +697,14 @@ mod tests {
             assert_eq!(ProviderStatus::parse(status.as_str()), Some(status));
         }
         assert_eq!(ProviderStatus::parse("something"), None);
+    }
+}
+
+/// Where an agent reaches the Nestbox MCP hub. A deployment sets it when the hub
+/// is not reachable as `mcp-hub` (an OpenShell supervisor cannot resolve that name).
+pub fn mcp_hub_url() -> String {
+    match std::env::var("NESTBOX_MCP_HUB_URL") {
+        Ok(value) if !value.trim().is_empty() => value.trim().to_string(),
+        _ => "http://mcp-hub:8080/mcp".to_string(),
     }
 }

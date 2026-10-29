@@ -132,6 +132,9 @@ services:
       NESTBOX_SECRET_DIR: /secrets
       # "openshell" creates new sandboxes on the OpenShell gateway.
       NESTBOX_SANDBOX_RUNTIME: ${NESTBOX_SANDBOX_RUNTIME:-docker-development}
+      # Where an agent finds the Nestbox MCP hub. On OpenShell the hub is reached
+      # through the host (see the mcp-hub service).
+      NESTBOX_MCP_HUB_URL: ${NESTBOX_MCP_HUB_URL:-http://mcp-hub:8080/mcp}
       NESTBOX_SESSION_COOKIE_SECURE: "false"
       # The same token the runner demands on the terminal upgrade. It comes from
       # the node directory rather than from a compose secret, because compose
@@ -310,6 +313,11 @@ services:
     entrypoint: ["sh", "-c", "NESTBOX_MCP_TOKEN=$$(cat /run/mcp/token) exec python3 /app/server.py"]
     volumes:
       - ./secrets/mcp:/run/mcp:ro
+    # An OpenShell supervisor runs on the host network and cannot resolve the
+    # compose name `mcp-hub`; it reaches the hub as host.openshell.internal:18088.
+    # Loopback only: the bearer token still guards every call.
+    ports:
+      - "127.0.0.1:18088:8080"
     networks:
       - runtime
 

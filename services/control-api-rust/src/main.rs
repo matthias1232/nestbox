@@ -75,6 +75,19 @@ async fn main() {
         Err(error) => tracing::warn!(code = error.code.0, "could not settle interrupted installs"),
     }
 
+    // The hub's registry entry follows the deployment: its address differs when the
+    // sandboxes run on an OpenShell gateway. Idempotent, and only when it differs.
+    let hub_url = nestbox_control_api::services::provider_service::mcp_hub_url();
+    match sqlx::query("UPDATE mcp_registry SET endpoint = $1, updated_at = now() WHERE key = 'nestbox-hub' AND endpoint IS DISTINCT FROM $1")
+        .bind(&hub_url)
+        .execute(&state.services.pool)
+        .await
+    {
+        Ok(done) if done.rows_affected() > 0 => tracing::info!(url = %hub_url, "pointed the MCP hub entry at this deployment"),
+        Ok(_) => {}
+        Err(error) => tracing::warn!(error = %error, "could not update the MCP hub entry"),
+    }
+
     // Bring back what a reboot took down, then keep checking: the stored state is
     // the desired state, and the runtime is allowed to disagree only briefly.
     {
