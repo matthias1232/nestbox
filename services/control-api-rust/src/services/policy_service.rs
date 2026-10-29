@@ -1004,18 +1004,32 @@ pub async fn rules_for_sandbox(
     let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
         .await
         .map_err(ApiError::from)?;
+    let rules = effective_rules(&mut scope, sandbox_id, principal.environment_id).await?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(rules)
+}
+
+/// The rules the decider reads for one sandbox, in the order it reads them.
+///
+/// One function for the console's view, the decision, and the OpenShell policy
+/// sync, so the three can never disagree about what applies.
+pub async fn effective_rules(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+    environment_id: Uuid,
+) -> Result<Vec<NetworkRule>, ApiError> {
     // The effective view: exactly the rules the decider reads for this sandbox,
     // in the order it reads them (stored rules, then those compiled from the
     // governing policy's document). Showing only the sandbox's own rows hid the
     // policy that does most of the work.
-    let governing = match store::global(&mut scope).await.map_err(ApiError::from)? {
+    let governing = match store::global(scope).await.map_err(ApiError::from)? {
         Some(global) => Some(global),
-        None => match store::assignment_for_sandbox(&mut scope, sandbox_id)
+        None => match store::assignment_for_sandbox(scope, sandbox_id)
             .await
             .map_err(ApiError::from)?
         {
             Some(assignment) => Some(
-                store::get(&mut scope, assignment.policy_id)
+                store::get(scope, assignment.policy_id)
                     .await
                     .map_err(ApiError::from)?,
             ),
@@ -1023,20 +1037,19 @@ pub async fn rules_for_sandbox(
         },
     };
     let mut rules = crate::domain::policy::rules_for_sandbox_view(
-        store::list_rules(&mut scope).await.map_err(ApiError::from)?,
+        store::list_rules(scope).await.map_err(ApiError::from)?,
         sandbox_id,
         governing.as_ref().map(|policy| policy.id),
     );
     if let Some(policy) = &governing {
         rules.extend(crate::domain::policy::rules_from_policy(policy));
     }
-    let providers = crate::store::postgres::providers::list(&mut scope)
+    let providers = crate::store::postgres::providers::list(scope)
         .await
         .map_err(ApiError::from)?;
     rules.extend(crate::domain::policy::rules_from_providers(&providers));
-    rules.extend(attached_mcp_rules(&mut scope, sandbox_id, principal.environment_id).await?);
+    rules.extend(attached_mcp_rules(scope, sandbox_id, environment_id).await?);
     rules.sort_by_key(|rule| rule.priority);
-    scope.commit().await.map_err(ApiError::from)?;
     Ok(rules)
 }
 
@@ -1343,4 +1356,68 @@ async fn attached_mcp_rules(
         .filter(|server| attached.iter().any(|a| a.enabled && a.server_key == server.key))
         .collect();
     Ok(crate::domain::policy::rules_from_mcp(&servers, sandbox_id, environment_id))
+}
+
+/// Push every OpenShell sandbox's compiled policy to its gateway when it changed.
+///
+/// Called from the reconcile loop, so a rule, an attachment or a provider edited in
+/// the console reaches the supervisor within one pass, and a restart of this process
+/// re-sends everything once. The last pushed fingerprint is kept in memory only: it
+/// is an optimisation, and losing it costs one idempotent `policy set`.
+pub async fn sync_openshell_policies(ctx: &ServiceContext) -> Result<u64, ApiError> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static PUSHED: OnceLock<Mutex<HashMap<Uuid, String>>> = OnceLock::new();
+    let pushed = PUSHED.get_or_init(|| Mutex::new(HashMap::new()));
+
+    let facts = ctx
+        .runtime
+        .list()
+        .await
+        .map_err(|error| ApiError::conflict(ErrorCode::SANDBOX_INVALID_STATE, error.to_string()))?;
+    let on_gateway: std::collections::HashSet<String> = facts
+        .into_iter()
+        .filter(|fact| fact.container_name.starts_with("openshell-default--") && fact.status == "running")
+        .map(|fact| fact.name)
+        .collect();
+    if on_gateway.is_empty() {
+        return Ok(0);
+    }
+    let environments: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM environments")
+        .fetch_all(&ctx.pool)
+        .await
+        .map_err(|error| ApiError::from(crate::error::StoreError::Database(error)))?;
+    let mut changed = 0;
+    for environment_id in environments {
+        let mut scope = TenantScope::begin(&ctx.pool, environment_id)
+            .await
+            .map_err(ApiError::from)?;
+        let rows: Vec<(Uuid, String)> = sqlx::query_as("SELECT id, name FROM sandboxes WHERE status = 'running'")
+            .fetch_all(scope.connection())
+            .await
+            .map_err(|error| ApiError::from(crate::error::StoreError::Database(error)))?;
+        let mut work = Vec::new();
+        for (id, name) in rows.into_iter().filter(|(_, name)| on_gateway.contains(name)) {
+            let rules = effective_rules(&mut scope, id, environment_id).await?;
+            work.push((id, name, crate::domain::openshell_policy::compile(&rules)));
+        }
+        scope.commit().await.map_err(ApiError::from)?;
+        for (id, name, compiled) in work {
+            let fingerprint = compiled.fingerprint();
+            if pushed.lock().map(|map| map.get(&id) == Some(&fingerprint)).unwrap_or(false) {
+                continue;
+            }
+            match ctx.runtime.set_openshell_policy(&name, &compiled.document).await {
+                Ok(()) => {
+                    if let Ok(mut map) = pushed.lock() {
+                        map.insert(id, fingerprint);
+                    }
+                    changed += 1;
+                    tracing::info!(sandbox = %name, skipped = compiled.skipped.len(), "pushed the OpenShell policy");
+                }
+                Err(error) => tracing::warn!(sandbox = %name, error = %error, "could not push the OpenShell policy"),
+            }
+        }
+    }
+    Ok(changed)
 }

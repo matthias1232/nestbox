@@ -409,6 +409,29 @@ def healthz() -> dict[str, str]:
     }
 
 
+class OpenShellPolicy(BaseModel):
+    document: dict[str, Any]
+
+
+@app.put("/v1/sandboxes/{name}/openshell-policy")
+def set_openshell_policy(name: str, body: OpenShellPolicy) -> dict[str, Any]:
+    """Load a policy document into a running OpenShell sandbox (live fields only
+    change without a restart: the network policies)."""
+    if not re.fullmatch(r"[a-z0-9-]{1,63}", name):
+        raise HTTPException(422, "invalid sandbox name")
+    try:
+        container = get_container(client, name)
+    except NotFound as exc:
+        raise HTTPException(404, "sandbox not found") from exc
+    if not openshell_name(container.name):
+        raise HTTPException(409, "this sandbox is not on the OpenShell gateway")
+    try:
+        osh.set_policy(name, body.document)
+    except osh.OpenShellError as exc:
+        raise HTTPException(400, f"policy rejected: {exc}") from exc
+    return {"name": name, "applied": True}
+
+
 @app.get("/v1/openshell")
 def openshell_status() -> dict[str, Any]:
     """Whether the OpenShell gateway answers, and what version it is."""

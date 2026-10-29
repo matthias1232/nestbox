@@ -149,3 +149,16 @@ def exec_command(name: str, command: list[str], *, workdir: str | None, timeout:
     except subprocess.TimeoutExpired as exc:
         raise OpenShellError(f"command did not finish within {timeout}s") from exc
     return done.returncode, (done.stdout + done.stderr).decode(errors="replace")
+
+
+def set_policy(name: str, document: dict[str, Any]) -> None:
+    """`openshell policy set`, with the document written to a private temp file."""
+    import tempfile
+
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as handle:
+        json.dump(document, handle)  # JSON is YAML
+        path = handle.name
+    try:
+        run(["policy", "set", name, "--policy", path, "--wait", "--timeout", "45"], timeout=75)
+    finally:
+        os.unlink(path)

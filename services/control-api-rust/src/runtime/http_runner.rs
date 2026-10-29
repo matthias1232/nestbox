@@ -408,6 +408,18 @@ impl RuntimeAdapter for HttpRunner {
         Ok(())
     }
 
+    async fn set_openshell_policy(
+        &self,
+        name: &str,
+        document: &serde_json::Value,
+    ) -> Result<(), RuntimeError> {
+        let payload = serde_json::json!({ "document": document });
+        let _: serde_json::Value = self
+            .send(reqwest::Method::PUT, &format!("/v1/sandboxes/{name}/openshell-policy"), Some(&payload))
+            .await?;
+        Ok(())
+    }
+
     async fn components(&self) -> Result<Vec<ComponentState>, RuntimeError> {
         #[derive(Deserialize)]
         struct Answer {
