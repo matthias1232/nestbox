@@ -886,6 +886,8 @@ mod tests {
             app_protocol: None,
             country: None,
             asn: None,
+            binary: None,
+            reason_text: None,
         };
         let now = Utc::now();
         assert!(next_cursor(&[event(now)], 2).is_none());

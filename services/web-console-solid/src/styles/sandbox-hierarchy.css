@@ -38,3 +38,13 @@ td .runtime-tag { white-space: nowrap; }
 .logline.good .lm { color: #8ed1a0; }
 .logs-controls { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-bottom: .6rem; }
 .logs-controls select, .logs-controls input[type=search] { max-width: 18rem; }
+.journey { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border, #2a2f3a); }
+.journey-steps { list-style: none; padding: 0; margin: .75rem 0 0; display: grid; gap: .6rem; }
+.journey-step { display: flex; gap: .8rem; padding: .7rem .9rem; border: 1px solid var(--border, #2a2f3a); border-radius: 10px; transition: opacity .3s, border-color .3s; }
+.journey-step.dim { opacity: .3; }
+.journey-step.lit { border-color: #3a5a86; }
+.journey-step.go.lit { border-color: #2f6b47; }
+.journey-step.stop.lit { border-color: #6b2f2f; }
+.journey-step .num { flex: none; width: 1.8rem; height: 1.8rem; border-radius: 50%; display: grid; place-items: center; background: #1b2a40; color: #9cc3f0; font-weight: 600; }
+.journey-step .who { font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted, #8a8f98); }
+.journey-step .title { font-weight: 600; margin: .1rem 0 .2rem; }

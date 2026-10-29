@@ -365,6 +365,14 @@ pub struct TrafficEvent {
     /// The autonomous system the destination's address belongs to, when the
     /// registry record names it.
     pub asn: Option<i64>,
+    /// The program that opened the connection, when the enforcement saw it (an OpenShell
+    /// supervisor knows the real executable behind every request).
+    #[serde(default)]
+    pub binary: Option<String>,
+    /// The enforcement's own words for the decision, such as the policy that matched or the
+    /// reason it refused, kept as written.
+    #[serde(default)]
+    pub reason_text: Option<String>,
 }
 
 /// The path one outbound request took, as the console colours it.
