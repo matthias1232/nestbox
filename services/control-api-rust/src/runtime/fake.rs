@@ -344,6 +344,14 @@ impl RuntimeAdapter for FakeRuntime {
         })
     }
 
+    async fn process_action(&self, name: &str, pid: i64, action: &str, nice: Option<i8>) -> Result<(), RuntimeError> {
+        self.processes(name).await?;
+        if pid < 2 { return Err(RuntimeError::Rejected("PID 1 is protected".into())); }
+        if !["terminate", "kill", "pause", "resume", "set_nice"].contains(&action) { return Err(RuntimeError::Rejected("unknown action".into())); }
+        if action == "set_nice" && nice.is_none() { return Err(RuntimeError::Rejected("nice required".into())); }
+        Ok(())
+    }
+
     async fn inventory(&self, name: &str) -> Result<InventoryProbe, RuntimeError> {
         let guard = lock(&self.sandboxes);
         if !guard.contains_key(name) {

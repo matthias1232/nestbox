@@ -249,9 +249,7 @@ pub async fn process_action(
     let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
     let sandbox = sandbox_store::get(&mut scope, sandbox_id).await.map_err(|error| match error { StoreError::NotFound => ApiError::not_found(ErrorCode::SANDBOX_NOT_FOUND, "No such sandbox."), other => ApiError::from(other) })?;
     scope.commit().await.map_err(ApiError::from)?;
-    let command = if action == "set_nice" { vec!["renice".into(), "-n".into(), nice.unwrap().to_string(), "-p".into(), pid.to_string()] } else { let signal = match action.as_str() { "terminate" => "TERM", "kill" => "KILL", "pause" => "STOP", _ => "CONT" }; vec!["kill".into(), format!("-{signal}"), pid.to_string()] };
-    let result = ctx.runtime.exec(&sandbox.name, &command, 10).await.map_err(runner_error)?;
-    if result.exit_code.unwrap_or(1) != 0 { return Err(ApiError::validation("The process action was refused.")); }
+    ctx.runtime.process_action(&sandbox.name, pid, &action, nice).await.map_err(runner_error)?;
     Ok(serde_json::json!({"pid": pid, "action": action, "message": format!("Process action applied to PID {pid}.")}))
 }
 

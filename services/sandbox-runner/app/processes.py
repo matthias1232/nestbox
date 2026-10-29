@@ -7,7 +7,7 @@ never from the request, because `ps` accepts a format string and that is enough
 to read a file the caller should not see.
 """
 from __future__ import annotations
-from app.workload import get_container, list_workloads, sandbox_name
+from app.workload import get_container
 
 import time
 from typing import Any
@@ -45,6 +45,29 @@ def _to_number(value: str) -> float | None:
         return None
 
 
+def _rows(item: Any) -> list[dict[str, Any]]:
+    """Read PIDs from inside the container's PID namespace.
+
+    `docker top` reports host PIDs. Those cannot safely be signalled from a
+    container exec, especially for OpenShell workloads. A fixed `ps` command
+    yields the PID namespace the operator sees and the action endpoint targets.
+    """
+    result = item.exec_run(["ps", "-eo", "pid=,ppid=,user=,%cpu=,%mem=,etime=,args="], stdout=True, stderr=True)
+    if result.exit_code != 0:
+        raise HTTPException(409, "the sandbox process table is unavailable")
+    entries = []
+    for line in (result.output or b"").decode(errors="replace").splitlines()[:SAMPLE_LIMIT]:
+        fields = line.strip().split(None, 6)
+        if len(fields) < 6:
+            continue
+        entries.append({
+            "pid": int(_to_number(fields[0]) or 0), "ppid": int(_to_number(fields[1]) or 0) or None,
+            "user": fields[2], "cpu_pct": _to_number(fields[3]), "mem_pct": _to_number(fields[4]),
+            "elapsed": fields[5], "command": fields[6] if len(fields) > 6 else "",
+        })
+    return entries
+
+
 @router.get("/v1/sandboxes/{name}/processes")
 def processes(name: str) -> dict[str, Any]:
     """Rows of `docker top`, capped and typed, with the raw header kept.
@@ -54,45 +77,13 @@ def processes(name: str) -> dict[str, Any]:
     drawing a table with no rows and leaving the operator to guess.
     """
     item = container(name)
-    try:
-        table = item.top(ps_args=PS_ARGS)
-    except APIError as exc:
-        raise HTTPException(409, f"the sandbox has no process table: {exc}") from exc
-
-    titles = table.get("Titles") or []
-    rows = table.get("Processes") or []
-    index = {title.lower(): position for position, title in enumerate(titles)}
-
-    def field(row: list[str], *names: str) -> str | None:
-        for candidate in names:
-            position = index.get(candidate)
-            if position is not None and position < len(row):
-                return row[position]
-        return None
-
-    entries = []
-    for row in rows[:SAMPLE_LIMIT]:
-        pid = int(_to_number(field(row, "pid") or "") or 0)
-        entries.append(
-            {
-                "pid": pid,
-                "ppid": int(field(row, "ppid") or 0) or None,
-                "user": field(row, "user") or "",
-                "cpu_pct": _to_number(field(row, "%cpu") or ""),
-                "mem_pct": _to_number(field(row, "%mem") or ""),
-                # The titles depend on the ps build: procps prints ELAPSED and
-                # COMMAND, a busybox ps prints ETIME and CMD. Accept both rather
-                # than reporting an empty column as "no command".
-                "elapsed": field(row, "etime", "elapsed"),
-                "command": field(row, "args", "cmd", "command") or "",
-            }
-        )
+    entries = _rows(item)
     return {
         "sandbox": name,
         "taken_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "columns": titles,
+        "columns": ["PID", "PPID", "USER", "%CPU", "%MEM", "ELAPSED", "COMMAND"],
         "items": entries,
-        "truncated": len(rows) > SAMPLE_LIMIT,
+        "truncated": len(entries) >= SAMPLE_LIMIT,
     }
 
 
@@ -107,7 +98,7 @@ def process_action(name: str, pid: int, request: ProcessAction) -> dict[str, Any
     if pid < 2:
         raise HTTPException(422, "PID 1 is the sandbox entrypoint; use the sandbox controls instead")
     item = container(name)
-    live = processes(name)["items"]
+    live = _rows(item)
     if not any(row["pid"] == pid for row in live):
         raise HTTPException(404, f"no live process {pid} in sandbox {name}")
     if request.action == "set_nice":

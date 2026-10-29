@@ -87,6 +87,8 @@ pub trait RuntimeAdapter: Send + Sync {
     /// runner starts a fixed shell with a PTY, and this side only moves bytes.
     async fn processes(&self, name: &str) -> Result<ProcessTable, RuntimeError>;
 
+    async fn process_action(&self, name: &str, pid: i64, action: &str, nice: Option<i8>) -> Result<(), RuntimeError>;
+
     /// A fresh inventory snapshot, taken by the container's fixed probe script.
     ///
     /// The script ships with the runner's image and takes no argument, so
