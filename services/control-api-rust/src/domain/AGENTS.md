@@ -59,6 +59,8 @@ microseconds is that it has none.
 | `access.rs` | SSH key record (locator, never material), published port, inventory, session |
 | `egress.rs` | The pure `decide` function, compiled rule set, traffic event, map edge |
 | `geography.rs` | Reading a country, an AS number, and an owner out of an RDAP record; pure |
+| `pack_access.rs` | A pack's words for its ports and SSH line, joined with what the runner reports is open; pure |
+| `stack_topology.rs` | The stack diagram in nine layers, arranged from facts; the status vocabulary |
 | `mcp.rs` | MCP server definition, sandbox attachment, tool call, JSON-RPC recognition |
 
 ## Extending this module

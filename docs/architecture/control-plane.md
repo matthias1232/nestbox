@@ -33,7 +33,8 @@ Grouped by tab, all under the frozen `/api/v1/` prefix (ADR 0015):
 | Area | Endpoints |
 |---|---|
 | Connect | `GET /sandboxes/{id}/connect` (node address, hostname, ports, SSH), `PUT /nodes/{id}/endpoint` |
-| Stacks | `PUT /sandboxes/{id}/stack` (a member joins a lead or leaves; one level deep) |
+| Stacks | `PUT /sandboxes/{id}/stack` (a member joins a lead or leaves; one level deep); a tool or gateway created without a lead joins the node's only agent (ADR 0032) |
+| Stack diagram | `GET /sandboxes/{id}/stack-topology` (operator to internet, live state, a log per piece), `GET /system/components`, `GET /system/components/{service}/logs` |
 | Dashboard | `GET /sandboxes/{id}/metrics`, `GET /sandboxes/{id}/processes`, `GET /sandboxes/{id}/policies/effective` |
 | Traffic | `GET /sandboxes/{id}/traffic`, `GET /sandboxes/{id}/traffic/{event_id}/body`, SSE on `/telemetry/stream` |
 | MCP | `GET/POST /mcp/servers`, `GET/PUT/DELETE /mcp/servers/{key}`, `GET/POST /sandboxes/{id}/mcp/servers`, `DELETE /sandboxes/{id}/mcp/servers/{key}`, `POST /sandboxes/{id}/mcp/servers/{key}/discover`, `GET /sandboxes/{id}/mcp/calls` |

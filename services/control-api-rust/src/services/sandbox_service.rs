@@ -562,7 +562,22 @@ pub async fn create(
         "egress_proxy": &egress_proxy,
     });
 
-    check_stack_lead(&mut scope, None, request.parent_id).await?;
+    // A helper created without a lead joins the node's only agent. Done before the
+    // lead is checked, so an automatic choice meets the same rules as a named one.
+    let parent_id = match request.parent_id {
+        Some(lead) => Some(lead),
+        None => {
+            let role = store::pack_role(&mut scope, &request.pack_key)
+                .await
+                .map_err(ApiError::from)?
+                .unwrap_or_else(|| "agent".to_string());
+            let candidates = store::lead_candidates(&mut scope, node.id)
+                .await
+                .map_err(ApiError::from)?;
+            crate::domain::sandbox::auto_stack_lead(&role, &candidates)
+        }
+    };
+    check_stack_lead(&mut scope, None, parent_id).await?;
 
     let sandbox = store::insert(
         &mut scope,
@@ -575,7 +590,7 @@ pub async fn create(
             image: &image,
             image_digest: request.image_digest.as_deref(),
             spec: &spec,
-            parent_id: request.parent_id,
+            parent_id,
         },
     )
     .await
@@ -776,6 +791,11 @@ pub async fn delete(
     // operator can retry. Removing the row first would orphan a container.
     if let Err(error) = ctx.runtime.remove(&sandbox.name).await {
         tracing::warn!(sandbox = %sandbox.name, error = %error, "runtime remove failed; continuing");
+    }
+    // The rows go with the sandbox; the runner's listeners must go too, or the
+    // node keeps a port open that leads nowhere and the next sandbox cannot use it.
+    if let Err(error) = ctx.runtime.clear_forwards(&sandbox.name).await {
+        tracing::warn!(sandbox = %sandbox.name, error = %error, "runtime clear_forwards failed; continuing");
     }
 
     crate::store::postgres::audit::record(

@@ -118,6 +118,37 @@ pub struct ConnectPort {
     pub dial: Option<String>,
     /// A ready `ssh` line, for the SSH port only.
     pub command: Option<String>,
+    /// What this port is, in a sentence, from the pack's catalog entry.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// `ssh`, `web`, `api` or `tcp`: what kind of client connects.
+    #[serde(default = "default_kind")]
+    pub kind: String,
+    /// A browser URL, for a `web` or `api` port that can be dialled.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// The runner holds the node-side socket. `None` when the runner could not
+    /// be asked.
+    #[serde(default)]
+    pub listening: Option<bool>,
+    /// Something answers behind it inside the sandbox. `None` when unknown.
+    #[serde(default)]
+    pub target_up: Option<bool>,
+    /// Why the runner could not open this port, when it could not.
+    #[serde(default)]
+    pub problem: Option<String>,
+}
+
+fn default_kind() -> String {
+    "tcp".to_string()
+}
+
+/// One thing to type, with what it does.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ConnectCommand {
+    pub label: String,
+    pub description: String,
+    pub command: String,
 }
 
 /// Where the SSH key stands, without the key.
@@ -149,6 +180,25 @@ pub struct ConnectInfo {
     pub ssh_config: Option<String>,
     /// Why the connection cannot work yet, in a sentence, or `None`.
     pub hint: Option<String>,
+    /// What this sandbox is, from the pack's catalog entry.
+    #[serde(default)]
+    pub summary: Option<String>,
+    /// The pack that decides the descriptions below.
+    #[serde(default)]
+    pub pack_key: Option<String>,
+    /// Ready-to-run lines beyond the plain SSH one: start the agent, attach a client.
+    #[serde(default)]
+    pub commands: Vec<ConnectCommand>,
+    /// What the SSH door does not do, said once instead of discovered by failing.
+    #[serde(default)]
+    pub notes: Vec<String>,
+    /// `live` when the runner answered about the ports, `unknown` when it did not.
+    #[serde(default = "default_forwarding")]
+    pub forwarding: String,
+}
+
+fn default_forwarding() -> String {
+    "unknown".to_string()
 }
 
 /// What `build_connect` needs; a struct so the call site names each fact.
@@ -198,6 +248,12 @@ pub fn build_connect(input: ConnectInput<'_>) -> ConnectInfo {
                 state: port.state.clone(),
                 dial,
                 command,
+                description: None,
+                kind: if port.purpose == ForwardPurpose::Ssh { "ssh" } else { "tcp" }.to_string(),
+                url: None,
+                listening: None,
+                target_up: None,
+                problem: None,
             }
         })
         .collect();
@@ -240,6 +296,11 @@ pub fn build_connect(input: ConnectInput<'_>) -> ConnectInfo {
         ports,
         ssh_config,
         hint,
+        summary: None,
+        pack_key: None,
+        commands: Vec::new(),
+        notes: Vec::new(),
+        forwarding: default_forwarding(),
     }
 }
 

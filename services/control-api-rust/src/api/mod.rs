@@ -26,6 +26,7 @@ pub mod sandboxes_settings;
 pub mod sandboxes_terminal;
 pub mod system;
 pub mod telemetry;
+pub mod stack;
 pub mod topology;
 pub mod traffic;
 
@@ -99,6 +100,9 @@ pub fn router(state: AppState) -> Router {
             post(sandboxes_settings::action),
         )
         .route("/api/v1/sandboxes/{id}/connect", get(access::connect))
+        .route("/api/v1/sandboxes/{id}/stack-topology", get(stack::stack_topology))
+        .route("/api/v1/system/components", get(stack::components))
+        .route("/api/v1/system/components/{service}/logs", get(stack::component_logs))
         .route("/api/v1/nodes/{id}/endpoint", put(access::put_node_endpoint))
         .route("/api/v1/sandboxes/{id}/ssh-key", get(access::ssh_key))
         .route(

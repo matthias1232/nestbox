@@ -48,7 +48,9 @@ on it.
 |---|---|
 | `useSandboxes.js` | Paging, filters, selection, actions; no JSX |
 | `SandboxListPage.jsx` | Table with stacks (a lead and its members drawn together), facets, bulk bar, the New sandbox drawer |
-| `ConnectPanel.jsx`, `AccessTab.jsx` | How to reach a sandbox: the node's address and hostname (never the container's), every published port with its dial address, the `ssh` line, an SSH config block, the one-time key. One component, used by the Access tab and the list's Connect drawer |
+| `ConnectPanel.jsx`, `AccessTab.jsx` | How to reach a sandbox: the node's address and hostname (never the container's), every published port with its dial address, the `ssh` line, an SSH config block, the one-time key. Each port says what it is, how to connect to it, and whether it answers (open, and something behind it). One component, used by the Access tab and the list's Connect drawer |
+| `StackTopology.jsx`, `stackLayout.js` | The Topology tab: the stack from you to the internet in bands, live every 5 s, a card per piece with its facts, connections and log. `stackLayout.js` is pure (`node --test stackLayout.test.js`) |
+| `MapTab.jsx` | Hands the sandbox to `StackTopology.jsx`; the tab is registered as Topology |
 | `stacks.js` | Grouping the flat page into stacks; a member whose lead is on another page stays a row of its own and names its lead. Test: `node --test stacks.test.js` |
 | `CreateSandboxForm.jsx` | Name, pack, node, memory, CPU, PIDs; the node's free numbers beside them (`feat/ui-sandbox-resources`) |
 | `useCreateSandbox.js` | Nodes, packs, the draft, and the pre-check; no JSX (`feat/ui-sandbox-resources`) |
@@ -61,7 +63,7 @@ on it.
 | `McpTab.jsx` | Servers, tools, calls, visibility per transport (`feat/console-mcp`) |
 | `TerminalTab.jsx` | xterm.js over the terminal WebSocket (`feat/console-terminal`) |
 | `AccessTab.jsx` | Ports, SSH key, remote snippets (`feat/console-access`) |
-| `MapTab.jsx`, `PoliciesTab.jsx` | Live edges, effective rules, deployed state (`feat/console-map-policies`) |
+| `PoliciesTab.jsx` | Effective rules, deployed state (`feat/console-map-policies`) |
 | `ProcessesTab.jsx`, `InventoryTab.jsx`, `LogsTab.jsx` | `docker top`, snapshot, log tail (`feat/console-inventory`) |
 
 ## The drawer's Agents tab

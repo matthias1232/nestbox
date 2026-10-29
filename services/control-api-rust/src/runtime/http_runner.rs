@@ -11,9 +11,11 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use chrono::{DateTime, Utc};
 use crate::domain::metrics::{InventoryProbe, ProcessTable};
+use crate::domain::pack_access::ForwardState;
 use crate::domain::runtime::{
-    BuildRequest, BuildResult, ExecResult, HardwareReport, ModelDownload, ModelDownloadResult,
-    ModelServe, ModelServeResult, NetworkInterface, RuntimeFacts, RuntimeResources, SandboxSpec,
+    BuildRequest, BuildResult, ComponentState, ExecResult, ForwardRequest, HardwareReport,
+    ModelDownload, ModelDownloadResult, ModelServe, ModelServeResult, NetworkInterface,
+    RuntimeFacts, RuntimeResources, SandboxSpec,
 };
 use crate::runtime::{BoxTerminal, RunnerTerminal, RuntimeAdapter, RuntimeError};
 
@@ -335,6 +337,72 @@ impl RuntimeAdapter for HttpRunner {
             Err(RuntimeError::NotFound(_)) => Ok(()),
             Err(error) => Err(error),
         }
+    }
+
+    async fn set_forwards(
+        &self,
+        name: &str,
+        forwards: &[ForwardRequest],
+        authorized_keys: &[String],
+    ) -> Result<Vec<ForwardState>, RuntimeError> {
+        #[derive(Deserialize)]
+        struct Answer {
+            #[serde(default)]
+            forwards: Vec<ForwardState>,
+        }
+        let payload = serde_json::json!({
+            "forwards": forwards,
+            "authorized_keys": authorized_keys,
+        });
+        let answer: Answer = self
+            .send(reqwest::Method::PUT, &format!("/v1/sandboxes/{name}/forwards"), Some(&payload))
+            .await?;
+        Ok(answer.forwards)
+    }
+
+    async fn forward_states(&self, name: &str) -> Result<Vec<ForwardState>, RuntimeError> {
+        #[derive(Deserialize)]
+        struct Answer {
+            #[serde(default)]
+            forwards: Vec<ForwardState>,
+        }
+        let answer: Answer = self
+            .send(reqwest::Method::GET, &format!("/v1/sandboxes/{name}/forwards"), None)
+            .await?;
+        Ok(answer.forwards)
+    }
+
+    async fn clear_forwards(&self, name: &str) -> Result<(), RuntimeError> {
+        let _: serde_json::Value = self
+            .send(reqwest::Method::DELETE, &format!("/v1/sandboxes/{name}/forwards"), None)
+            .await?;
+        Ok(())
+    }
+
+    async fn components(&self) -> Result<Vec<ComponentState>, RuntimeError> {
+        #[derive(Deserialize)]
+        struct Answer {
+            #[serde(default)]
+            components: Vec<ComponentState>,
+        }
+        let answer: Answer = self.send(reqwest::Method::GET, "/v1/system/components", None).await?;
+        Ok(answer.components)
+    }
+
+    async fn component_logs(&self, service: &str, tail: u32) -> Result<String, RuntimeError> {
+        #[derive(Deserialize)]
+        struct Answer {
+            #[serde(default)]
+            logs: String,
+        }
+        let answer: Answer = self
+            .send(
+                reqwest::Method::GET,
+                &format!("/v1/system/components/{service}/logs?tail={tail}"),
+                None,
+            )
+            .await?;
+        Ok(answer.logs)
     }
 
     async fn open_terminal(&self, name: &str) -> Result<BoxTerminal, RuntimeError> {

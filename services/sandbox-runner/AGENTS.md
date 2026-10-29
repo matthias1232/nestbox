@@ -32,6 +32,10 @@ control plane.
 | `GET` | `/v1/sandboxes/{name}/processes` | `docker top`, capped and typed |
 | `GET` | `/v1/sandboxes/{name}/inventory` | A fresh snapshot from the fixed probe |
 | `GET` | `/v1/sandboxes/{name}/terminal` | The terminal WebSocket |
+| `PUT`/`GET`/`DELETE` | `/v1/sandboxes/{name}/forwards` | Hold a sandbox's published ports open (complete set + public keys); report `listening` and `target_up`; close them |
+| `GET` | `/v1/forwards` | Every forward and the published range |
+| `GET` | `/v1/system/components` | State and health of the appliance's own containers (fixed list, own project only) |
+| `GET` | `/v1/system/components/{service}/logs?tail=` | Last lines of one of them |
 
 ## Security rules
 
@@ -44,8 +48,11 @@ control plane.
    shell string, and the adapter never builds one.
 4. Exec output is capped (default 64 KiB) and the call has a timeout, so one
    command cannot exhaust the API's memory or hold a worker forever.
-5. The runner listens only on the internal `control` network and is not
-   published on the host.
+5. The runner's API (port 9000) listens only on the internal `control` network and
+   is not published on the host. What is published is the forward range
+   (`NESTBOX_FORWARD_RANGE`, default `22200-22299`): one listener per sandbox
+   forward, an SSH door (`ssh_gateway.py`, key auth, no scp/sftp/tunnels) or a
+   byte relay to the sandbox (ADR 0033).
 6. A model server starts only from an image in `NESTBOX_MODEL_IMAGES`, compared
    as an exact `repo@sha256:…` reference. Every absolute path in its command
    must be the mounted model file, the model directory is mounted read-only at
