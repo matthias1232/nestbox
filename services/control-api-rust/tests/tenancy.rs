@@ -266,3 +266,64 @@ async fn persistent_data_and_its_backups_belong_to_their_owner() {
     // Ann can.
     assert_eq!(backup_service::list(&ctx, &ann, None).await.expect("list").len(), 1);
 }
+
+#[tokio::test]
+async fn telemetry_rules_and_supervisors_follow_the_sandbox_they_belong_to() {
+    let Some(owner_pool) = connect().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+    let pool = app_pool().await;
+    let runtime = Arc::new(FakeRuntime::new());
+    let ctx = context(&pool, &runtime);
+
+    let admin = as_role(user(&pool).await, Role::Admin);
+    let a = user_service::create(&ctx, &admin, "uma@example.test", "Uma", "uma-password-123", "operator").await.expect("uma");
+    let b = user_service::create(&ctx, &admin, "vic@example.test", "Vic", "vic-password-123", "operator").await.expect("vic");
+    let (uma, vic) = (as_role(a.id, Role::Operator), as_role(b.id, Role::Operator));
+    let uma_box = sandbox_service::create(&ctx, &uma, request("uma-box", "ubuntu-dev")).await.expect("uma's");
+
+    // One telemetry row and one sandbox rule of Uma's sandbox, written by the control plane.
+    sqlx::query(
+        "INSERT INTO telemetry_events (id, environment_id, sandbox_id, kind, ts, detail)
+         VALUES (gen_random_uuid(), $1, $2, 'network', now(), '{}'::jsonb),
+                (gen_random_uuid(), $1, NULL, 'network', now(), '{}'::jsonb)",
+    )
+    .bind(uuid(ENVIRONMENT))
+    .bind(uma_box.id)
+    .execute(&owner_pool)
+    .await
+    .expect("telemetry");
+    sqlx::query(
+        "INSERT INTO network_rules (environment_id, sandbox_id, name, action, host, protocol, enforcement, priority)
+         VALUES ($1, $2, 'uma only', 'allow', 'private.example.test', 'rest', 'enforced', 100)",
+    )
+    .bind(uuid(ENVIRONMENT))
+    .bind(uma_box.id)
+    .execute(&owner_pool)
+    .await
+    .expect("rule");
+
+    let count = |principal: &Principal, sql: &'static str| {
+        let (pool, principal) = (pool.clone(), principal.clone());
+        async move {
+            let mut scope = nestbox_control_api::store::TenantScope::begin_for(&pool, &principal).await.expect("scope");
+            let n: i64 = sqlx::query_scalar(sql).fetch_one(scope.connection()).await.expect("count");
+            n
+        }
+    };
+    let events = "SELECT count(*) FROM telemetry_events";
+    let rules = "SELECT count(*) FROM network_rules WHERE name = 'uma only'";
+    let supervisors = "SELECT count(*) FROM supervisors WHERE name = 'sup-uma-box'";
+
+    assert_eq!(count(&uma, events).await, 1, "Uma sees what her sandbox did, not the row about no sandbox");
+    assert_eq!(count(&vic, events).await, 0, "Vic sees none of it");
+    assert_eq!(count(&admin, events).await, 2, "an admin sees both");
+    assert_eq!((count(&uma, rules).await, count(&vic, rules).await, count(&admin, rules).await), (1, 0, 1));
+    assert_eq!((count(&uma, supervisors).await, count(&vic, supervisors).await, count(&admin, supervisors).await), (1, 0, 1));
+
+    // The audit trail and the key list are for admins.
+    assert!(nestbox_control_api::services::audit_service::list(&ctx, &uma, 10).await.is_err());
+    assert!(nestbox_control_api::services::audit_service::list(&ctx, &admin, 10).await.is_ok());
+    assert!(nestbox_control_api::services::secret_service::list(&ctx, &uma).await.is_err());
+}

@@ -27,7 +27,8 @@ fn key(ctx: &ServiceContext) -> Result<[u8; 32], ApiError> {
 }
 
 pub async fn list(ctx: &ServiceContext, principal: &Principal) -> Result<Vec<SecretMeta>, ApiError> {
-    require(principal, Permission::ProviderRead)?;
+    // Key names and endings are for whoever manages the keys.
+    require(principal, Permission::ProviderWrite)?;
     let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
     let items = store::list(&mut scope).await.map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
