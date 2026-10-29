@@ -147,6 +147,11 @@ async fn a_policy_is_cloned_assigned_to_several_sandboxes_and_rules_are_copied()
     assert_eq!(done.done, 2);
     assert_eq!(done.failed.len(), 1);
     assert!(policy_service::assign_policy_to_many(&ctx, &principal, copy.policy.id, &[]).await.is_err());
+    // A policy in use is refused with a reason, and deletes once nothing uses it.
+    let in_use = policy_service::delete(&ctx, &principal, copy.policy.id).await.expect_err("in use");
+    assert!(in_use.message.contains("bulk-a"), "{}", in_use.message);
+    policy_service::assign_policy_to_many(&ctx, &principal, original.policy.id, &[a.id, b.id]).await.expect("move");
+    policy_service::delete(&ctx, &principal, copy.policy.id).await.expect("delete unused");
 
     // Copy one rule to two sandboxes, then every rule of a sandbox, then to all.
     let source = policy_service::create_rule(&ctx, &principal, rule("api", "api.example.test", Some(a.id))).await.expect("rule");

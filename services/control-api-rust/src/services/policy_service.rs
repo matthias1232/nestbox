@@ -264,6 +264,21 @@ pub async fn delete(
     if policy.scope == PolicyScope::Global {
         require(principal, Permission::PolicyGlobal)?;
     }
+    // A policy that sandboxes still use is a 409 naming them, not a foreign-key 500.
+    let users: Vec<String> = sqlx::query_scalar(
+        "SELECT s.name FROM sandbox_policies sp JOIN sandboxes s ON s.id = sp.sandbox_id
+          WHERE sp.policy_id = $1 ORDER BY s.name",
+    )
+    .bind(id)
+    .fetch_all(scope.connection())
+    .await
+    .map_err(|error| ApiError::from(crate::error::StoreError::Database(error)))?;
+    if !users.is_empty() {
+        return Err(ApiError::conflict(
+            ErrorCode::SANDBOX_INVALID_STATE,
+            format!("Sandboxes still use this policy: {}. Assign them another policy first.", users.join(", ")),
+        ));
+    }
     store::delete(&mut scope, id).await.map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
     Ok(())
