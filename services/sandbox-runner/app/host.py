@@ -140,7 +140,12 @@ def host_load() -> dict[str, Any]:
 class ResourceChange(BaseModel):
     # Bytes. The control plane has already normalised and checked the figure.
     memory_bytes: int | None = Field(default=None, ge=16 * 1024 * 1024)
+    # The soft target below the hard limit: the kernel may reclaim from it, and
+    # an idle sandbox can hold less than it is allowed.
+    memory_reservation_bytes: int | None = Field(default=None, ge=16 * 1024 * 1024)
     cpus: float | None = Field(default=None, gt=0, le=64)
+    # Relative weight under contention. Docker's default is 1024.
+    cpu_shares: int | None = Field(default=None, ge=2, le=262_144)
     pids_limit: int | None = Field(default=None, ge=32, le=65536)
 
 
@@ -163,6 +168,14 @@ def change_resources(name: str, body: ResourceChange) -> dict[str, Any]:
         changes["MemorySwap"] = body.memory_bytes
     if body.cpus is not None:
         changes["NanoCpus"] = int(body.cpus * 1_000_000_000)
+    if body.memory_reservation_bytes is not None:
+        # A reservation above the hard limit is refused by Docker with a message
+        # that names neither figure, so it is named here instead.
+        if body.memory_bytes is not None and body.memory_reservation_bytes > body.memory_bytes:
+            raise HTTPException(422, "the memory reservation cannot exceed the memory limit")
+        changes["MemoryReservation"] = body.memory_reservation_bytes
+    if body.cpu_shares is not None:
+        changes["CpuShares"] = body.cpu_shares
     if body.pids_limit is not None:
         changes["PidsLimit"] = body.pids_limit
     if not changes:
@@ -177,6 +190,8 @@ def change_resources(name: str, body: ResourceChange) -> dict[str, Any]:
     return {
         "name": name,
         "memory_bytes": host_config.get("Memory"),
+        "memory_reservation_bytes": host_config.get("MemoryReservation"),
         "cpus": (host_config.get("NanoCpus") or 0) / 1_000_000_000,
+        "cpu_shares": host_config.get("CpuShares"),
         "pids_limit": host_config.get("PidsLimit"),
     }

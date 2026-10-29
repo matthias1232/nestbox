@@ -400,9 +400,52 @@ pub const DEFAULT_EGRESS_PROXY: &str = "http://egress-proxy:3128";
 /// when the column reaches the domain type, this function reads it and nothing
 /// else changes.
 pub fn egress_proxy_url() -> String {
+    if openshell_runtime() {
+        // A sandbox on a gateway has no route on the runtime network, so the
+        // compose service name is not resolvable from it. The supervisor reaches
+        // the host, and a published loopback port is reachable as
+        // `host.openshell.internal:<port>` — the same form the MCP hub already
+        // uses (ADR 0035). Without this the agent has no proxy, tries a direct
+        // connection and fails in DNS before any policy could speak.
+        return match std::env::var("NESTBOX_OPENSHELL_PROXY_URL") {
+            Ok(value) if !value.trim().is_empty() => value.trim().trim_end_matches('/').to_string(),
+            _ => DEFAULT_OPENSHELL_PROXY.to_string(),
+        };
+    }
     match std::env::var("NESTBOX_EGRESS_PROXY_URL") {
         Ok(value) if !value.trim().is_empty() => value.trim().to_string(),
         _ => DEFAULT_EGRESS_PROXY.to_string(),
+    }
+}
+
+/// Whether new sandboxes are created on an OpenShell gateway.
+pub fn openshell_runtime() -> bool {
+    std::env::var("NESTBOX_SANDBOX_RUNTIME").is_ok_and(|value| value == "openshell")
+}
+
+/// The address an OpenShell sandbox uses for the egress proxy.
+///
+/// The supervisor runs on the host network; a port published on the host's
+/// loopback is the one address a sandbox can reach (the MCP hub is exposed the
+/// same way). The host and port must match the `egress-proxy` publish rule in
+/// `deploy/docker-compose.yml`.
+pub const DEFAULT_OPENSHELL_PROXY: &str = "http://host.openshell.internal:18087";
+
+/// The host and port of the OpenShell proxy, for the policy allow rule.
+///
+/// A sandbox cannot open a connection to the proxy unless the gateway policy
+/// allows it, so this is derived from the same URL the environment uses: two
+/// spellings of one address is how a proxy becomes unreachable after a deploy.
+pub fn openshell_proxy_endpoint() -> (String, u16) {
+    let url = egress_proxy_url();
+    let without_scheme = url.split("://").nth(1).unwrap_or(&url);
+    let authority = without_scheme.split('/').next().unwrap_or(without_scheme);
+    match authority.rsplit_once(':') {
+        Some((host, port)) => (
+            host.to_string(),
+            port.parse::<u16>().unwrap_or(18087),
+        ),
+        None => (authority.to_string(), 18087),
     }
 }
 
@@ -520,12 +563,6 @@ fn proxy_host(proxy: &str) -> &str {
 /// request for the proxy *to* the proxy, which is a loop. Loopback stays out of
 /// the proxy because nothing on it leaves the container.
 pub fn egress_environment(proxy: &str) -> Vec<(String, String)> {
-    // On an OpenShell gateway the supervisor mediates every connection itself and
-    // sets up the workload's proxy; pointing the agent at our own proxy would send
-    // it to a host the sandbox cannot (and may not) reach.
-    if std::env::var("NESTBOX_SANDBOX_RUNTIME").is_ok_and(|value| value == "openshell") {
-        return Vec::new();
-    }
     let bypass = format!("localhost,127.0.0.1,::1,{}", proxy_host(proxy));
     let mut values = Vec::with_capacity(8);
     for key in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"] {
@@ -887,7 +924,8 @@ pub async fn create(
             // The agent starts already connected: its own config files are written
             // before anyone opens a shell. Best effort; a failure is logged and the
             // environment still carries the same facts.
-            apply_agent_files(ctx, &sandbox.name, &sandbox.pack_key, &configured_environment).await;
+            let servers = mcp_configs(ctx, principal, sandbox.id, &sandbox.name).await;
+            apply_agent_files(ctx, &sandbox.name, &sandbox.pack_key, &configured_environment, &servers).await;
             // An agent starts with the Nestbox MCP hub attached when the hub is
             // deployed (the same condition that put its address in the environment).
             if configured_environment.contains_key("NESTBOX_MCP_URL") {
@@ -1400,7 +1438,12 @@ mod tests {
 pub struct ResourceRequest {
     /// `512Mi`, `2g`, ... as everywhere else.
     pub memory_limit: Option<String>,
+    /// The soft target: memory the sandbox may use before the kernel starts
+    /// reclaiming, while `memory_limit` stays the hard ceiling.
+    pub memory_reservation: Option<String>,
     pub cpu_limit: Option<f64>,
+    /// Relative CPU weight when cores are contended (Docker's default is 1024).
+    pub cpu_shares: Option<i64>,
     pub pids_limit: Option<i64>,
 }
 
@@ -1433,7 +1476,23 @@ pub async fn set_resources(
             return Err(ApiError::validation("The process limit must be between 32 and 65536."));
         }
     }
-    if memory_limit.is_none() && request.cpu_limit.is_none() && request.pids_limit.is_none() {
+    if let Some(shares) = request.cpu_shares {
+        if !(2..=262_144).contains(&shares) {
+            return Err(ApiError::validation("CPU shares must be between 2 and 262144."));
+        }
+    }
+    let reservation = request
+        .memory_reservation
+        .as_deref()
+        .map(crate::domain::runtime::normalize_memory_limit)
+        .transpose()
+        .map_err(ApiError::validation)?;
+    if memory_limit.is_none()
+        && reservation.is_none()
+        && request.cpu_limit.is_none()
+        && request.cpu_shares.is_none()
+        && request.pids_limit.is_none()
+    {
         return Err(ApiError::validation("Nothing to change."));
     }
 
@@ -1447,6 +1506,20 @@ pub async fn set_resources(
         .map(crate::domain::runtime::memory_bytes)
         .transpose()
         .map_err(ApiError::validation)?;
+    let reservation_bytes = reservation
+        .as_deref()
+        .map(crate::domain::runtime::memory_bytes)
+        .transpose()
+        .map_err(ApiError::validation)?;
+    // A soft target above the hard ceiling would never be reached; refusing it
+    // is kinder than storing a number that cannot happen.
+    if let (Some(soft), Some(hard)) = (reservation_bytes, memory_bytes) {
+        if soft > hard {
+            return Err(ApiError::validation(
+                "The memory reservation cannot be larger than the memory limit.",
+            ));
+        }
+    }
     if let Some(wanted) = memory_bytes {
         let budget = crate::services::node_service::free_budget(&mut scope, sandbox.node_id).await?;
         // The sandbox already holds its current memory; only growth is checked
@@ -1472,6 +1545,12 @@ pub async fn set_resources(
         if let Some(cpus) = request.cpu_limit {
             object.insert("cpu_limit".into(), serde_json::json!(cpus));
         }
+        if let Some(reservation) = &reservation {
+            object.insert("memory_reservation".into(), serde_json::json!(reservation));
+        }
+        if let Some(shares) = request.cpu_shares {
+            object.insert("cpu_shares".into(), serde_json::json!(shares));
+        }
         if let Some(pids) = request.pids_limit {
             object.insert("pids_limit".into(), serde_json::json!(pids));
         }
@@ -1486,7 +1565,11 @@ pub async fn set_resources(
             subject_type: Some("sandbox"),
             subject_id: Some(id),
             detail: &serde_json::json!({
-                "memory_limit": memory_limit, "cpu_limit": request.cpu_limit, "pids_limit": request.pids_limit
+                "memory_limit": memory_limit,
+                "memory_reservation": reservation,
+                "cpu_limit": request.cpu_limit,
+                "cpu_shares": request.cpu_shares,
+                "pids_limit": request.pids_limit
             }),
             request_id: None,
         },
@@ -1498,7 +1581,14 @@ pub async fn set_resources(
     let live = if sandbox.status == SandboxStatus::Running {
         match ctx
             .runtime
-            .update_resources(&sandbox.name, memory_bytes, request.cpu_limit, request.pids_limit)
+            .update_resources(
+                &sandbox.name,
+                memory_bytes,
+                reservation_bytes,
+                request.cpu_limit,
+                request.cpu_shares,
+                request.pids_limit,
+            )
             .await
         {
             Ok(()) => "applied",
@@ -1510,7 +1600,14 @@ pub async fn set_resources(
     } else {
         "saved_applies_on_start"
     };
-    Ok(serde_json::json!({ "applied": live, "memory_limit": memory_limit, "cpu_limit": request.cpu_limit, "pids_limit": request.pids_limit }))
+    Ok(serde_json::json!({
+        "applied": live,
+        "memory_limit": memory_limit,
+        "memory_reservation": reservation,
+        "cpu_limit": request.cpu_limit,
+        "cpu_shares": request.cpu_shares,
+        "pids_limit": request.pids_limit,
+    }))
 }
 
 /// The host's load, for the console's live strip.
@@ -1536,9 +1633,10 @@ pub async fn apply_agent_files(
     sandbox_name: &str,
     pack_key: &str,
     environment: &BTreeMap<String, String>,
+    servers: &[crate::domain::agent_config::McpServerConfig],
 ) -> usize {
     use base64::Engine;
-    let files = crate::domain::agent_config::files_for(pack_key, environment);
+    let files = crate::domain::agent_config::files_for_with_servers(pack_key, environment, servers);
     let mut written = 0;
     for file in &files {
         let encoded = base64::engine::general_purpose::STANDARD.encode(file.content.as_bytes());
@@ -1581,6 +1679,59 @@ fi"#;
     written
 }
 
+/// The MCP servers an agent in this sandbox should start with.
+///
+/// Read through a short scope of its own: the caller may hold a transaction, and
+/// a config write that needs a second read must not extend it. A failed read is
+/// an empty list plus a log line, because losing the hub address is better than
+/// refusing to start a sandbox whose agent would still work.
+pub async fn mcp_configs(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+    sandbox_name: &str,
+) -> Vec<crate::domain::agent_config::McpServerConfig> {
+    let mut scope = match TenantScope::begin_for(&ctx.pool, principal).await {
+        Ok(scope) => scope,
+        Err(error) => {
+            tracing::warn!(sandbox = sandbox_name, error = %error, "could not read MCP attachments");
+            return Vec::new();
+        }
+    };
+    let servers = match crate::store::postgres::mcp::agent_servers(&mut scope, sandbox_id).await {
+        Ok(servers) => servers,
+        Err(error) => {
+            tracing::warn!(sandbox = sandbox_name, error = %error, "could not read MCP attachments");
+            let _ = scope.commit().await;
+            return Vec::new();
+        }
+    };
+    let _ = scope.commit().await;
+    servers
+        .into_iter()
+        .map(|server| crate::domain::agent_config::McpServerConfig {
+            // The registry stores the compose name, which a host-network
+            // OpenShell supervisor cannot resolve. The deployment's URL wins,
+            // exactly as it does for the hub.
+            endpoint: if server.key == "nestbox-media" {
+                Some(crate::services::provider_service::media_mcp_url())
+            } else {
+                server.endpoint
+            },
+            sandbox: Some(sandbox_name.to_string()),
+            token_env: if server.auth_type == crate::domain::mcp::McpAuth::Token {
+                server.env_slots.first().cloned()
+            } else {
+                None
+            },
+            key: server.key,
+            transport: server.transport.as_str().to_string(),
+            command: server.command,
+            args: server.args,
+        })
+        .collect()
+}
+
 /// Re-apply an agent's configuration to an existing sandbox (a changed model, a
 /// sandbox from before the files existed).
 pub async fn reconfigure_agent(
@@ -1607,7 +1758,8 @@ pub async fn reconfigure_agent(
             .collect();
     apply_login_choice(&mut environment, sandbox.spec.get("login").and_then(|v| v.as_str()));
     environment.extend(egress_environment(&egress_proxy_url()));
-    let written = apply_agent_files(ctx, &sandbox.name, &sandbox.pack_key, &environment).await;
+    let servers = mcp_configs(ctx, principal, sandbox.id, &sandbox.name).await;
+    let written = apply_agent_files(ctx, &sandbox.name, &sandbox.pack_key, &environment, &servers).await;
     Ok(serde_json::json!({ "files_written": written }))
 }
 
@@ -1698,7 +1850,8 @@ pub async fn recreate(
     };
     match ctx.runtime.create(spec).await {
         Ok(facts) => {
-            apply_agent_files(ctx, &sandbox.name, &sandbox.pack_key, &configured).await;
+            let servers = mcp_configs(ctx, principal, sandbox.id, &sandbox.name).await;
+            apply_agent_files(ctx, &sandbox.name, &sandbox.pack_key, &configured, &servers).await;
             let _ = set_status(ctx, principal, sandbox.id, sandbox.version, SandboxStatus::Running, health_from_runtime(&facts)).await;
             Ok(serde_json::json!({ "recreated": true, "mounts": mounts.len() }))
         }

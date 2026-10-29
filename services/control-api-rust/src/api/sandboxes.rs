@@ -288,8 +288,13 @@ pub struct ResourcesRequest {
     /// `512Mi`, `2g`, ...
     #[serde(default)]
     pub memory_limit: Option<String>,
+    /// The soft target below the hard limit.
+    #[serde(default)]
+    pub memory_reservation: Option<String>,
     #[serde(default)]
     pub cpu_limit: Option<f64>,
+    #[serde(default)]
+    pub cpu_shares: Option<i64>,
     #[serde(default)]
     pub pids_limit: Option<i64>,
 }
@@ -307,7 +312,9 @@ pub async fn put_resources(
         id,
         sandbox_service::ResourceRequest {
             memory_limit: body.memory_limit,
+            memory_reservation: body.memory_reservation,
             cpu_limit: body.cpu_limit,
+            cpu_shares: body.cpu_shares,
             pids_limit: body.pids_limit,
         },
     )
