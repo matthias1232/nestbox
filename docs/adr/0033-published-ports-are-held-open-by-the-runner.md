@@ -36,9 +36,13 @@ started leaves a port open with nothing behind it, and "active" would be a lie.
 
 ## What the SSH door does not do
 
-No `scp`, `sftp`, or port forwarding (`-L`, `-R`, `-D`), so it cannot move data
-around the egress policy. VS Code Remote-SSH needs those and does not work through
-it; the console says so. SSH sessions are logged by the runner (who, when) but not
+There is no SFTP subsystem and port forwarding (`-L`, `-R`, `-D`) is refused, so
+the door cannot move traffic around the egress policy; this was checked against
+the running appliance. VS Code Remote-SSH needs both and does not work through it;
+the console says so. Legacy `scp -O` does work when the sandbox image has `scp`,
+because it is only a command run inside the sandbox, the same as typing it in a
+shell. A shell, `ssh host <command>` (so `ssh host claude`), a PTY with resize,
+and exit codes all work. SSH sessions are logged by the runner (who, when) but not
 yet recorded in `sandbox_sessions`; that needs a callback to the control API.
 
 ## Alternatives rejected
