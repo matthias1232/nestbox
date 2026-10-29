@@ -1034,6 +1034,7 @@ pub async fn rules_for_sandbox(
         .await
         .map_err(ApiError::from)?;
     rules.extend(crate::domain::policy::rules_from_providers(&providers));
+    rules.extend(attached_mcp_rules(&mut scope, sandbox_id, principal.environment_id).await?);
     rules.sort_by_key(|rule| rule.priority);
     scope.commit().await.map_err(ApiError::from)?;
     Ok(rules)
@@ -1189,6 +1190,7 @@ pub async fn check(ctx: &ServiceContext, input: CheckInput) -> Result<CheckOutco
         .await
         .map_err(ApiError::from)?;
     rules.extend(crate::domain::policy::rules_from_providers(&providers));
+    rules.extend(attached_mcp_rules(&mut scope, sandbox_id, owner.environment_id).await?);
     let windows = egress_store::open_windows(&mut scope, Some(sandbox_id))
         .await
         .map_err(ApiError::from)?;
@@ -1325,3 +1327,20 @@ pub async fn deployment(
     Ok(deployment)
 }
 
+
+
+/// Allow rules for the MCP servers attached (and enabled) on one sandbox.
+async fn attached_mcp_rules(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+    environment_id: Uuid,
+) -> Result<Vec<NetworkRule>, ApiError> {
+    use crate::store::postgres::mcp as mcp_store;
+    let attached = mcp_store::list_attachments(scope, sandbox_id).await.map_err(ApiError::from)?;
+    let registry = mcp_store::list_servers(scope).await.map_err(ApiError::from)?;
+    let servers: Vec<_> = registry
+        .into_iter()
+        .filter(|server| attached.iter().any(|a| a.enabled && a.server_key == server.key))
+        .collect();
+    Ok(crate::domain::policy::rules_from_mcp(&servers, sandbox_id, environment_id))
+}

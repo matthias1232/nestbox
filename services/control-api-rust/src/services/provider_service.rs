@@ -495,6 +495,28 @@ pub async fn environment_for_pack(
     environment_id: Uuid,
     pack_key: &str,
 ) -> Result<BTreeMap<String, String>, ApiError> {
+    let mut environment = model_environment_for_pack(ctx, environment_id, pack_key).await?;
+    if matches!(pack_key, "hermes" | "claude-code" | "opencode" | "openchamber") {
+        // The Nestbox MCP hub: its address and the shared token, when the hub is
+        // deployed (the token file exists). The token is the same for every agent;
+        // it authenticates "an agent of this appliance", and each call is logged
+        // by the proxy with the sandbox that made it.
+        if let Ok(token) = std::fs::read_to_string(ctx.secret_dir.join("mcp_hub_token")) {
+            let token = token.trim();
+            if !token.is_empty() {
+                environment.insert("NESTBOX_MCP_URL".into(), "http://mcp-hub:8080/mcp".into());
+                environment.insert("NESTBOX_MCP_TOKEN".into(), token.to_string());
+            }
+        }
+    }
+    Ok(environment)
+}
+
+async fn model_environment_for_pack(
+    ctx: &ServiceContext,
+    environment_id: Uuid,
+    pack_key: &str,
+) -> Result<BTreeMap<String, String>, ApiError> {
     match pack_key {
         "hermes" | "claude-code" | "opencode" | "openchamber" => {
             let mut scope = TenantScope::begin(&ctx.pool, environment_id)

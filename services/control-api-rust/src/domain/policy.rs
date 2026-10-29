@@ -1485,6 +1485,48 @@ pub fn rules_from_providers(profiles: &[crate::domain::provider::ProviderProfile
         .collect()
 }
 
+/// The MCP servers attached to a sandbox, as allow rules.
+///
+/// Attaching a server is the statement "this sandbox may use it", and an HTTP
+/// server is reached through the proxy, so without a rule the attachment would be
+/// refused by the very control plane that made it. Only HTTP/SSE servers with an
+/// endpoint produce a rule (a stdio server never crosses the proxy), and only for
+/// that sandbox.
+pub fn rules_from_mcp(
+    servers: &[crate::domain::mcp::McpServer],
+    sandbox_id: Uuid,
+    environment_id: Uuid,
+) -> Vec<NetworkRule> {
+    servers
+        .iter()
+        .filter(|server| server.enabled)
+        .filter_map(|server| {
+            let (host, port) = endpoint_host_port(server.endpoint.as_deref()?)?;
+            Some(NetworkRule {
+                id: Uuid::nil(),
+                environment_id,
+                policy_id: None,
+                sandbox_id: Some(sandbox_id),
+                name: format!("MCP server: {}", server.name),
+                action: RuleAction::Allow,
+                host: host.clone(),
+                port: Some(port),
+                protocol: RuleProtocol::Mcp,
+                methods: vec![],
+                binaries: vec![],
+                matchers: vec![
+                    Matcher { kind: MatcherKind::Host, value: Some(host) },
+                    Matcher { kind: MatcherKind::Port, value: Some(port.to_string()) },
+                ],
+                enforcement: Enforcement::Enforced,
+                priority: DOCUMENT_ALLOW_PRIORITY - 100,
+                enabled: true,
+                version: 1,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

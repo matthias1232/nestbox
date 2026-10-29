@@ -76,13 +76,26 @@ fn claude_code(environment: &BTreeMap<String, String>) -> Vec<AgentFile> {
         // Skip the first-run wizard: the endpoint and the credential are already set.
         AgentFile {
             path: ".claude.json".into(),
-            content: serde_json::to_string_pretty(&json!({
-                "hasCompletedOnboarding": true,
-                "theme": "dark",
-            }))
-            .unwrap_or_default(),
+            content: serde_json::to_string_pretty(&claude_state(environment)).unwrap_or_default(),
         },
     ]
+}
+
+/// `~/.claude.json`: skip the wizard and register the Nestbox MCP hub when there is one.
+/// The token is a `${NESTBOX_MCP_TOKEN}` reference, expanded by Claude Code from the
+/// environment, never written to the file.
+fn claude_state(environment: &BTreeMap<String, String>) -> serde_json::Value {
+    let mut state = json!({ "hasCompletedOnboarding": true, "theme": "dark" });
+    if let Some(url) = get(environment, "NESTBOX_MCP_URL") {
+        state["mcpServers"] = json!({
+            "nestbox-hub": {
+                "type": "http",
+                "url": url,
+                "headers": { "Authorization": "Bearer ${NESTBOX_MCP_TOKEN}" },
+            }
+        });
+    }
+    state
 }
 
 fn opencode(environment: &BTreeMap<String, String>) -> Vec<AgentFile> {
@@ -108,6 +121,17 @@ fn opencode(environment: &BTreeMap<String, String>) -> Vec<AgentFile> {
         "autoupdate": false,
         "share": "disabled",
     });
+    let mut config = config;
+    if let Some(url) = get(environment, "NESTBOX_MCP_URL") {
+        config["mcp"] = json!({
+            "nestbox-hub": {
+                "type": "remote",
+                "url": url,
+                "enabled": true,
+                "headers": { "Authorization": "Bearer {env:NESTBOX_MCP_TOKEN}" },
+            }
+        });
+    }
     vec![AgentFile {
         path: ".config/opencode/opencode.json".into(),
         content: serde_json::to_string_pretty(&config).unwrap_or_default(),
@@ -179,6 +203,19 @@ mod tests {
             let parsed: serde_json::Value = serde_json::from_str(&files[0].content).expect("valid json");
             assert_eq!(parsed["model"], "nestbox/opencode-go-combo");
         }
+    }
+
+    #[test]
+    fn the_mcp_hub_is_registered_by_reference_never_with_the_token() {
+        let mut environment = env();
+        environment.insert("NESTBOX_MCP_URL".into(), "http://mcp-hub:8080/mcp".into());
+        environment.insert("NESTBOX_MCP_TOKEN".into(), "tok-secret".into());
+        let claude = files_for("claude-code", &environment);
+        let state = claude.iter().find(|f| f.path == ".claude.json").expect("state");
+        assert!(state.content.contains("http://mcp-hub:8080/mcp") && state.content.contains("${NESTBOX_MCP_TOKEN}"));
+        assert!(!state.content.contains("tok-secret"));
+        let code = files_for("opencode", &environment);
+        assert!(code[0].content.contains("{env:NESTBOX_MCP_TOKEN}") && !code[0].content.contains("tok-secret"));
     }
 
     #[test]
