@@ -76,6 +76,22 @@ pub async fn processes(
     Ok(Json(table))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ProcessActionRequest {
+    pub action: String,
+    pub nice: Option<i8>,
+}
+
+/// Controlled process management. The fixed verbs are forwarded to the runner;
+/// no user input is ever treated as a command.
+pub async fn process_action(
+    State(state): State<AppState>, auth: Auth, Path((id, pid)): Path<(Uuid, i64)>,
+    Json(body): Json<ProcessActionRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let result = metrics_service::process_action(&state.services, &auth.principal, id, pid, body.action, body.nice).await?;
+    Ok(Json(result))
+}
+
 
 /// Record a batch of samples from a node, authenticated by the node's token.
 ///
