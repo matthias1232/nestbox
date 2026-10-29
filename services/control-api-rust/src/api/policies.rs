@@ -814,3 +814,71 @@ pub async fn connect_or_not_found(
         Err(error) => error.into_response(),
     }
 }
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct CloneRequest {
+    /// The name of the copy.
+    pub name: String,
+}
+
+/// Copy a policy under a new name (never as a global override).
+pub async fn clone_policy(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<CloneRequest>,
+) -> Result<(StatusCode, Json<policy_service::PolicySaveResult>), ApiError> {
+    let saved = policy_service::clone_policy(&state.services, &auth.principal, id, &body.name).await?;
+    Ok((StatusCode::CREATED, Json(saved)))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct AssignManyRequest {
+    pub sandbox_ids: Vec<Uuid>,
+}
+
+/// Assign one policy to several sandboxes.
+pub async fn assign_many(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<AssignManyRequest>,
+) -> Result<Json<policy_service::BulkResult>, ApiError> {
+    Ok(Json(
+        policy_service::assign_policy_to_many(&state.services, &auth.principal, id, &body.sandbox_ids).await?,
+    ))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct CopyRulesRequest {
+    /// Rules to copy…
+    #[serde(default)]
+    pub rule_ids: Vec<Uuid>,
+    /// …or every rule of this sandbox.
+    pub from_sandbox_id: Option<Uuid>,
+    /// Sandboxes that receive a copy.
+    #[serde(default)]
+    pub to_sandbox_ids: Vec<Uuid>,
+    /// Instead: one environment-wide rule per source, which applies to every sandbox.
+    #[serde(default)]
+    pub to_all: bool,
+}
+
+/// Copy rules to other sandboxes, or to all of them.
+pub async fn copy_rules(
+    State(state): State<AppState>,
+    auth: Auth,
+    Json(body): Json<CopyRulesRequest>,
+) -> Result<Json<policy_service::BulkResult>, ApiError> {
+    Ok(Json(
+        policy_service::copy_rules(
+            &state.services,
+            &auth.principal,
+            &body.rule_ids,
+            body.from_sandbox_id,
+            &body.to_sandbox_ids,
+            body.to_all,
+        )
+        .await?,
+    ))
+}

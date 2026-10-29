@@ -113,3 +113,18 @@ export function egressMode(sandboxId) {
 export function setEgressMode(sandboxId, mode) {
   return request(`sandboxes/${sandboxId}/egress-mode`, { method: 'PUT', body: { mode } });
 }
+
+// Copy a policy under a new name (never as a global override).
+export function clonePolicy(id, name) {
+  return request(`policies/${id}/clone`, { method: 'POST', body: { name } });
+}
+
+// Assign one policy to several sandboxes at once.
+export function assignMany(id, sandboxIds) {
+  return request(`policies/${id}/assign`, { method: 'POST', body: { sandbox_ids: sandboxIds } });
+}
+
+// Copy rules to other sandboxes, or make them apply to every sandbox.
+export function copyRules(body) {
+  return request('network-rules/copy', { method: 'POST', body });
+}

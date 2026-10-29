@@ -210,6 +210,9 @@ pub fn router(state: AppState) -> Router {
             get(policies::get).put(policies::update).delete(policies::delete),
         )
         .route("/api/v1/policies/{id}/diff", get(policies::diff))
+        .route("/api/v1/policies/{id}/clone", post(policies::clone_policy))
+        .route("/api/v1/policies/{id}/assign", post(policies::assign_many))
+        .route("/api/v1/network-rules/copy", post(policies::copy_rules))
         // The preset library, the editor's schema, and a sandbox's policy
         .route(
             "/api/v1/policy-templates",

@@ -1421,3 +1421,109 @@ pub async fn sync_openshell_policies(ctx: &ServiceContext) -> Result<u64, ApiErr
     }
     Ok(changed)
 }
+
+/// A copy of a policy under a new name, never global: a clone is a starting point an
+/// operator edits and assigns, not an override that appears by itself.
+pub async fn clone_policy(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    id: Uuid,
+    name: &str,
+) -> Result<PolicySaveResult, ApiError> {
+    require(principal, Permission::PolicyWrite)?;
+    let name = name.trim();
+    if name.is_empty() || name.len() > 120 {
+        return Err(ApiError::validation("A policy name is 1 to 120 characters."));
+    }
+    let source = get(ctx, principal, id).await?;
+    create(ctx, principal, name, PolicyScope::Sandbox, &source.spec).await
+}
+
+/// What a bulk operation did, per target, so a partial failure is visible.
+#[derive(Debug, serde::Serialize)]
+pub struct BulkResult {
+    pub done: usize,
+    pub failed: Vec<(Uuid, String)>,
+}
+
+/// Assign one policy to several sandboxes.
+pub async fn assign_policy_to_many(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    policy_id: Uuid,
+    sandbox_ids: &[Uuid],
+) -> Result<BulkResult, ApiError> {
+    require(principal, Permission::PolicyWrite)?;
+    if sandbox_ids.is_empty() || sandbox_ids.len() > 200 {
+        return Err(ApiError::validation("Name between 1 and 200 sandboxes."));
+    }
+    let mut result = BulkResult { done: 0, failed: Vec::new() };
+    for sandbox_id in sandbox_ids {
+        match assign_policy_to_sandbox(ctx, principal, *sandbox_id, policy_id).await {
+            Ok(_) => result.done += 1,
+            Err(error) => result.failed.push((*sandbox_id, error.message)),
+        }
+    }
+    Ok(result)
+}
+
+/// Copy network rules to other sandboxes, or to every sandbox that exists.
+///
+/// The source is either the listed rules or every rule of one sandbox. A copy keeps
+/// the destination, ports, protocol, methods, binaries and enforcement and carries
+/// the target's id. `to_all` means every sandbox that exists now: a rule always
+/// belongs to a sandbox or a policy (the database enforces it), so a sandbox created
+/// later does not inherit it; for that, put the rules in a policy and assign it.
+pub async fn copy_rules(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    rule_ids: &[Uuid],
+    from_sandbox_id: Option<Uuid>,
+    to_sandbox_ids: &[Uuid],
+    to_all: bool,
+) -> Result<BulkResult, ApiError> {
+    require(principal, Permission::PolicyWrite)?;
+    let to_sandbox_ids: Vec<Uuid> = if to_all {
+        let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+            .await
+            .map_err(ApiError::from)?;
+        let ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM sandboxes")
+            .fetch_all(scope.connection())
+            .await
+            .map_err(|error| ApiError::from(crate::error::StoreError::Database(error)))?;
+        scope.commit().await.map_err(ApiError::from)?;
+        ids
+    } else {
+        to_sandbox_ids.to_vec()
+    };
+    if to_sandbox_ids.is_empty() || to_sandbox_ids.len() > 200 {
+        return Err(ApiError::validation("Name between 1 and 200 target sandboxes, or choose all."));
+    }
+    let all = list_rules(ctx, principal).await?;
+    let sources: Vec<NetworkRule> = all
+        .into_iter()
+        .filter(|rule| rule_ids.contains(&rule.id) || (from_sandbox_id.is_some() && rule.sandbox_id == from_sandbox_id))
+        .collect();
+    if sources.is_empty() {
+        return Err(ApiError::validation("There is no rule to copy: name rules, or a sandbox that has some."));
+    }
+    let targets: Vec<Option<Uuid>> = to_sandbox_ids.iter().map(|id| Some(*id)).collect();
+    let mut result = BulkResult { done: 0, failed: Vec::new() };
+    for target in targets {
+        for source in &sources {
+            if target.is_some() && target == source.sandbox_id {
+                continue;
+            }
+            let mut copy = source.clone();
+            copy.id = Uuid::nil();
+            copy.policy_id = None;
+            copy.sandbox_id = target;
+            copy.version = 1;
+            match create_rule(ctx, principal, copy).await {
+                Ok(_) => result.done += 1,
+                Err(error) => result.failed.push((source.id, error.message)),
+            }
+        }
+    }
+    Ok(result)
+}
