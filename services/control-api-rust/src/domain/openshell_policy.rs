@@ -171,7 +171,15 @@ fn endpoint_for(rule: &NetworkRule) -> Result<Value, String> {
         RuleProtocol::Mcp => {
             endpoint.insert("protocol".into(), json!("mcp"));
             endpoint.insert("enforcement".into(), json!(enforce));
-            endpoint.insert("mcp".into(), json!({ "allow_all_known_mcp_methods": true }));
+            // OpenShell allows only the newest MCP revision by default; agents in the
+            // field still speak the earlier ones.
+            endpoint.insert(
+                "mcp".into(),
+                json!({
+                    "allow_all_known_mcp_methods": true,
+                    "versions": ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"],
+                }),
+            );
         }
         RuleProtocol::Tcp => {
             if endpoint.contains_key("allowed_ips") {
@@ -249,6 +257,14 @@ mod tests {
         assert_eq!(endpoint["tls"], "skip");
         let named = compile(&[rule("Db", RuleAction::Allow, "db.example.com", Some(5432), RuleProtocol::Tcp)]);
         assert_eq!(entries(&named).values().next().unwrap()["endpoints"][0]["protocol"], "tcp");
+    }
+
+    #[test]
+    fn an_mcp_rule_allows_the_revisions_agents_speak() {
+        let compiled = compile(&[rule("Hub", RuleAction::Allow, "host.openshell.internal", Some(18088), RuleProtocol::Mcp)]);
+        let mcp = &entries(&compiled).values().next().unwrap()["endpoints"][0]["mcp"];
+        assert_eq!(mcp["allow_all_known_mcp_methods"], true);
+        assert!(mcp["versions"].as_array().unwrap().iter().any(|v| v == "2025-06-18"));
     }
 
     #[test]
