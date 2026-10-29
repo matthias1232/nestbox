@@ -14,7 +14,8 @@ from app import catalogue
 
 class QueryValidation(unittest.TestCase):
     def test_a_package_fragment_is_accepted(self) -> None:
-        for query in ("nginx", "python3", "libstdc++", "@angular/core", "postgresql-16"):
+        # A distro package never starts with a symbol; `+` and `.` occur inside.
+        for query in ("nginx", "python3", "libstdc++", "postgresql-16", "docker-ce"):
             self.assertIsNotNone(catalogue.QUERY.match(query), query)
 
     def test_shell_text_is_refused(self) -> None:
