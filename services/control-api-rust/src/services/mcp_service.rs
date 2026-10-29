@@ -234,7 +234,9 @@ pub async fn create(
     principal: &Principal,
     input: ServerInput,
 ) -> Result<McpServer, ApiError> {
-    require(principal, Permission::SandboxWrite)?;
+    // The registry is shared and an attached HTTP server is allowed through the sandbox's
+    // policy, so defining one is an admin's decision, not a user's.
+    require(principal, Permission::ProviderWrite)?;
     let validated = validate(&input, None)?;
 
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
@@ -260,7 +262,9 @@ pub async fn replace(
     key: &str,
     input: ServerInput,
 ) -> Result<McpServer, ApiError> {
-    require(principal, Permission::SandboxWrite)?;
+    // The registry is shared and an attached HTTP server is allowed through the sandbox's
+    // policy, so defining one is an admin's decision, not a user's.
+    require(principal, Permission::ProviderWrite)?;
     let validated = validate(&input, Some(key))?;
 
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
@@ -283,7 +287,9 @@ pub async fn delete(
     principal: &Principal,
     key: &str,
 ) -> Result<(), ApiError> {
-    require(principal, Permission::SandboxWrite)?;
+    // The registry is shared and an attached HTTP server is allowed through the sandbox's
+    // policy, so defining one is an admin's decision, not a user's.
+    require(principal, Permission::ProviderWrite)?;
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;

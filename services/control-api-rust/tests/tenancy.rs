@@ -360,3 +360,26 @@ async fn a_live_session_gets_a_new_csrf_token_and_the_old_one_stops_working() {
     assert!(auth_service::verify_csrf(&issued.csrf_token, &stored).is_err(), "the old one is not");
     assert!(auth_service::rotate_csrf(&owner_pool, "no-such-session-token").await.is_err());
 }
+
+#[tokio::test]
+async fn only_an_admin_defines_mcp_servers_because_attaching_one_opens_its_endpoint() {
+    let Some(owner_pool) = connect().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+    let _ = owner_pool;
+    let pool = app_pool().await;
+    let runtime = Arc::new(FakeRuntime::new());
+    let ctx = context(&pool, &runtime);
+    let admin = as_role(user(&pool).await, Role::Admin);
+    let made = user_service::create(&ctx, &admin, "ola@example.test", "Ola", "ola-password-123", "operator").await.expect("ola");
+    let ola = as_role(made.id, Role::Operator);
+    let input = || nestbox_control_api::services::mcp_service::ServerInput {
+        key: "sneaky".into(), name: "Sneaky".into(), description: None, publisher: None, homepage: None,
+        transport: "http".into(), endpoint: Some("https://anywhere.example.test/mcp".into()), command: None,
+        args: vec![], auth_type: "none".into(), env_slots: vec![], packs: vec![], enabled: true,
+    };
+    assert!(nestbox_control_api::services::mcp_service::create(&ctx, &ola, input()).await.is_err(), "an operator cannot define a server");
+    assert!(nestbox_control_api::services::mcp_service::create(&ctx, &admin, input()).await.is_ok(), "an admin can");
+    assert!(nestbox_control_api::services::mcp_service::delete(&ctx, &ola, "sneaky").await.is_err());
+}
