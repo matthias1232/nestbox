@@ -67,6 +67,17 @@ def phase_to_status(phase: str) -> str:
     return {"Ready": "running", "Provisioning": "created", "Starting": "created"}.get(phase, "exited")
 
 
+def memory_quantity(value: str) -> str:
+    """A Docker-style limit (`1073741824b`, `1g`, `512m`) as a Kubernetes quantity."""
+    text = value.strip().lower().removesuffix("b")
+    if text.isdigit():
+        return text
+    unit = text[-1:]
+    if unit in {"k", "m", "g", "t"} and text[:-1].isdigit():
+        return f"{text[:-1]}{unit.upper()}i"
+    return value
+
+
 def create(
     *,
     name: str,
@@ -82,8 +93,7 @@ def create(
 ) -> dict[str, Any]:
     args = [
         "sandbox", "create", "--name", name, "--from", image,
-        "--cpu", f"{cpu_limit:g}", "--memory", memory_limit.replace("g", "Gi").replace("m", "Mi")
-        if memory_limit[-1] in "gm" and not memory_limit.endswith("i") else memory_limit,
+        "--cpu", f"{cpu_limit:g}", "--memory", memory_quantity(memory_limit),
         "--detach", "--restart-policy", "always", "--no-tty", "--no-auto-providers",
         "--no-credential-warnings", "-o", "json",
     ]
