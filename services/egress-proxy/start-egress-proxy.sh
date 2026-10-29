@@ -28,6 +28,9 @@ umask 0077
 sed -e "s|__NESTBOX_NODE_ID__|${NODE_ID}|g" -e "s|__NESTBOX_NODE_TOKEN__|${TOKEN}|g" \
     "$CONF" > /tmp/envoy.yaml
 CONF=/tmp/envoy.yaml
+# The Lua filter asks the control API about tunnels, so it needs the same identity.
+sed -e "s|__NESTBOX_NODE_ID__|${NODE_ID}|g" -e "s|__NESTBOX_NODE_TOKEN__|${TOKEN}|g" \
+    /etc/envoy/extensions/mcp.lua > /tmp/mcp.lua
 
 # The certificate broker is only useful for the TLS-reading mode; when its CA
 # secret is absent it exits with a message and Envoy carries on, because the

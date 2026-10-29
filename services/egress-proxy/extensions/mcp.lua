@@ -24,6 +24,11 @@
 -- A wrong tool name in a log is worse than none, so anything unrecognised
 -- stays empty.
 
+-- This node's identity, filled in by start-egress-proxy.sh when the container
+-- starts (the token is not in the image). Used for the tunnel check below.
+local NODE_ID = "__NESTBOX_NODE_ID__"
+local NODE_TOKEN = "__NESTBOX_NODE_TOKEN__"
+
 local METHODS = {
   "initialize",
   "tools/",
@@ -111,6 +116,53 @@ local function classify(body)
   return method, tool
 end
 
+-- Ask the control API whether a CONNECT may open, before a byte is tunnelled.
+--
+-- Envoy's ext_authz cannot carry a CONNECT to an HTTP authorization service (the
+-- request has no path, and the service closes the connection), so the question is
+-- asked here with a plain GET. The answer is the same one every other request
+-- gets: the control API decides from the destination and the source address.
+-- Anything but a clear "200" refuses the tunnel, including no answer at all: a
+-- proxy that cannot ask does not guess.
+local function check_tunnel(handle, authority, source_address)
+  local ok, response_headers = pcall(function()
+    local result = handle:httpCall(
+      "control_api",
+      {
+        [":method"] = "GET",
+        [":path"] = "/api/v1/internal/policy/check/",
+        [":authority"] = authority,
+        ["x-nestbox-node"] = NODE_ID,
+        ["authorization"] = "Bearer " .. NODE_TOKEN,
+        ["x-nestbox-source-ip"] = source_address or "",
+        ["user-agent"] = handle:headers():get("user-agent") or "",
+      },
+      "",
+      2000
+    )
+    return result
+  end)
+  local meta = handle:streamInfo():dynamicMetadata()
+  if not ok or response_headers == nil then
+    meta:set("envoy.filters.http.ext_authz", "x-nestbox-decision", "deny")
+    meta:set("envoy.filters.http.ext_authz", "x-nestbox-reason", "decider_unreachable")
+    handle:respond({ [":status"] = "503", ["x-nestbox-decision"] = "deny" }, "")
+    return
+  end
+  for _, name in ipairs({ "x-nestbox-decision", "x-nestbox-reason", "x-nestbox-rule-id", "x-nestbox-sandbox" }) do
+    local value = response_headers[name]
+    if value then
+      meta:set("envoy.filters.http.ext_authz", name, value)
+    end
+  end
+  if response_headers[":status"] ~= "200" then
+    handle:respond(
+      { [":status"] = "403", ["x-nestbox-decision"] = response_headers["x-nestbox-decision"] or "deny" },
+      ""
+    )
+  end
+end
+
 function envoy_on_request(handle)
   -- Who is asking is the connection's address, not anything the client wrote.
   -- Any `x-nestbox-*` header the sandbox sent is removed first, then the source
@@ -137,6 +189,7 @@ function envoy_on_request(handle)
     -- no visible ClientHello. What we do know is the name the client asked
     -- for; the log says `connect: true` so nobody reads this as a sniffed SNI.
     set(handle, "connect", "true")
+    check_tunnel(handle, headers:get(":authority"), request_headers:get("x-nestbox-source-ip"))
     set(handle, "sni", host)
   end
 
