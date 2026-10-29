@@ -18,6 +18,15 @@ OPENSHELL = re.compile(r"^\[(?P<ts>\d+\.\d+)\]\s*\[(?P<source>[A-Za-z]+)\s*\]\s*
 DOCKER = re.compile(r"^(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s?(?P<rest>.*)$")
 
 
+# The OpenShell runtime inside the workload reports "provider file snapshot updated" every five
+# seconds, whether or not anything changed. It says nothing and buries everything else.
+NOISE = ("Provider file snapshot updated",)
+
+
+def _is_noise(text: str) -> bool:
+    return any(marker in text for marker in NOISE)
+
+
 def _iso(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + f"{int((epoch % 1) * 1000):03d}Z"
 
@@ -55,5 +64,6 @@ def merge(agent: str, openshell: str, tail: int) -> str:
         parsed = parse_openshell(line)
         if parsed:
             rows.append(parsed)
+    rows = [row for row in rows if not _is_noise(row[2])]
     rows.sort(key=lambda row: row[0])
     return "\n".join(f"{_iso(ts)} [{source}] {text}" for ts, source, text in rows[-tail:])
