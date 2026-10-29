@@ -25,7 +25,11 @@ const blank = {
   cpu: '1',
   pids: '512',
   parent_id: '',
+  login: 'gateway',
 };
+
+// The agent packs that can sign in with the user's own account.
+export const hasOwnLogin = (packKey) => ['claude-code', 'opencode', 'openchamber'].includes(packKey);
 
 export function useCreateSandbox() {
   const [nodes, setNodes] = createSignal([]);
@@ -157,6 +161,8 @@ export function useCreateSandbox() {
         pids_limit: pids(),
         ...(current.node ? { node: current.node } : {}),
         ...(current.parent_id ? { parent_id: current.parent_id } : {}),
+        // Only the agents with a login of their own offer the choice; the rest use the gateway.
+        ...(current.login === 'own_account' && hasOwnLogin(current.pack_key) ? { login: 'own_account' } : {}),
       });
       return created;
     } catch (failure) {

@@ -112,6 +112,10 @@ pub struct CreateRequest {
     /// The node to place the sandbox on, by name. Omitted means the local node.
     #[serde(default)]
     pub node: Option<String>,
+    /// `gateway` (default) or `own_account`: whether the agent uses the appliance's model
+    /// key or the user signs in themselves inside the sandbox.
+    #[serde(default)]
+    pub login: Option<String>,
 }
 
 fn default_memory() -> String {
@@ -144,6 +148,7 @@ pub async fn create(
             pids_limit: body.pids_limit,
             node: body.node,
             parent_id: body.parent_id,
+            login: body.login,
         },
     )
     .await?;
