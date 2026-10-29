@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use crate::domain::metrics::{InventoryProbe, ProcessTable};
 use crate::domain::pack_access::ForwardState;
 use crate::domain::runtime::{
-    BuildRequest, BuildResult, ComponentState, ExecResult, ForwardRequest, HardwareReport,
+    BuildRequest, ComponentLimits, BuildResult, ComponentState, ExecResult, ForwardRequest, HardwareReport,
     ModelDownload, ModelDownloadResult, ModelServe, ModelServeResult, NetworkInterface,
     RuntimeFacts, RuntimeResources, SandboxSpec, SshCredential,
 };
@@ -485,6 +485,37 @@ impl RuntimeAdapter for HttpRunner {
         }
         let answer: Answer = self.send(reqwest::Method::GET, "/v1/system/components", None).await?;
         Ok(answer.components)
+    }
+
+    async fn set_component_limits(
+        &self,
+        service: &str,
+        limits: ComponentLimits,
+    ) -> Result<(), RuntimeError> {
+        if limits.is_empty() {
+            return Err(RuntimeError::Rejected("nothing to change".into()));
+        }
+        let payload = serde_json::to_value(&limits)
+            .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        let _: serde_json::Value = self
+            .send(
+                reqwest::Method::PUT,
+                &format!("/v1/system/components/{service}/limits"),
+                Some(&payload),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn restart_component(&self, service: &str) -> Result<(), RuntimeError> {
+        let _: serde_json::Value = self
+            .send(
+                reqwest::Method::POST,
+                &format!("/v1/system/components/{service}/restart"),
+                Some(&serde_json::json!({})),
+            )
+            .await?;
+        Ok(())
     }
 
     async fn component_logs(&self, service: &str, tail: u32) -> Result<String, RuntimeError> {

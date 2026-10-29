@@ -329,6 +329,47 @@ pub struct ComponentState {
     pub restarts: i64,
     #[serde(default)]
     pub ports: serde_json::Value,
+    /// The container's CPU share of all host cores, as Docker reports it.
+    #[serde(default)]
+    pub cpu_pct: Option<f32>,
+    /// Current memory use and the limit it runs under.
+    #[serde(default)]
+    pub mem_bytes: Option<i64>,
+    #[serde(default)]
+    pub mem_limit_bytes: Option<i64>,
+    #[serde(default)]
+    pub pids: Option<i64>,
+    /// The limits the container was started with, as Docker holds them.
+    #[serde(default)]
+    pub limits: serde_json::Value,
+}
+
+/// A change to a platform container's CPU, memory or process limits.
+///
+/// Narrow on purpose: no device requests, no privileged mode, no mounts. This
+/// tunes components that already exist; it is not a way to build a container
+/// through the console.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct ComponentLimits {
+    #[serde(default)]
+    pub memory_limit_bytes: Option<i64>,
+    #[serde(default)]
+    pub nano_cpus: Option<i64>,
+    #[serde(default)]
+    pub cpu_shares: Option<i64>,
+    #[serde(default)]
+    pub pids_limit: Option<i64>,
+}
+
+impl ComponentLimits {
+    /// Whether anything would change. An empty change is a 422 rather than a
+    /// success that did nothing.
+    pub fn is_empty(&self) -> bool {
+        self.memory_limit_bytes.is_none()
+            && self.nano_cpus.is_none()
+            && self.cpu_shares.is_none()
+            && self.pids_limit.is_none()
+    }
 }
 
 /// A temporary SSH login as the runner checks it: never the password itself.

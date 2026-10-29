@@ -122,6 +122,14 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/sandboxes/{id}/stack-topology", get(stack::stack_topology))
         .route("/api/v1/system/components", get(stack::components))
         .route("/api/v1/system/components/{service}/logs", get(stack::component_logs))
+        .route(
+            "/api/v1/system/components/{service}/limits",
+            axum::routing::put(stack::set_component_limits),
+        )
+        .route(
+            "/api/v1/system/components/{service}/restart",
+            post(stack::restart_component),
+        )
         .route("/api/v1/nodes/{id}/endpoint", put(access::put_node_endpoint))
         .route("/api/v1/sandboxes/{id}/ssh-key", get(access::ssh_key))
         .route(
