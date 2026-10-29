@@ -51,15 +51,15 @@ services:
         # control API accepts for that route.
         [ -s /secrets/media_mcp_token ] || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > /secrets/media_mcp_token
         [ -s /secrets/media_bridge_token ] || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > /secrets/media_bridge_token
-        mkdir -p /secrets/media /data/media
-        cp /secrets/media_mcp_token /secrets/media/token
-        cp /secrets/media_bridge_token /secrets/media/bridge
+        mkdir -p /data/media /data/media-secrets
         # The media server runs as its own unprivileged user (uid 10003 inside its
-        # image), so a 0400 root file would be unreadable and every call would be
-        # refused. These copies are readable inside the container's own mount and
-        # nowhere else on the host; the originals keep their restrictive mode.
-        chmod 0755 /secrets/media
-        chmod 0444 /secrets/media/token /secrets/media/bridge
+        # image). `/secrets` is 0700 for the API's user, so a file there is
+        # unreachable no matter its own mode; the copies therefore live under
+        # /data, in a directory only this directory's mount exposes.
+        cp /secrets/media_mcp_token /data/media-secrets/token
+        cp /secrets/media_bridge_token /data/media-secrets/bridge
+        chmod 0755 /data/media-secrets
+        chmod 0444 /data/media-secrets/token /data/media-secrets/bridge
         mkdir -p /secrets/mcp
         cp /secrets/mcp_hub_token /secrets/mcp/token
         chown -R 10002:10002 /secrets/mcp
@@ -385,7 +385,7 @@ services:
     environment:
       NESTBOX_CONTROL_URL: http://control-api:8000
     volumes:
-      - ./secrets/media:/run/media:ro
+      - ./data/media-secrets:/run/media:ro
     # Same reachability trade as the hub: loopback only, bearer token required.
     ports:
       - "127.0.0.1:18089:8080"
