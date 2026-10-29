@@ -20,6 +20,7 @@ sha2 = "0.10"
 subtle = "2"
 argon2 = "0.5"
 base64 = "0.22"
+aes-gcm = "0.10"
 # Ed25519 SSH keys with an OpenSSH encoding and the SHA256 fingerprint format,
 # so the one-time download is a key `ssh -i` accepts without conversion.
 ssh-key = { version = "0.6", features = ["ed25519", "rand_core"] }

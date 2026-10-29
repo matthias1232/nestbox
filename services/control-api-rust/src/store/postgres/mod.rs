@@ -17,6 +17,7 @@ pub mod nodes;
 pub mod persistent_roots;
 pub mod policies;
 pub mod providers;
+pub mod vault;
 pub mod recipes;
 pub mod sandboxes;
 pub mod telemetry;

@@ -34,6 +34,12 @@ services:
         # `Sec-WebSocket-Protocol`, and base64's `+`, `/`, `=` are not valid in
         # a protocol token — the handshake would fail with a bare 400.
         [ -s /secrets/node/token ] || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > /secrets/node/token
+        # The secret store's master key (ADR 0037): 32 random bytes as 64 hex
+        # characters. Idempotent, and never regenerated: a new key would make every
+        # stored secret unreadable. It lives beside the other secrets, not in the
+        # database, so a database copy is not a copy of the keys.
+        [ -s /secrets/vault_key ] || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > /secrets/vault_key
+        chmod 0400 /secrets/vault_key
         chown -R 10001:10001 /data /secrets
         # The MCP hub's shared token: one file the control API reads (it hands the
         # token to the agents' environment) and one copy only the hub's user can read.
