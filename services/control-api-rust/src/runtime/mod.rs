@@ -157,6 +157,11 @@ pub trait RuntimeAdapter: Send + Sync {
         Err(RuntimeError::Unavailable("this runtime cannot change limits live".into()))
     }
 
+    /// What the OpenShell gateway and supervisor report about one sandbox.
+    async fn openshell_view(&self, _name: &str) -> Result<serde_json::Value, RuntimeError> {
+        Err(RuntimeError::Unavailable("this sandbox is not on an OpenShell gateway".into()))
+    }
+
     /// Network decisions the runtime's own enforcement logged recently, as raw
     /// events (OpenShell supervisors). Empty for a runtime whose decisions already
     /// flow through the egress proxy's access log.

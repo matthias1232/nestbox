@@ -835,3 +835,38 @@ pub async fn ensure_supervisors(ctx: &ServiceContext) -> Result<u64, ApiError> {
     }
     Ok(changed)
 }
+
+/// What the OpenShell gateway and the supervisor say about one sandbox, next to the
+/// supervisor row Nestbox keeps for it.
+///
+/// A read: the boundary state, the policy being enforced, the recent log. A sandbox
+/// that is not on an OpenShell gateway answers 409 with the reason, because "no
+/// supervisor to show" is a fact about that sandbox, not an empty page.
+pub async fn supervisor_view(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+) -> Result<serde_json::Value, ApiError> {
+    require(principal, Permission::GatewayRead)?;
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let sandbox = crate::store::postgres::sandboxes::get(&mut scope, sandbox_id)
+        .await
+        .map_err(|error| match error {
+            StoreError::NotFound => ApiError::not_found(ErrorCode::SANDBOX_NOT_FOUND, "No such sandbox in this environment."),
+            other => ApiError::from(other),
+        })?;
+    let supervisor = store::supervisor_for_sandbox(&mut scope, sandbox_id).await.ok();
+    scope.commit().await.map_err(ApiError::from)?;
+
+    let live = ctx
+        .runtime
+        .openshell_view(&sandbox.name)
+        .await
+        .map_err(|error| ApiError::conflict(ErrorCode::SANDBOX_INVALID_STATE, error.to_string()))?;
+    Ok(serde_json::json!({
+        "supervisor": supervisor,
+        "openshell": live,
+    }))
+}

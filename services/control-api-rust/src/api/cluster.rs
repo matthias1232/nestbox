@@ -154,3 +154,13 @@ pub async fn supervisors(
     let supervisors = gateway_service::supervisors(&state.services, &auth.principal).await?;
     Ok(Json(serde_json::json!({ "items": supervisors })))
 }
+
+/// The supervisor of one sandbox, as the gateway and the supervisor report it.
+pub async fn sandbox_supervisor(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let view = gateway_service::supervisor_view(&state.services, &auth.principal, id).await?;
+    Ok(Json(view))
+}

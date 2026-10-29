@@ -5,3 +5,13 @@
 td .runtime-tag { white-space: nowrap; }
 .table-scroll td.actions { white-space: normal; min-width: 22rem; }
 .table-scroll td.actions .stack-select { max-width: 9rem; }
+.supervisor-tab .explain { margin: 0 0 1rem; line-height: 1.5; }
+.supervisor-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+.supervisor-tab .card { padding: 1rem; border: 1px solid var(--border, #333); border-radius: 8px; margin-bottom: 1rem; }
+.supervisor-tab .card h3 { margin: 0 0 .5rem; font-size: 1rem; }
+.supervisor-tab .card h4 { margin: .75rem 0 .25rem; font-size: .85rem; }
+.supervisor-tab dl.facts { display: grid; grid-template-columns: 11rem 1fr; gap: .25rem .75rem; margin: 0; }
+.supervisor-tab dl.facts dt { color: var(--muted, #888); }
+.supervisor-tab ul.conditions, .supervisor-tab ul.rules { list-style: none; padding: 0; margin: .5rem 0 0; }
+.supervisor-tab ul.rules li { margin-bottom: .5rem; }
+.supervisor-tab pre.log { max-height: 20rem; overflow: auto; font-size: .75rem; margin: 0; white-space: pre-wrap; }

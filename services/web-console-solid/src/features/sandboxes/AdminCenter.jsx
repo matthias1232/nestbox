@@ -25,6 +25,8 @@ import McpTab from './McpTab.jsx';
 import TerminalTab from './TerminalTab.jsx';
 import AccessTab from './AccessTab.jsx';
 import MapTab from './MapTab.jsx';
+import SupervisorTab from './SupervisorTab.jsx';
+import '../../styles/sandbox-hierarchy.css';
 import PoliciesTab from './PoliciesTab.jsx';
 import ProcessesTab from './ProcessesTab.jsx';
 import InventoryTab from './InventoryTab.jsx';
@@ -39,6 +41,7 @@ const TABS = [
   { id: 'access', label: 'Access', component: AccessTab },
   { id: 'mounts', label: 'Mounts', component: MountsTab },
   { id: 'map', label: 'Topology', component: MapTab },
+  { id: 'supervisor', label: 'Supervisor', component: SupervisorTab },
   { id: 'policies', label: 'Policies', component: PoliciesTab },
   { id: 'processes', label: 'Processes', component: ProcessesTab },
   { id: 'inventory', label: 'Inventory', component: InventoryTab },

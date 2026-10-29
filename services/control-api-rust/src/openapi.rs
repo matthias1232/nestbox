@@ -183,6 +183,7 @@ pub const OPERATIONS: &[Operation] = &[
     op("GET", "/api/v1/audit-events", "Recent audit events", "audit", "viewer", false, StreamKind::None),
     // Admin Center: resource history, processes, inventory
     op("GET", "/api/v1/sandboxes/{id}/metrics", "CPU, memory, network and disk over a window", "sandboxes", "viewer", false, StreamKind::None),
+    op("GET", "/api/v1/sandboxes/{id}/supervisor", "The sandbox's OpenShell supervisor: boundary state, policy, recent log", "sandboxes", "viewer", false, StreamKind::None),
     op("GET", "/api/v1/sandboxes/{id}/processes", "The sandbox's process table, read live", "sandboxes", "viewer", false, StreamKind::None),
     op("GET", "/api/v1/sandboxes/{id}/inventory", "The last inventory snapshot and its age", "sandboxes", "viewer", false, StreamKind::None),
     op("POST", "/api/v1/sandboxes/{id}/inventory/refresh", "Take a new inventory snapshot", "sandboxes", "operator", true, StreamKind::None),
