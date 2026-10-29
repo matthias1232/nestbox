@@ -76,6 +76,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/sandboxes/{id}/stack", put(sandboxes::put_stack))
         .route("/api/v1/sandboxes/{id}/resources", put(sandboxes::put_resources))
         .route("/api/v1/host/load", get(sandboxes::host_load))
+        .route("/api/v1/sandboxes/{id}/agent-config", post(sandboxes::reconfigure))
         // Admin Center: resource history, processes, inventory
         .route(
             "/api/v1/internal/metrics/ingest",

@@ -317,3 +317,13 @@ pub async fn host_load(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     Ok(Json(sandbox_service::host_load(&state.services, &auth.principal).await?))
 }
+
+
+/// Write the agent's configuration files (model endpoint, proxy) into a running sandbox.
+pub async fn reconfigure(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(sandbox_service::reconfigure_agent(&state.services, &auth.principal, id).await?))
+}
