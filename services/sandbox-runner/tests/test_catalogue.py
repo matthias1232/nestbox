@@ -41,6 +41,14 @@ class Parsing(unittest.TestCase):
         self.assertEqual(hits[0]["name"], "nginx")
         self.assertEqual(hits[0]["version"], "1.26.2-r0")
 
+    def test_an_apk_line_carries_a_description(self) -> None:
+        hits = catalogue.parse_search(
+            "apk", "nginx-1.26.2-r0 - A high performance web server\n"
+        )
+        self.assertEqual(hits[0]["name"], "nginx")
+        self.assertEqual(hits[0]["version"], "1.26.2-r0")
+        self.assertEqual(hits[0]["summary"], "A high performance web server")
+
     def test_an_apk_name_with_a_hyphen_keeps_it(self) -> None:
         hits = catalogue.parse_search("apk", "py3-pip-24.0-r2\n")
         self.assertEqual(hits[0]["name"], "py3-pip")

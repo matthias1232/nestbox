@@ -178,13 +178,16 @@ def parse_search(manager: str, output: str, limit: int = 60) -> list[dict[str, A
             name = parts[0].rsplit(".", 1)[0] if "." in parts[0] else parts[0]
             hits.append(_hit(name, parts[1], parts[2] if len(parts) > 2 else None))
         else:
-            # `apk search -v` prints `name-version`; the version starts at the
-            # first `-<digit>`, because both parts contain hyphens.
-            match = APK_LINE.match(line)
+            # `apk search -v` prints `name-version - description`; the version
+            # starts at the first `-<digit>`, because both parts contain hyphens.
+            head, _, summary = line.partition(" - ")
+            match = APK_LINE.match(head.strip())
             if match:
-                hits.append(_hit(match.group("name"), match.group("version"), None))
+                hits.append(
+                    _hit(match.group("name"), match.group("version"), summary.strip() or None)
+                )
             else:
-                hits.append(_hit(line, None, None))
+                hits.append(_hit(head.strip(), None, summary.strip() or None))
         if len(hits) >= limit:
             break
     return hits
