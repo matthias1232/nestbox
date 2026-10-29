@@ -75,6 +75,17 @@ export function SessionProvider(props) {
     setEnvironment(identityPayload.environment_id);
   }
 
+  // After a reload: a fresh token for the live session. If the session itself is gone the
+  // 401 sends the user to the sign-in form, which is the honest answer.
+  async function refreshCsrf() {
+    try {
+      const result = await auth.csrf();
+      setCsrfToken(result.csrf_token);
+    } catch {
+      /* read-only views still work; the first change asks for a sign-in */
+    }
+  }
+
   function switchEnvironment(id) {
     setActiveEnvironment(id);
     setEnvironment(id);
@@ -91,6 +102,7 @@ export function SessionProvider(props) {
         signIn,
         signOut,
         restore,
+        refreshCsrf,
         switchEnvironment,
       }}
     >

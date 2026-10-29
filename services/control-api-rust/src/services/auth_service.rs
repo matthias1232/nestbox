@@ -230,3 +230,25 @@ pub async fn principal_for_environment(
         via,
     })
 }
+
+/// Give a signed-in browser a fresh CSRF token.
+///
+/// The token is memory-only in the console (storage would make it readable by any script
+/// on the page), so a reload loses it, and only its hash is kept here. This hands out a
+/// replacement for a live session, and the old token stops working. It needs the session
+/// cookie, which is `SameSite=Lax` and so not sent on a cross-site POST, and the token is
+/// returned only in the response body, which another origin cannot read.
+pub async fn rotate_csrf(pool: &sqlx::PgPool, session_token: &str) -> Result<String, ApiError> {
+    let fresh = session::issue_csrf_token();
+    let rotated = auth_store::rotate_csrf(pool, &session::hash_token(session_token), &session::hash_token(&fresh))
+        .await
+        .map_err(ApiError::from)?;
+    if !rotated {
+        return Err(ApiError::new(
+            axum::http::StatusCode::UNAUTHORIZED,
+            ErrorCode::SESSION_EXPIRED,
+            "The session is missing or has expired.",
+        ));
+    }
+    Ok(fresh)
+}

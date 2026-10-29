@@ -1138,3 +1138,55 @@ mod tests {
         assert!(read_discovery(&result).is_err());
     }
 }
+
+/// Check every attached HTTP MCP server on a running sandbox that is due, so "connected"
+/// and "not running" are facts the console shows instead of something to click for.
+///
+/// Called from the reconcile loop. A server that is not connected is retried every pass
+/// (about 30 s); a connected one is re-checked every 90 s. A stdio server runs inside the
+/// container and has nothing to ask, so it is left alone. At most a handful per pass, so a
+/// slow server cannot hold the loop. The control plane acts here for nobody, which is why
+/// the check runs as an admin of the environment it belongs to.
+pub async fn check_attached(ctx: &ServiceContext) -> Result<u64, ApiError> {
+    use crate::domain::auth::{CredentialSource, Role};
+    const PER_PASS: usize = 8;
+    let environments: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM environments")
+        .fetch_all(&ctx.pool)
+        .await
+        .map_err(|error| ApiError::from(StoreError::Database(error)))?;
+    let mut checked = 0;
+    for environment_id in environments {
+        let mut scope = TenantScope::begin(&ctx.pool, environment_id).await.map_err(ApiError::from)?;
+        let due: Vec<(Uuid, String)> = sqlx::query_as(
+            "SELECT a.sandbox_id, a.server_key
+               FROM sandbox_mcp_servers a
+               JOIN sandboxes s ON s.id = a.sandbox_id
+               JOIN mcp_registry r ON r.key = a.server_key
+              WHERE s.status = 'running' AND a.enabled AND r.transport IN ('http', 'sse')
+                AND a.updated_at < now() - interval '25 seconds'
+                AND (a.status <> 'connected' OR a.updated_at < now() - interval '90 seconds')
+              ORDER BY a.updated_at LIMIT $1",
+        )
+        .bind(PER_PASS as i64)
+        .fetch_all(scope.connection())
+        .await
+        .map_err(|error| ApiError::from(StoreError::Database(error)))?;
+        scope.commit().await.map_err(ApiError::from)?;
+        let system = Principal {
+            user_id: Uuid::nil(),
+            environment_id,
+            role: Role::Admin,
+            display_name: "mcp health check".into(),
+            via: CredentialSource::Token,
+        };
+        for (sandbox_id, key) in due {
+            // A failure is recorded on the attachment by `discover` itself; what is left
+            // here (the sandbox went away meanwhile) is not worth more than a log line.
+            if let Err(error) = discover(ctx, &system, sandbox_id, &key).await {
+                tracing::debug!(%sandbox_id, key = %key, code = error.code.0, "mcp check skipped");
+            }
+            checked += 1;
+        }
+    }
+    Ok(checked)
+}

@@ -28,3 +28,13 @@ td .runtime-tag { white-space: nowrap; }
 .more-menu > summary { cursor: pointer; list-style: none; display: inline-block; padding: .15rem .5rem; border: 1px solid var(--border, #444); border-radius: 6px; font-size: .75rem; }
 .more-menu > summary::-webkit-details-marker { display: none; }
 .more-pop { position: absolute; right: 0; z-index: 20; display: flex; flex-direction: column; gap: .35rem; min-width: 11rem; padding: .5rem; background: var(--bg-elevated, #12171f); border: 1px solid var(--border, #333); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.5); }
+.logview { height: 60vh; overflow: auto; background: #0b0f14; border: 1px solid var(--border, #2a2f3a); border-radius: 8px; padding: .4rem .6rem; font-family: var(--font-mono, ui-monospace, monospace); font-size: .76rem; }
+.logview-empty { padding: 1rem; }
+.logline { display: flex; gap: .6rem; padding: 1px 0; white-space: pre-wrap; word-break: break-word; }
+.logline .lt { color: #6b7686; flex: none; }
+.logline .ls { flex: none; min-width: 5.5rem; color: #7aa7d9; }
+.logline.bad .lm { color: #f19999; }
+.logline.warn .lm { color: #e6c27a; }
+.logline.good .lm { color: #8ed1a0; }
+.logs-controls { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-bottom: .6rem; }
+.logs-controls select, .logs-controls input[type=search] { max-width: 18rem; }

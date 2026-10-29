@@ -159,6 +159,24 @@ pub async fn touch_session(
     Ok(())
 }
 
+/// Replace a session's CSRF hash. The token itself is never stored, so a client that
+/// lost it (a page reload) can only be given a new one.
+pub async fn rotate_csrf(
+    pool: &sqlx::PgPool,
+    token_hash: &str,
+    csrf_hash: &str,
+) -> Result<bool, StoreError> {
+    let done = sqlx::query(
+        "UPDATE sessions SET csrf_hash = $2
+          WHERE token_hash = $1 AND expires_at > now() AND idle_deadline > now()",
+    )
+    .bind(token_hash)
+    .bind(csrf_hash)
+    .execute(pool)
+    .await?;
+    Ok(done.rows_affected() > 0)
+}
+
 /// Revoke a session. Deletion, not a flag: a revoked row cannot be resurrected
 /// by a bug that forgets to check the flag.
 pub async fn delete_session(pool: &sqlx::PgPool, token_hash: &str) -> Result<(), StoreError> {

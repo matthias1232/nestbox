@@ -104,6 +104,26 @@ pub async fn logout(
 }
 
 #[derive(Debug, Serialize, ToSchema)]
+pub struct CsrfResponse {
+    pub csrf_token: String,
+}
+
+/// A fresh CSRF token for the current session, after a page reload lost the old one.
+/// The previous token stops working.
+pub async fn csrf(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    let Some(token) = crate::api::principal::session_token_from(&headers) else {
+        return Err(ApiError::unauthenticated("Sign in first."));
+    };
+    let csrf_token = auth_service::rotate_csrf(state.pool(), &token).await?;
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok((StatusCode::OK, response_headers, Json(CsrfResponse { csrf_token })))
+}
+
+#[derive(Debug, Serialize, ToSchema)]
 pub struct MeResponse {
     pub display_name: String,
     pub role: String,

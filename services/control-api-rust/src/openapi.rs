@@ -64,6 +64,7 @@ pub const OPERATIONS: &[Operation] = &[
     op("GET", "/api/v1/docs", "Human-readable API entry page", "system", "none", false, StreamKind::None),
     op("POST", "/api/v1/auth/login", "Exchange credentials for a session", "auth", "none", false, StreamKind::None),
     op("POST", "/api/v1/auth/logout", "Revoke the current session", "auth", "viewer", true, StreamKind::None),
+    op("POST", "/api/v1/auth/csrf", "A fresh CSRF token for the current session (the old one stops working)", "auth", "viewer", false, StreamKind::None),
     op("GET", "/api/v1/auth/me", "The authenticated identity", "auth", "viewer", false, StreamKind::None),
     op("GET", "/api/v1/users", "Users of this environment, with role and owned sandboxes (admin)", "users", "admin", false, StreamKind::None),
     op("POST", "/api/v1/users", "Create a user (admin)", "users", "admin", true, StreamKind::None),
@@ -377,7 +378,10 @@ mod tests {
         ];
         for operation in OPERATIONS {
             if matches!(operation.method, "POST" | "PUT" | "PATCH" | "DELETE") {
-                if operation.path == "/api/v1/auth/login" {
+                // Login has no session yet. Issuing a CSRF token is how a browser that lost
+                // its token gets one: it needs the session cookie (SameSite=Lax, so a
+                // cross-site POST does not carry it) and answers only in the body.
+                if operation.path == "/api/v1/auth/login" || operation.path == "/api/v1/auth/csrf" {
                     continue;
                 }
                 if NODE_TOKEN_MUTATIONS.contains(&operation.path) {

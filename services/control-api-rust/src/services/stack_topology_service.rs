@@ -267,9 +267,9 @@ pub async fn component_logs(
     service: &str,
     tail: u32,
 ) -> Result<String, ApiError> {
-    // Operator logs can name internal hosts and tokens' owners; reading them is
-    // a node-management act, not a viewer's.
-    require(principal, Permission::NodeManage)?;
+    // The platform's own logs name every user's sandboxes, hosts and actions: an admin
+    // reads them (a user reads the logs of their own sandboxes instead).
+    require(principal, Permission::GatewayWrite)?;
     if !service.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') || service.is_empty() {
         return Err(ApiError::validation("A component name is lowercase letters, digits and dashes."));
     }

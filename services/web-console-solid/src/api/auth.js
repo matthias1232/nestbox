@@ -21,3 +21,9 @@ export function environments() {
 export function currentEnvironment() {
   return request('environments/current');
 }
+
+// A new CSRF token for the current session. The console keeps it in memory only, so after a
+// page reload this is how it gets one without asking for the password again.
+export function csrf() {
+  return request('auth/csrf', { method: 'POST' });
+}

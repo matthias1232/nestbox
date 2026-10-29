@@ -19,6 +19,7 @@ import NodesPage from './features/nodes/NodesPage.jsx';
 import RecipesPage from './features/recipes/RecipesPage.jsx';
 import PersistentPage from './features/persistent/PersistentPage.jsx';
 import UsersPage from './features/users/UsersPage.jsx';
+import LogsPage from './features/logs/LogsPage.jsx';
 import BuilderPage from './features/builder/BuilderPage.jsx';
 import JobsPage from './features/jobs/JobsPage.jsx';
 import AdminCenter from './features/sandboxes/AdminCenter.jsx';
@@ -37,6 +38,7 @@ function adminFromLocation() {
 const ROUTES = [
   { id: 'sandboxes', label: 'Sandboxes' },
   { id: 'traffic', label: 'Live traffic' },
+  { id: 'logs', label: 'Live logs' },
   { id: 'policies', label: 'Policies' },
   { id: 'cluster', label: 'Cluster' },
   { id: 'nodes', label: 'Nodes' },
@@ -85,6 +87,9 @@ export default function App() {
       // memory only. The next login restores it. Without it a mutating action
       // fails with a clear 403 rather than silently succeeding.
       session.restore(data);
+      // The token is memory-only and a reload loses it: ask for a new one, so changes keep
+      // working without a second sign-in.
+      await session.refreshCsrf();
     } catch {
       /* not signed in */
     } finally {
@@ -162,6 +167,7 @@ export default function App() {
                   <Show when={route() === 'persistent'}><PersistentPage /></Show>
                   <Show when={route() === 'operations'}><JobsPage /></Show>
                   <Show when={route() === 'users'}><UsersPage /></Show>
+                  <Show when={route() === 'logs'}><LogsPage role={session.identity()?.role} /></Show>
                 </>
               }
             >
