@@ -67,7 +67,7 @@ pub async fn search(
         query: query.to_string(),
     };
     ctx.runtime.catalogue(request).await.map_err(|error| {
-        ApiError::conflict(
+        ApiError::unavailable(
             ErrorCode::NODE_RUNTIME_UNAVAILABLE,
             format!("The package index could not be queried: {error}"),
         )

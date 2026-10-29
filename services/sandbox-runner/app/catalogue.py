@@ -36,6 +36,7 @@ client = docker.from_env()
 # added inside the fixed script, not by the caller.
 QUERY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+:_@/-]{0,80}$")
 MANAGERS = {"apt", "dnf", "apk"}
+APK_LINE = re.compile(r"^(?P<name>.+?)-(?P<version>\d[^-]*(?:-r\d+)?)$")
 
 # A catalogue is a fact about a remote index, so a short cache is a courtesy to
 # the index, never control state. Ten minutes is shorter than any release cycle.
@@ -59,7 +60,9 @@ SEARCH_SCRIPT = {
 LIST_SCRIPT = {
     "apt": "dpkg-query -W -f='${binary:Package} ${Version}\\n'",
     "dnf": "rpm -qa --qf '%{NAME} %{VERSION}\\n'",
-    "apk": "apk info -v",
+    # Names only: `apk info -v` prints `name-version`, and a version-suffixed
+    # name would never equal the package the recipe asked for.
+    "apk": "apk info",
 }
 
 
@@ -160,8 +163,13 @@ def parse_search(manager: str, output: str, limit: int = 60) -> list[dict[str, A
             name = parts[0].rsplit(".", 1)[0] if "." in parts[0] else parts[0]
             hits.append(_hit(name, parts[1], parts[2] if len(parts) > 2 else None))
         else:
-            name, _, version = line.rpartition("-")
-            hits.append(_hit(name or line, version or None, None))
+            # `apk search -v` prints `name-version`; the version starts at the
+            # first `-<digit>`, because both parts contain hyphens.
+            match = APK_LINE.match(line)
+            if match:
+                hits.append(_hit(match.group("name"), match.group("version"), None))
+            else:
+                hits.append(_hit(line, None, None))
         if len(hits) >= limit:
             break
     return hits

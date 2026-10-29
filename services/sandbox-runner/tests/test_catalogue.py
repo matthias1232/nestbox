@@ -40,6 +40,11 @@ class Parsing(unittest.TestCase):
         self.assertEqual(hits[0]["name"], "nginx")
         self.assertEqual(hits[0]["version"], "1.26.2-r0")
 
+    def test_an_apk_name_with_a_hyphen_keeps_it(self) -> None:
+        hits = catalogue.parse_search("apk", "py3-pip-24.0-r2\n")
+        self.assertEqual(hits[0]["name"], "py3-pip")
+        self.assertEqual(hits[0]["version"], "24.0-r2")
+
     def test_the_limit_is_respected(self) -> None:
         output = "\n".join(f"package-{index} - x" for index in range(200))
         self.assertEqual(len(catalogue.parse_search("apt", output, limit=10)), 10)
