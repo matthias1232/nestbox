@@ -22,3 +22,6 @@ export const hostLoad = () => request('host/load');
 
 export const recreate = (id) => request(`sandboxes/${id}/recreate`, { method: 'POST' });
 export const reconfigureAgent = (id) => request(`sandboxes/${id}/agent-config`, { method: 'POST' });
+
+// The sandbox's OpenShell supervisor: the supervisor row plus what the gateway reports.
+export const supervisor = (id) => request(`sandboxes/${id}/supervisor`);

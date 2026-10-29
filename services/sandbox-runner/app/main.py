@@ -455,6 +455,40 @@ def set_openshell_policy(name: str, body: OpenShellPolicy) -> dict[str, Any]:
     return {"name": name, "applied": True}
 
 
+@app.get("/v1/sandboxes/{name}/openshell")
+def openshell_view(name: str) -> dict[str, Any]:
+    """What the gateway and the supervisor say about one sandbox, for the console.
+
+    The boundary state (phase, conditions), the policy it enforces, and the recent log
+    of the supervisor and the gateway. Read-only.
+    """
+    if not re.fullmatch(r"[a-z0-9-]{1,63}", name):
+        raise HTTPException(422, "invalid sandbox name")
+    try:
+        container = get_container(client, name)
+    except NotFound as exc:
+        raise HTTPException(404, "sandbox not found") from exc
+    if not openshell_name(container.name):
+        raise HTTPException(409, "this sandbox is not on the OpenShell gateway")
+    try:
+        sandbox = osh.get(name)
+        logs = osh.run(["logs", name, "-n", "120", "--source", "all"], timeout=30)
+    except osh.OpenShellError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    if sandbox is None:
+        raise HTTPException(404, "the gateway does not know this sandbox")
+    keep = (
+        "id", "name", "phase", "created_at", "conditions", "restart_policy", "restart_count",
+        "current_policy_version", "policy_source", "configuration_admission", "annotations",
+    )
+    return {
+        "gateway_version": osh.gateway_version(),
+        "sandbox": {key: sandbox.get(key) for key in keep},
+        "policy": sandbox.get("policy") or {},
+        "logs": logs.splitlines()[-120:],
+    }
+
+
 @app.get("/v1/openshell/events")
 def openshell_events(since: int = 120) -> dict[str, Any]:
     """Network decisions the OpenShell supervisors logged in the last `since` seconds."""

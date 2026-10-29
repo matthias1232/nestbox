@@ -85,6 +85,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/sandboxes/{id}/metrics", get(metrics::metrics))
         .route("/api/v1/sandboxes/{id}/processes", get(metrics::processes))
+        .route("/api/v1/sandboxes/{id}/supervisor", get(cluster::sandbox_supervisor))
         .route("/api/v1/sandboxes/{id}/inventory", get(inventory::get))
         .route(
             "/api/v1/sandboxes/{id}/inventory/refresh",

@@ -414,6 +414,10 @@ impl RuntimeAdapter for HttpRunner {
         Ok(())
     }
 
+    async fn openshell_view(&self, name: &str) -> Result<serde_json::Value, RuntimeError> {
+        self.send(reqwest::Method::GET, &format!("/v1/sandboxes/{name}/openshell"), None).await
+    }
+
     async fn openshell_events(&self, since_seconds: u32) -> Result<Vec<serde_json::Value>, RuntimeError> {
         #[derive(Deserialize)]
         struct Answer {
