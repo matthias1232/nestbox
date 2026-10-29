@@ -48,3 +48,6 @@ td .runtime-tag { white-space: nowrap; }
 .journey-step .num { flex: none; width: 1.8rem; height: 1.8rem; border-radius: 50%; display: grid; place-items: center; background: #1b2a40; color: #9cc3f0; font-weight: 600; }
 .journey-step .who { font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted, #8a8f98); }
 .journey-step .title { font-weight: 600; margin: .1rem 0 .2rem; }
+.mcp-table td:first-child { min-width: 20rem; }
+.mcp-table td.actions { display: table-cell; white-space: nowrap; vertical-align: middle; }
+.mcp-table td { vertical-align: middle; }
