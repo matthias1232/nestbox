@@ -19,3 +19,6 @@ export const mcpCalls = (id, limit = 30) => request(`sandboxes/${id}/mcp/calls${
 
 export const setResources = (id, body) => request(`sandboxes/${id}/resources`, { method: 'PUT', body });
 export const hostLoad = () => request('host/load');
+
+export const recreate = (id) => request(`sandboxes/${id}/recreate`, { method: 'POST' });
+export const reconfigureAgent = (id) => request(`sandboxes/${id}/agent-config`, { method: 'POST' });

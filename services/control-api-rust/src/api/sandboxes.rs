@@ -327,3 +327,13 @@ pub async fn reconfigure(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     Ok(Json(sandbox_service::reconfigure_agent(&state.services, &auth.principal, id).await?))
 }
+
+
+/// Replace the container with one that has the current mounts (see ADR 0021).
+pub async fn recreate(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(sandbox_service::recreate(&state.services, &auth.principal, id).await?))
+}
