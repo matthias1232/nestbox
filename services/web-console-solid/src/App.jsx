@@ -20,6 +20,7 @@ import RecipesPage from './features/recipes/RecipesPage.jsx';
 import PersistentPage from './features/persistent/PersistentPage.jsx';
 import UsersPage from './features/users/UsersPage.jsx';
 import LogsPage from './features/logs/LogsPage.jsx';
+import McpPage from './features/mcp/McpPage.jsx';
 import BuilderPage from './features/builder/BuilderPage.jsx';
 import JobsPage from './features/jobs/JobsPage.jsx';
 import AdminCenter from './features/sandboxes/AdminCenter.jsx';
@@ -43,6 +44,7 @@ const ROUTES = [
   { id: 'cluster', label: 'Cluster' },
   { id: 'nodes', label: 'Nodes' },
   { id: 'providers', label: 'Providers' },
+  { id: 'mcp', label: 'MCP servers' },
   { id: 'models', label: 'Models' },
   { id: 'builder', label: 'Build image' },
   { id: 'recipes', label: 'Recipes' },
@@ -167,6 +169,7 @@ export default function App() {
                   <Show when={route() === 'persistent'}><PersistentPage /></Show>
                   <Show when={route() === 'operations'}><JobsPage /></Show>
                   <Show when={route() === 'users'}><UsersPage /></Show>
+                  <Show when={route() === 'mcp'}><McpPage role={session.identity()?.role} /></Show>
                   <Show when={route() === 'logs'}><LogsPage role={session.identity()?.role} /></Show>
                 </>
               }
