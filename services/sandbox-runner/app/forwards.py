@@ -24,6 +24,7 @@ A forward reports two separate facts, and the console shows both:
   not been started yet; saying "active" for that would be a lie.
 """
 from __future__ import annotations
+from app.workload import get_container, list_workloads, sandbox_name
 
 import asyncio
 import json
@@ -289,7 +290,7 @@ def sandbox_address(sandbox: str) -> str | None:
     remembered the old one would fail until the forward was re-applied.
     """
     try:
-        container = docker_client().containers.get(f"{CONTAINER_PREFIX}{sandbox}")
+        container = get_container(docker_client(), sandbox)
     except (NotFound, DockerException):
         return None
     if container.status != "running":

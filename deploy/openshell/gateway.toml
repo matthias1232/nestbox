@@ -1,0 +1,24 @@
+# OpenShell gateway for the Nestbox appliance.
+#
+# One host, Docker compute driver. The listener is reachable from the sandbox
+# runner container (through `host.openshell.internal`), which is why it is not
+# bound to loopback only. Every connection still needs a client certificate
+# issued by the gateway's own CA (mTLS), and the CA key never leaves the host.
+[openshell]
+version = 2
+
+[openshell.gateway]
+compute_driver = "docker"
+bind_address = "0.0.0.0:17670"
+
+[openshell.drivers.docker]
+socket_path = "/var/run/docker.sock"
+# Persistent roots are bind mounts the runner validates against its own base
+# (/var/lib/nestbox/persistent) before it asks for them. OpenShell refuses bind
+# mounts unless they are enabled, and then admission of external resources has to
+# be off for the driver; both are operator decisions made here, not by a sandbox.
+allow_driver_config = true
+enable_bind_mounts = true
+
+[openshell.drivers.docker.resource_admission]
+enabled = false

@@ -10,6 +10,7 @@ Two things an operator asks for while sandboxes work:
   changed that way; that is a different operation (see the persistent roots).
 """
 from __future__ import annotations
+from app.workload import get_container, list_workloads, sandbox_name
 
 import os
 import re
@@ -148,7 +149,7 @@ def change_resources(name: str, body: ResourceChange) -> dict[str, Any]:
     """Change a running sandbox's limits without restarting it."""
     client = docker.from_env()
     try:
-        container = client.containers.get(f"{PREFIX}{name}")
+        container = get_container(client, name)
     except NotFound as exc:
         raise HTTPException(404, "sandbox not found") from exc
     # The Docker SDK's `update()` has no NanoCpus or PidsLimit, and a container

@@ -7,6 +7,7 @@ never from the request, because `ps` accepts a format string and that is enough
 to read a file the caller should not see.
 """
 from __future__ import annotations
+from app.workload import get_container, list_workloads, sandbox_name
 
 import time
 from typing import Any
@@ -25,7 +26,7 @@ SAMPLE_LIMIT = 500
 
 def container(name: str) -> Any:
     try:
-        return client.containers.get(f"nestbox-sandbox-{name}")
+        return get_container(client, name)
     except NotFound as exc:
         raise HTTPException(404, f"no such sandbox: {name}") from exc
 

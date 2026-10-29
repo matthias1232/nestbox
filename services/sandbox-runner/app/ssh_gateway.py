@@ -20,6 +20,7 @@ public key (the pair the control plane generated), delivered with the forward
 set; the private half never reaches the runner.
 """
 from __future__ import annotations
+from app.workload import get_container, list_workloads, sandbox_name
 
 import asyncio
 import hashlib
@@ -118,7 +119,7 @@ class _Exec:
     def __init__(self, client: Any, sandbox: str, command: str | None, tty: bool, size: tuple[int, int]):
         from app.terminal import PtySocket
 
-        container = client.containers.get(f"{CONTAINER_PREFIX}{sandbox}")
+        container = get_container(client, sandbox)
         if container.status != "running":
             raise RuntimeError(f"sandbox '{sandbox}' is {container.status}, not running")
         self._client = client

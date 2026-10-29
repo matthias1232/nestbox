@@ -164,7 +164,12 @@ impl RuntimeAdapter for HttpRunner {
             "name": spec.name,
             "image": spec.image,
             "command": spec.command,
-            "runtime": "docker-development",
+            // `openshell` puts the sandbox on the OpenShell gateway; anything else is
+            // the development Docker adapter. One value per deployment.
+            "runtime": std::env::var("NESTBOX_SANDBOX_RUNTIME")
+                .ok()
+                .filter(|value| value == "openshell")
+                .unwrap_or_else(|| "docker-development".to_string()),
             "pack_key": spec.pack_key,
             "tool_profile": spec.tool_profile,
             "environment": environment,
