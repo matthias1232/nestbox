@@ -87,6 +87,7 @@ fn request(name: &str, pack: &str) -> CreateSandbox {
         pids_limit: 256,
         node: None,
         parent_id: None,
+        login: None,
     }
 }
 
@@ -206,4 +207,35 @@ async fn a_claude_code_sandbox_gets_a_persistent_home_and_a_recreated_one_gets_i
     sandbox_service::create(&ctx, &principal, request("plain-box", "ubuntu-dev")).await.expect("plain");
     let plain = runtime.created_specs().pop().expect("spec");
     assert!(source(&plain).is_none());
+}
+
+#[tokio::test]
+async fn an_own_account_sandbox_carries_no_gateway_key_and_a_bad_choice_is_refused() {
+    let Some(pool) = connect().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+    let runtime = Arc::new(FakeRuntime::new());
+    let ctx = context(&pool, &runtime);
+    let principal = principal_of(user(&pool).await);
+
+    let mut own = request("own-login", "claude-code");
+    own.login = Some("own_account".into());
+    let created = sandbox_service::create(&ctx, &principal, own).await.expect("own account");
+    assert_eq!(created.spec.get("login").and_then(|v| v.as_str()), Some("own_account"));
+    let spec = runtime.created_specs().pop().expect("spec");
+    assert!(!spec.environment.iter().any(|(k, _)| k == "ANTHROPIC_AUTH_TOKEN" || k == "ANTHROPIC_BASE_URL"));
+    // The login lives on the persistent home, so that is still mounted and configured.
+    assert!(spec.mounts.iter().any(|m| m.target == "/home/nestbox/.agent-state"));
+    assert!(spec.environment.iter().any(|(k, _)| k == "CLAUDE_CONFIG_DIR"));
+
+    let mut bad = request("bad-login", "claude-code");
+    bad.login = Some("magic".into());
+    assert!(sandbox_service::create(&ctx, &principal, bad).await.is_err());
+    let mut hermes = request("hermes-own", "hermes");
+    hermes.login = Some("own_account".into());
+    assert!(sandbox_service::create(&ctx, &principal, hermes).await.is_err());
+
+    let default = sandbox_service::create(&ctx, &principal, request("gateway-login", "ubuntu-dev")).await.expect("default");
+    assert_eq!(default.spec.get("login").and_then(|v| v.as_str()), Some("gateway"));
 }

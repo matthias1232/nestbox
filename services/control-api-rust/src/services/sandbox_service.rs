@@ -194,6 +194,32 @@ pub struct CreateSandbox {
     /// The lead of the stack this sandbox joins. Absent means standalone (or a
     /// lead, when others later point at it).
     pub parent_id: Option<Uuid>,
+    /// How the agent signs in: `gateway` (the default: the appliance's model endpoint and
+    /// key) or `own_account` (no key in the environment; the user logs in inside the
+    /// sandbox and the login is kept on its persistent home).
+    pub login: Option<String>,
+}
+
+/// The sign-in choices.
+pub const LOGIN_MODES: [&str; 2] = ["gateway", "own_account"];
+
+/// Take the gateway's model settings out of an agent's environment, for a sandbox the
+/// user signs in to with their own account. What stays: the MCP hub, the config directory.
+pub fn apply_login_choice(environment: &mut BTreeMap<String, String>, login: Option<&str>) {
+    if login != Some("own_account") {
+        return;
+    }
+    for key in [
+        "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL",
+        "ANTHROPIC_SMALL_FAST_MODEL", "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL",
+    ] {
+        environment.remove(key);
+    }
+}
+
+/// Whether an agent pack has a login of its own to offer.
+pub fn pack_has_own_login(pack_key: &str) -> bool {
+    matches!(pack_key, "claude-code" | "opencode" | "openchamber")
 }
 
 /// Whether `lead` may lead a stack that `member` joins.
@@ -588,6 +614,17 @@ pub async fn create(
     // reconstructed from a later deploy's configuration.
     let egress_proxy = egress_proxy_url();
 
+    let login = request.login.clone().filter(|value| !value.is_empty());
+    if let Some(mode) = login.as_deref() {
+        if !LOGIN_MODES.contains(&mode) {
+            return Err(ApiError::validation("Sign-in is 'gateway' or 'own_account'."));
+        }
+        if mode == "own_account" && !pack_has_own_login(&request.pack_key) {
+            return Err(ApiError::validation(
+                "Only Claude Code, OpenCode and OpenChamber have a login of their own.",
+            ));
+        }
+    }
     let spec = serde_json::json!({
         "pack_key": request.pack_key,
         "memory_limit": memory_limit,
@@ -595,6 +632,7 @@ pub async fn create(
         "pids_limit": request.pids_limit,
         "node": node.name,
         "egress_proxy": &egress_proxy,
+        "login": login.as_deref().unwrap_or("gateway"),
     });
 
     // A helper created without a lead joins the node's only agent. Done before the
@@ -739,7 +777,11 @@ pub async fn create(
         )
         .await
         {
-            Ok(values) => values.into_iter().collect(),
+            Ok(values) => {
+                let mut values: BTreeMap<String, String> = values.into_iter().collect();
+                apply_login_choice(&mut values, sandbox.spec.get("login").and_then(|v| v.as_str()));
+                values.into_iter().collect()
+            }
             Err(error) => {
                 tracing::warn!(
                     code = error.code.0,
@@ -1498,6 +1540,7 @@ pub async fn reconfigure_agent(
             .await?
             .into_iter()
             .collect();
+    apply_login_choice(&mut environment, sandbox.spec.get("login").and_then(|v| v.as_str()));
     environment.extend(egress_environment(&egress_proxy_url()));
     let written = apply_agent_files(ctx, &sandbox.name, &sandbox.pack_key, &environment).await;
     Ok(serde_json::json!({ "files_written": written }))
@@ -1559,11 +1602,15 @@ pub async fn recreate(
     .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
 
-    let mut environment: Vec<(String, String)> =
-        crate::services::provider_service::environment_for_pack(ctx, principal.environment_id, &sandbox.pack_key)
-            .await
-            .map(|values| values.into_iter().collect())
-            .unwrap_or_default();
+    let mut environment: Vec<(String, String)> = {
+        let mut values: BTreeMap<String, String> =
+            crate::services::provider_service::environment_for_pack(ctx, principal.environment_id, &sandbox.pack_key)
+                .await
+                .map(|values| values.into_iter().collect())
+                .unwrap_or_default();
+        apply_login_choice(&mut values, sandbox.spec.get("login").and_then(|v| v.as_str()));
+        values.into_iter().collect()
+    };
     environment.extend(egress_environment(&egress_proxy_url()));
     add_inference_bypass_vec(&mut environment);
     let configured: BTreeMap<String, String> = environment.iter().cloned().collect();

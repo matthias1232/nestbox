@@ -12,7 +12,7 @@
 
 import { For, Show } from 'solid-js';
 import { gib } from '../../components/ResourceBars.jsx';
-import { useCreateSandbox } from './useCreateSandbox.js';
+import { useCreateSandbox, hasOwnLogin } from './useCreateSandbox.js';
 import '../../styles/sandbox-resources.css';
 
 export default function CreateSandboxForm(props) {
@@ -61,6 +61,25 @@ export default function CreateSandboxForm(props) {
             </select>
             <small class="muted">The pack decides the image and the command.</small>
           </label>
+
+          <Show when={hasOwnLogin(state.form().pack_key)}>
+            <label class="field">
+              <span>Sign-in</span>
+              <select
+                value={state.form().login}
+                onChange={(e) => state.setField('login', e.currentTarget.value)}
+              >
+                <option value="gateway">Gateway key (ready to work at once)</option>
+                <option value="own_account">My own account (I sign in inside the sandbox)</option>
+              </select>
+              <small class="muted">
+                Gateway key: the agent uses the appliance's model endpoint with its key, nothing to type.
+                Own account: no key is placed in the sandbox; you log in once inside it (for example
+                <code> claude</code> then <code>/login</code>), and that login is kept on the sandbox's
+                persistent home, so it survives a restart or a recreate.
+              </small>
+            </label>
+          </Show>
 
           <label class="field">
             <span>Node</span>

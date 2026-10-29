@@ -94,6 +94,7 @@ fn request(name: &str, pack: &str) -> CreateSandbox {
         pids_limit: 256,
         node: None,
         parent_id: None,
+        login: None,
     }
 }
 
