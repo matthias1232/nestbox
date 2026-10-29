@@ -38,6 +38,16 @@ function CopyButton(props) {
 }
 
 const PURPOSE = { ssh: 'SSH', agent: 'Agent', custom: 'Custom' };
+const KIND = { ssh: 'terminal', web: 'browser', api: 'client program', tcp: 'tcp' };
+
+// What the port is doing right now, from the runner's two facts. The database's
+// `state` only says a port was reserved; these say whether it answers.
+function portState(port) {
+  if (port.listening === true && port.target_up === true) return { tone: 'ok', word: 'up' };
+  if (port.listening === true) return { tone: 'warn', word: 'open, nothing running behind it' };
+  if (port.listening === false) return { tone: 'bad', word: 'closed' };
+  return { tone: 'muted', word: port.state };
+}
 
 export default function ConnectPanel(props) {
   const [info, { refetch }] = createResource(() => props.sandboxId, sandboxes.connect);
@@ -114,6 +124,13 @@ export default function ConnectPanel(props) {
               </small>
             </section>
 
+            <Show when={data().summary}>
+              <p class="connect-summary">{data().summary}</p>
+            </Show>
+            <Show when={data().forwarding === 'unknown' && data().ports.length > 0}>
+              <p class="muted small">The runner did not answer, so whether these ports are open is not known right now.</p>
+            </Show>
+
             <Show when={data().hint}>
               <div class="notice warn">
                 <p>{data().hint}</p>
@@ -142,11 +159,11 @@ export default function ConnectPanel(props) {
             </Show>
 
             <Show when={data().ports.length > 0}>
-              <h3>Published ports</h3>
+              <h3>Ports on {data().node_name}</h3>
               <div class="table-scroll">
                 <table>
                   <thead>
-                    <tr><th>For</th><th>In the sandbox</th><th>Dial</th><th>State</th><th /></tr>
+                    <tr><th>What it is</th><th>Connect with</th><th>Dial</th><th>State</th><th /></tr>
                   </thead>
                   <tbody>
                     <For each={data().ports}>
@@ -154,14 +171,21 @@ export default function ConnectPanel(props) {
                         <tr>
                           <td>
                             <b>{port.label || PURPOSE[port.purpose] || port.purpose}</b>
-                            <Show when={port.label}><small class="muted"> · {PURPOSE[port.purpose]}</small></Show>
+                            <Show when={port.description}><small class="muted block">{port.description}</small></Show>
+                            <small class="muted block">inside the sandbox: <span class="mono">{port.target_port}</span></small>
                           </td>
-                          <td class="mono small">{port.target_port}</td>
+                          <td class="small">{KIND[port.kind] || port.kind}</td>
                           <td class="mono small">
                             {port.dial || <span class="muted">:{port.public_port}</span>}
                           </td>
-                          <td class="small">{port.state}</td>
+                          <td class="small">
+                            <span class={`badge ${portState(port).tone}`}><i />{portState(port).word}</span>
+                            <Show when={port.problem}><small class="muted block">{port.problem}</small></Show>
+                          </td>
                           <td class="actions">
+                            <Show when={port.url}>
+                              <a class="button primary tiny" href={port.url} target="_blank" rel="noopener noreferrer">Open</a>
+                            </Show>
                             <Show when={port.dial}><CopyButton text={port.dial} what="host:port" /></Show>
                           </td>
                         </tr>
@@ -181,6 +205,23 @@ export default function ConnectPanel(props) {
                 </section>
               )}
             </For>
+
+            <For each={data().commands}>
+              {(entry) => (
+                <section class="connect-block">
+                  <h3>{entry.label}</h3>
+                  <p class="muted small">{entry.description}</p>
+                  <pre class="mono">{entry.command}</pre>
+                  <CopyButton text={entry.command} what="the command" />
+                </section>
+              )}
+            </For>
+
+            <Show when={data().notes.length > 0}>
+              <ul class="connect-notes muted small">
+                <For each={data().notes}>{(note) => <li>{note}</li>}</For>
+              </ul>
+            </Show>
 
             <Show when={data().ssh_config}>
               <section class="connect-block">

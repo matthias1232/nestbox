@@ -228,9 +228,45 @@ impl std::fmt::Display for SandboxName {
     }
 }
 
+/// Which sandbox a new helper joins when its creator named no lead.
+///
+/// Only a `tool` or `gateway` pack is linked, and only when there is exactly one
+/// agent on the node to link it to. With none there is nothing to join; with
+/// several, picking one would be a guess that puts the helper under the wrong
+/// agent, so it stays standalone and the creator links it. An `agent` pack never
+/// joins anything: it is what the others join.
+pub fn auto_stack_lead(role: &str, candidates: &[Uuid]) -> Option<Uuid> {
+    if role == "agent" {
+        return None;
+    }
+    match candidates {
+        [only] => Some(*only),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_helper_joins_the_only_agent_on_its_node() {
+        let lead = Uuid::new_v4();
+        assert_eq!(auto_stack_lead("tool", &[lead]), Some(lead));
+        assert_eq!(auto_stack_lead("gateway", &[lead]), Some(lead));
+    }
+
+    #[test]
+    fn a_helper_is_not_linked_by_guessing() {
+        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+        assert_eq!(auto_stack_lead("tool", &[]), None);
+        assert_eq!(auto_stack_lead("tool", &[a, b]), None);
+    }
+
+    #[test]
+    fn an_agent_never_joins_a_stack_on_its_own() {
+        assert_eq!(auto_stack_lead("agent", &[Uuid::new_v4()]), None);
+    }
 
     #[test]
     fn accepts_a_normal_name() {

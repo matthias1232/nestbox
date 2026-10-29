@@ -527,3 +527,59 @@ pub struct TopologySandbox {
     pub node_id: Option<Uuid>,
     pub node_name: Option<String>,
 }
+
+/// The role a pack plays (`agent`, `tool`, `gateway`), or `None` for a pack that
+/// does not exist.
+pub async fn pack_role(
+    scope: &mut TenantScope<'_>,
+    pack_key: &str,
+) -> Result<Option<String>, StoreError> {
+    Ok(sqlx::query_scalar("SELECT role FROM agent_packs WHERE key = $1")
+        .bind(pack_key)
+        .fetch_optional(scope.connection())
+        .await?)
+}
+
+/// The sandboxes on a node that could lead a stack: an agent-role pack, not
+/// itself a member, not failed.
+pub async fn lead_candidates(
+    scope: &mut TenantScope<'_>,
+    node_id: Uuid,
+) -> Result<Vec<Uuid>, StoreError> {
+    Ok(sqlx::query_scalar(
+        "SELECT s.id
+           FROM sandboxes s
+           JOIN agent_packs p ON p.key = s.pack_key
+          WHERE s.environment_id = $1 AND s.node_id = $2
+            AND s.parent_id IS NULL AND p.role = 'agent'
+            AND s.status NOT IN ('failed', 'deleting', 'deleted')
+          ORDER BY s.created_at",
+    )
+    .bind(scope.environment_id())
+    .bind(node_id)
+    .fetch_all(scope.connection())
+    .await?)
+}
+
+/// A stack: the lead first, then its members by name.
+///
+/// A sandbox that is nobody's lead comes back alone, which is a stack of one.
+pub async fn stack_members(
+    scope: &mut TenantScope<'_>,
+    lead_id: Uuid,
+) -> Result<Vec<Sandbox>, StoreError> {
+    let sql = format!(
+        "SELECT {SANDBOX_COLUMNS}
+           FROM sandboxes s
+           LEFT JOIN gateways g ON g.id = s.gateway_id
+           LEFT JOIN nodes n ON n.id = s.node_id
+          WHERE s.environment_id = $1 AND (s.id = $2 OR s.parent_id = $2)
+          ORDER BY (s.id = $2) DESC, s.name"
+    );
+    let rows = sqlx::query(&sql)
+        .bind(scope.environment_id())
+        .bind(lead_id)
+        .fetch_all(scope.connection())
+        .await?;
+    rows.iter().map(row_to_sandbox).collect()
+}

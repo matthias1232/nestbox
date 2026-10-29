@@ -193,7 +193,15 @@ services:
       # every neighbour. It mounts the node directory, not `secrets/`: the
       # runner has the Docker socket and no business reading database URLs.
       NESTBOX_NODE_TOKEN_FILE: /run/node/token
+      # Published ports. The runner listens on every port of this range for the
+      # sandboxes' forwards (SSH, agent UIs) and compose publishes the same range
+      # on the node. It must equal the node's pool (nodes.port_pool_start/end);
+      # a forward outside it is reported as failed instead of silently closed.
+      NESTBOX_FORWARD_RANGE: ${NESTBOX_FORWARD_RANGE:-22200-22299}
+      NESTBOX_RUNNER_STATE: /var/lib/nestbox-runner
     volumes:
+      # Forwards, authorised keys and the SSH host key survive a redeploy.
+      - nestbox-runner-state:/var/lib/nestbox-runner
       # The only component that talks to the Docker socket. It is separate from
       # the API on purpose: a compromise of the API does not yield the host.
       - /var/run/docker.sock:/var/run/docker.sock
@@ -205,6 +213,10 @@ services:
       - ./secrets/node:/run/node:ro
     expose:
       - "9000"
+    ports:
+      # The sandboxes' published ports (SSH and agent UIs). Bound on the node's
+      # LAN address by default; set NESTBOX_FORWARD_BIND to narrow it.
+      - "${NESTBOX_FORWARD_BIND:-0.0.0.0}:${NESTBOX_FORWARD_RANGE:-22200-22299}:${NESTBOX_FORWARD_RANGE:-22200-22299}"
     networks:
       - control
       - runtime
@@ -276,6 +288,7 @@ secrets:
 
 volumes:
   nestbox-postgres:
+  nestbox-runner-state:
 
 networks:
   # Carries control traffic: browser to console, console to API, API to Postgres.

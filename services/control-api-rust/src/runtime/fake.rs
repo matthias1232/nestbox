@@ -13,11 +13,27 @@ use async_trait::async_trait;
 
 use chrono::Utc;
 use crate::domain::metrics::{InventoryProbe, ProcessEntry, ProcessTable};
+use crate::domain::pack_access::ForwardState;
 use crate::domain::runtime::{
-    BuildRequest, BuildResult, ExecResult, HardwareReport, ModelDownload, ModelDownloadResult,
-    ModelServe, ModelServeResult, RuntimeFacts, SandboxSpec,
+    BuildRequest, BuildResult, ComponentState, ExecResult, ForwardRequest, HardwareReport,
+    ModelDownload, ModelDownloadResult, ModelServe, ModelServeResult, RuntimeFacts, SandboxSpec,
 };
 use crate::runtime::{BoxTerminal, RuntimeAdapter, RuntimeError, TerminalMessage, TerminalSocket};
+
+/// The runner's report for a set of forwards: every port open, nothing behind it.
+fn fake_forward_states(forwards: &[ForwardRequest]) -> Vec<ForwardState> {
+    forwards
+        .iter()
+        .map(|forward| ForwardState {
+            port: forward.port,
+            target_port: forward.target_port,
+            purpose: forward.purpose.clone(),
+            listening: true,
+            target_up: false,
+            error: None,
+        })
+        .collect()
+}
 
 /// Take a lock, recovering from poisoning.
 ///
@@ -51,12 +67,20 @@ pub struct FakeRuntime {
     /// them, so a test can assert what the service asked for.
     models: Mutex<BTreeMap<String, ModelServe>>,
     downloads: Mutex<Vec<ModelDownload>>,
+    /// What the control plane asked the runner to hold open, by sandbox, with
+    /// the public keys sent alongside.
+    forwards: Mutex<BTreeMap<String, (Vec<ForwardRequest>, Vec<String>)>>,
     terminal: Arc<FakeTerminalState>,
 }
 
 impl FakeRuntime {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The forwards and keys most recently sent for a sandbox.
+    pub fn forwards_for(&self, name: &str) -> Option<(Vec<ForwardRequest>, Vec<String>)> {
+        lock(&self.forwards).get(name).cloned()
     }
 
     /// Die Specs aller erzeugten Sandboxes – für Tests der Umgebungsvariablen.
@@ -373,6 +397,50 @@ impl RuntimeAdapter for FakeRuntime {
     async fn stop_model(&self, model_key: &str) -> Result<(), RuntimeError> {
         lock(&self.models).remove(model_key);
         Ok(())
+    }
+
+    async fn set_forwards(
+        &self,
+        name: &str,
+        forwards: &[ForwardRequest],
+        authorized_keys: &[String],
+    ) -> Result<Vec<ForwardState>, RuntimeError> {
+        lock(&self.forwards).insert(name.to_string(), (forwards.to_vec(), authorized_keys.to_vec()));
+        Ok(fake_forward_states(forwards))
+    }
+
+    async fn forward_states(&self, name: &str) -> Result<Vec<ForwardState>, RuntimeError> {
+        let held = lock(&self.forwards).get(name).map(|(forwards, _)| forwards.clone());
+        Ok(held.map(|forwards| fake_forward_states(&forwards)).unwrap_or_default())
+    }
+
+    async fn clear_forwards(&self, name: &str) -> Result<(), RuntimeError> {
+        lock(&self.forwards).remove(name);
+        Ok(())
+    }
+
+    async fn components(&self) -> Result<Vec<ComponentState>, RuntimeError> {
+        let row = |service: &str, description: &str| ComponentState {
+            service: service.to_string(),
+            description: description.to_string(),
+            container: Some(format!("nestbox-{service}-1")),
+            image: Some(format!("nestbox-{service}")),
+            state: "running".to_string(),
+            health: None,
+            started_at: None,
+            restarts: 0,
+            ports: serde_json::json!([]),
+        };
+        Ok(vec![
+            row("control-api", "The control plane."),
+            row("gateway", "Front door."),
+            row("sandbox-runner", "Runs sandboxes."),
+            row("egress-proxy", "The only way out."),
+        ])
+    }
+
+    async fn component_logs(&self, service: &str, _tail: u32) -> Result<String, RuntimeError> {
+        Ok(format!("{service}: ready\n"))
     }
 
     async fn open_terminal(&self, name: &str) -> Result<BoxTerminal, RuntimeError> {

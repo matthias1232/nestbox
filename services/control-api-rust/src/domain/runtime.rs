@@ -287,6 +287,43 @@ fn split_quantity(value: &str) -> (&str, &str) {
     (&value[..split], &value[split..])
 }
 
+/// One forward the runner is asked to hold open for a sandbox.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ForwardRequest {
+    /// The port on the node.
+    pub port: i32,
+    /// The port inside the sandbox. For SSH it is only a label: the runner
+    /// answers SSH itself and opens a shell.
+    pub target_port: i32,
+    /// `ssh`, `agent` or `custom`.
+    pub purpose: String,
+}
+
+/// One appliance container, as the runner describes it.
+///
+/// These are the components around the sandboxes (control API, gateway, proxy,
+/// runner, database, console), not the sandboxes themselves.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ComponentState {
+    pub service: String,
+    pub description: String,
+    #[serde(default)]
+    pub container: Option<String>,
+    #[serde(default)]
+    pub image: Option<String>,
+    /// `running`, `exited`, `restarting`, `missing`, ...
+    pub state: String,
+    /// The container's own health check, when it has one.
+    #[serde(default)]
+    pub health: Option<String>,
+    #[serde(default)]
+    pub started_at: Option<String>,
+    #[serde(default)]
+    pub restarts: i64,
+    #[serde(default)]
+    pub ports: serde_json::Value,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

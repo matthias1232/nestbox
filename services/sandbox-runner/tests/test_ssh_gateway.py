@@ -1,0 +1,60 @@
+"""Tests for the pure parts of the SSH door: stream framing and the command line.
+
+`app.ssh_gateway` imports asyncssh lazily, so these run with the standard
+library alone, in a container that never had a Docker socket.
+"""
+from __future__ import annotations
+
+import struct
+import unittest
+
+from app import ssh_gateway
+
+
+def frame(stream: int, payload: bytes) -> bytes:
+    return bytes([stream, 0, 0, 0]) + struct.pack(">I", len(payload)) + payload
+
+
+class DemuxTest(unittest.TestCase):
+    def test_splits_stdout_and_stderr(self) -> None:
+        data = frame(1, b"hello\n") + frame(2, b"oops\n")
+        frames, rest = ssh_gateway.demux(data)
+        self.assertEqual(frames, [(1, b"hello\n"), (2, b"oops\n")])
+        self.assertEqual(rest, b"")
+
+    def test_keeps_a_frame_that_arrived_in_two_reads(self) -> None:
+        data = frame(1, b"abcdef")
+        first, rest = ssh_gateway.demux(data[:10])
+        self.assertEqual(first, [])
+        again, rest = ssh_gateway.demux(rest + data[10:])
+        self.assertEqual(again, [(1, b"abcdef")])
+        self.assertEqual(rest, b"")
+
+    def test_a_partial_header_is_kept_not_dropped(self) -> None:
+        frames, rest = ssh_gateway.demux(b"\x01\x00\x00")
+        self.assertEqual(frames, [])
+        self.assertEqual(rest, b"\x01\x00\x00")
+
+    def test_an_empty_frame_is_a_frame(self) -> None:
+        frames, rest = ssh_gateway.demux(frame(1, b""))
+        self.assertEqual(frames, [(1, b"")])
+        self.assertEqual(rest, b"")
+
+
+class ShellCommandTest(unittest.TestCase):
+    def test_no_command_is_a_login_shell(self) -> None:
+        self.assertEqual(ssh_gateway.shell_command(None), ["bash", "-l"])
+        self.assertEqual(ssh_gateway.shell_command(""), ["bash", "-l"])
+
+    def test_a_command_is_one_argument_never_spliced(self) -> None:
+        command = 'claude --model "x"; echo $HOME'
+        self.assertEqual(ssh_gateway.shell_command(command), ["bash", "-lc", command])
+
+
+class HostKeyPathTest(unittest.TestCase):
+    def test_the_key_lives_in_the_state_directory(self) -> None:
+        self.assertEqual(str(ssh_gateway.host_key_path("/var/lib/x")), "/var/lib/x/ssh_host_ed25519_key")
+
+
+if __name__ == "__main__":
+    unittest.main()

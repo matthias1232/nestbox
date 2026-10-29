@@ -446,6 +446,46 @@ pub async fn pack_ports(
     Ok(ports.unwrap_or_default())
 }
 
+/// The catalog's description of how a pack is reached (`agent_packs.access`).
+///
+/// An unknown pack, or one nobody described, is an empty document: the panel
+/// then shows the ports without words, which is accurate.
+pub async fn pack_access(
+    scope: &mut TenantScope<'_>,
+    pack_key: &str,
+) -> Result<serde_json::Value, StoreError> {
+    let access: Option<serde_json::Value> =
+        sqlx::query_scalar("SELECT access FROM agent_packs WHERE key = $1")
+            .bind(pack_key)
+            .fetch_optional(scope.connection())
+            .await?;
+    Ok(access.unwrap_or_else(|| serde_json::json!({})))
+}
+
+/// What the runner reported for each port, written back to the forward rows.
+///
+/// `state` is the runner's answer, not a guess: `active` means the node-side
+/// socket exists, `failed` that it could not be opened.
+pub async fn set_forward_states(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+    states: &[(i32, &str)],
+) -> Result<(), StoreError> {
+    for (local_port, state) in states {
+        sqlx::query(
+            "UPDATE forwards SET state = $4
+              WHERE environment_id = $1 AND sandbox_id = $2 AND local_port = $3",
+        )
+        .bind(scope.environment_id())
+        .bind(sandbox_id)
+        .bind(local_port)
+        .bind(state)
+        .execute(scope.connection())
+        .await?;
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Sessions
 // ---------------------------------------------------------------------------

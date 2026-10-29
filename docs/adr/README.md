@@ -39,6 +39,8 @@ supersedes the old one and note the supersession in both files.
 | [0029](0029-a-node-is-a-row-plus-an-adapter.md) | A node is a row plus an adapter; multi-node is not a rename | Accepted |
 | [0030](0030-sandboxes-that-belong-together-are-linked-explicitly.md) | Sandboxes that belong together are linked explicitly, one level deep | Accepted |
 | [0031](0031-a-sandbox-is-reached-through-its-nodes-address.md) | A sandbox is reached through its node's address, never the container's | Accepted |
+| [0032](0032-the-stack-is-drawn-from-facts-and-helpers-link-themselves.md) | The stack diagram is arranged from facts, and a lone helper links itself | Accepted |
+| [0033](0033-published-ports-are-held-open-by-the-runner.md) | Published ports are held open by the runner, and SSH is answered by it | Accepted |
 
 ## Writing a new ADR
 

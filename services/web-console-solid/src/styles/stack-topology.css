@@ -1,0 +1,57 @@
+/* The stack diagram. Bands run top to bottom in the order traffic flows; the
+   lines are an SVG laid under the cards and measured from their real positions. */
+
+.stack { display: flex; flex-direction: column; gap: var(--space-3); }
+.stack-head { flex-wrap: wrap; }
+.stack-headline { margin: 0; display: flex; align-items: center; gap: var(--space-2); font-weight: 600; }
+.stack-problems { margin: 0; padding-left: 18px; color: var(--fg-muted); font-size: 12px; }
+.stack-problems li:first-child { color: var(--warn); }
+
+.stack-map { position: relative; display: flex; flex-direction: column; gap: 34px; padding: var(--space-3) 0; }
+.stack-edges { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; overflow: visible; }
+.stack-edges .edge path { fill: none; stroke-width: 1.5; stroke: var(--border-strong); }
+.stack-edges .edge.dim path { opacity: .45; }
+.stack-edges .edge.hot path { opacity: 1; stroke-width: 2.4; }
+.stack-edges .edge.ok path { stroke: var(--ok); }
+.stack-edges .edge.warn path { stroke: var(--warn); }
+.stack-edges .edge.bad path { stroke: var(--bad); }
+.stack-edges .edge.muted path { stroke: var(--fg-faint); }
+.stack-edges .edge.dashed path { stroke-dasharray: 5 4; }
+.stack-edges text { font-size: 11px; fill: var(--fg); paint-order: stroke; stroke: var(--bg); stroke-width: 3px; text-anchor: middle; }
+
+.stack-band { position: relative; z-index: 1; }
+.stack-band h4 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--fg-faint); }
+.stack-cards { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+
+.stack-cards .card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  min-width: 150px; max-width: 260px; padding: 8px 10px; text-align: left;
+  background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--fg); cursor: pointer;
+}
+.stack-cards .card:hover { border-color: var(--border-strong); }
+.stack-cards .card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.stack-cards .card.ok { border-left: 3px solid var(--ok); }
+.stack-cards .card.warn { border-left: 3px solid var(--warn); }
+.stack-cards .card.bad { border-left: 3px solid var(--bad); }
+.stack-cards .card.muted { border-left: 3px solid var(--fg-faint); }
+.stack-cards .card.kind-absent { border-style: dashed; background: transparent; }
+.card-name { font-size: 12px; font-weight: 600; word-break: break-all; }
+.card-state { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--fg-muted); }
+
+.stack-detail { padding: var(--space-4); background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); }
+.stack-detail header { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.stack-detail h3 { margin: 0; font-size: 15px; }
+.stack-detail h4 { margin: var(--space-3) 0 4px; font-size: 12px; color: var(--fg-muted); }
+.stack-facts { display: grid; grid-template-columns: max-content 1fr; gap: 3px var(--space-4); margin: var(--space-2) 0; }
+.stack-facts dt { color: var(--fg-faint); font-size: 12px; }
+.stack-facts dd { margin: 0; word-break: break-all; }
+.stack-links { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+.stack-links ul { margin: 0; padding-left: 16px; }
+button.link { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; }
+a.button { display: inline-block; text-decoration: none; padding: 2px 10px; border-radius: var(--radius-sm); }
+
+.log-viewer { display: flex; flex-direction: column; gap: var(--space-2); }
+.log-viewer .controls { flex-wrap: wrap; }
+.log-viewer .log-filter { min-width: 140px; }
+.log-viewer pre.logs { max-height: 320px; overflow: auto; margin: 0; }

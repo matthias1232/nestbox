@@ -11,9 +11,10 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use crate::domain::metrics::{InventoryProbe, ProcessTable};
+use crate::domain::pack_access::ForwardState;
 use crate::domain::runtime::{
-    BuildRequest, BuildResult, ExecResult, HardwareReport, ModelDownload, ModelDownloadResult,
-    ModelServe, ModelServeResult, RuntimeFacts, SandboxSpec,
+    BuildRequest, BuildResult, ComponentState, ExecResult, ForwardRequest, HardwareReport,
+    ModelDownload, ModelDownloadResult, ModelServe, ModelServeResult, RuntimeFacts, SandboxSpec,
 };
 
 /// Fehler aus der Ausführungsschicht.
@@ -113,6 +114,46 @@ pub trait RuntimeAdapter: Send + Sync {
     async fn stop_model(&self, model_key: &str) -> Result<(), RuntimeError>;
 
     async fn open_terminal(&self, name: &str) -> Result<BoxTerminal, RuntimeError>;
+
+    /// Hold exactly these ports open for a sandbox, and accept exactly these
+    /// public keys on its SSH port.
+    ///
+    /// The complete set, not a delta: a retry is the same call, and a withdrawn
+    /// port is simply missing from the next one. Returns what the runner opened.
+    ///
+    /// The default says the runtime cannot publish ports, so an adapter that
+    /// never could (a test double, a future OpenShell driver) fails visibly
+    /// rather than pretending.
+    async fn set_forwards(
+        &self,
+        _name: &str,
+        _forwards: &[ForwardRequest],
+        _authorized_keys: &[String],
+    ) -> Result<Vec<ForwardState>, RuntimeError> {
+        Err(RuntimeError::Unavailable("this runtime cannot publish ports".into()))
+    }
+
+    /// What the runner holds open for a sandbox right now, and whether anything
+    /// answers behind each port.
+    async fn forward_states(&self, _name: &str) -> Result<Vec<ForwardState>, RuntimeError> {
+        Err(RuntimeError::Unavailable("this runtime cannot publish ports".into()))
+    }
+
+    /// Close every port of a sandbox. Idempotent.
+    async fn clear_forwards(&self, _name: &str) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+
+    /// The appliance's own containers: state and health.
+    async fn components(&self) -> Result<Vec<ComponentState>, RuntimeError> {
+        Err(RuntimeError::Unavailable("this runtime does not report components".into()))
+    }
+
+    /// The last lines of one appliance component. `service` must be one of the
+    /// names `components` returns; the runner refuses any other.
+    async fn component_logs(&self, _service: &str, _tail: u32) -> Result<String, RuntimeError> {
+        Err(RuntimeError::Unavailable("this runtime does not report components".into()))
+    }
 }
 
 /// One frame in the direction runner → control API.

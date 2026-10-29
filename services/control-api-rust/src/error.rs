@@ -66,6 +66,7 @@ impl ErrorCode {
     pub const MODEL_INSTALL_IN_PROGRESS: Self = Self("model.install_in_progress");
 
     pub const NODE_NOT_FOUND: Self = Self("node.not_found");
+    pub const COMPONENT_NOT_FOUND: Self = Self("component.not_found");
     pub const NODE_RUNTIME_UNAVAILABLE: Self = Self("node.runtime_unavailable");
     pub const NODE_INSUFFICIENT_RESOURCES: Self = Self("node.insufficient_resources");
 

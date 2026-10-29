@@ -33,6 +33,8 @@ use crate::domain::access::{
     self, ForwardPurpose, NodePortPool, PublishedPort, SandboxSession, SshKey, SshKeyDownload,
 };
 use crate::domain::auth::{Permission, Principal};
+use crate::domain::pack_access::{self, ForwardState, PackAccess};
+use crate::domain::runtime::ForwardRequest;
 use crate::domain::sandbox::Sandbox;
 use crate::error::{ApiError, ErrorCode, StoreError};
 use crate::security::secrets;
@@ -423,6 +425,9 @@ pub async fn rotate(
     .await
     .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
+    // The new public key must reach the runner, or the old one keeps working
+    // and the new one is refused until something else pushes the set.
+    push_forwards_logged(ctx, principal, &sandbox).await;
     Ok(stored)
 }
 
@@ -440,7 +445,118 @@ pub async fn provision(
     require(principal, Permission::SandboxWrite)?;
     let key = ensure_key(ctx, principal, sandbox).await?;
     let ports = claim_sandbox_ports(ctx, principal, sandbox).await?;
+    // Reserving a port is bookkeeping; the runner is what opens it. Done here so
+    // a sandbox is reachable the moment it exists, with no second step.
+    push_forwards_logged(ctx, principal, sandbox).await;
     Ok(Provisioned { key, ports })
+}
+
+/// Hand the runner the sandbox's complete set of ports and its public key, and
+/// record what it opened in the `forwards` rows.
+///
+/// Called whenever the set or the key changes (create, publish, withdraw,
+/// rotate) and when a read finds the runner out of step with the database. It
+/// is the same call each time, so none of those paths needs its own recovery.
+/// No permission check: it only pushes what the database already says, and the
+/// callers have checked what they need to.
+pub async fn push_forwards(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox: &Sandbox,
+) -> Result<Vec<ForwardState>, ApiError> {
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let ports = store::list_forwards(&mut scope, sandbox.id)
+        .await
+        .map_err(ApiError::from)?;
+    let public_key = match store::get_key(&mut scope, sandbox.id).await {
+        Ok(key) => Some(key.public_key),
+        Err(StoreError::NotFound) => None,
+        Err(error) => return Err(ApiError::from(error)),
+    };
+    scope.commit().await.map_err(ApiError::from)?;
+
+    let requests: Vec<ForwardRequest> = ports
+        .iter()
+        .map(|port| ForwardRequest {
+            port: port.public_port,
+            target_port: port.target_port,
+            purpose: port.purpose.as_str().to_string(),
+        })
+        .collect();
+    let keys: Vec<String> = public_key.into_iter().collect();
+
+    let states = ctx
+        .runtime
+        .set_forwards(&sandbox.name, &requests, &keys)
+        .await
+        .map_err(|error| {
+            ApiError::internal("The runner did not open the published ports.")
+                .with_internal(error.to_string())
+        })?;
+
+    let updates: Vec<(i32, &str)> = ports
+        .iter()
+        .map(|port| {
+            let open = states
+                .iter()
+                .any(|state| state.port == port.public_port && state.listening);
+            (port.public_port, if open { "active" } else { "failed" })
+        })
+        .collect();
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    store::set_forward_states(&mut scope, sandbox.id, &updates)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(states)
+}
+
+/// `push_forwards` for a path that must not fail because the runner did: the
+/// forwards stay `pending` and the next read of the Access panel pushes again.
+pub async fn push_forwards_logged(ctx: &ServiceContext, principal: &Principal, sandbox: &Sandbox) {
+    if let Err(error) = push_forwards(ctx, principal, sandbox).await {
+        tracing::warn!(
+            sandbox = %sandbox.name,
+            code = error.code.0,
+            "published ports could not be pushed to the runner; they stay pending"
+        );
+    }
+}
+
+/// What the runner reports for a sandbox's ports, repaired when it is behind.
+///
+/// A runner that was recreated without its state volume has no listeners; the
+/// database still has every forward. Pushing them again on read means an
+/// operator never has to know the runner restarted.
+async fn live_forward_states(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox: &Sandbox,
+    ports: &[PublishedPort],
+) -> Option<Vec<ForwardState>> {
+    if ports.is_empty() {
+        return Some(Vec::new());
+    }
+    let asked = tokio::time::timeout(
+        std::time::Duration::from_secs(4),
+        ctx.runtime.forward_states(&sandbox.name),
+    )
+    .await;
+    let states = match asked {
+        Ok(Ok(states)) => states,
+        _ => return None,
+    };
+    let complete = ports
+        .iter()
+        .all(|port| states.iter().any(|state| state.port == port.public_port));
+    if complete {
+        return Some(states);
+    }
+    push_forwards(ctx, principal, sandbox).await.ok()
 }
 
 /// The key pair of a sandbox, created on first use.
@@ -723,9 +839,16 @@ pub async fn connect(
         Err(StoreError::NotFound) => None,
         Err(error) => return Err(ApiError::from(error)),
     };
+    let pack = PackAccess::from_value(
+        &store::pack_access(&mut scope, &sandbox.pack_key)
+            .await
+            .map_err(ApiError::from)?,
+    );
     scope.commit().await.map_err(ApiError::from)?;
 
-    Ok(crate::domain::access::build_connect(
+    let live = live_forward_states(ctx, principal, &sandbox, &ports).await;
+
+    let info = crate::domain::access::build_connect(
         crate::domain::access::ConnectInput {
             sandbox_id: sandbox.id,
             sandbox_name: &sandbox.name,
@@ -736,7 +859,8 @@ pub async fn connect(
             ports: &ports,
             key,
         },
-    ))
+    );
+    Ok(pack_access::enrich(info, &sandbox.pack_key, &pack, live.as_deref()))
 }
 
 /// Set the address and hostname clients use for a node.
@@ -868,6 +992,7 @@ pub async fn publish_port(
     .await
     .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
+    push_forwards_logged(ctx, principal, &sandbox).await;
 
     Ok(PublishedPort {
         forward_id,
@@ -890,7 +1015,7 @@ pub async fn withdraw_port(
     forward_id: Uuid,
 ) -> Result<(), ApiError> {
     require(principal, Permission::SandboxWrite)?;
-    load_sandbox(ctx, principal, sandbox_id).await?;
+    let sandbox = load_sandbox(ctx, principal, sandbox_id).await?;
 
     let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
         .await
@@ -921,6 +1046,7 @@ pub async fn withdraw_port(
     .await
     .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
+    push_forwards_logged(ctx, principal, &sandbox).await;
     Ok(())
 }
 

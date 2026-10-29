@@ -21,6 +21,7 @@ pub mod persist_service;
 pub mod policy_service;
 pub mod provider_service;
 pub mod sandbox_service;
+pub mod stack_topology_service;
 pub mod telemetry_service;
 pub mod terminal_service;
 pub mod traffic_service;

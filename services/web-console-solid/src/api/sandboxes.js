@@ -83,3 +83,9 @@ export function downloadSshKey(id) {
 export function rotateSshKey(id) {
   return request(`sandboxes/${id}/ssh-key/rotate`, { method: 'POST' });
 }
+
+// The stack this sandbox belongs to, from the operator to the internet, with the
+// live state of every piece. `windowSpan` is how far back egress traffic is summed.
+export function stackTopology(id, windowSpan = '5m') {
+  return request(`sandboxes/${id}/stack-topology${query({ window: windowSpan })}`);
+}

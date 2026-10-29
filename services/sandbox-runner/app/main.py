@@ -21,6 +21,8 @@ from app import inventory as inventory_probe
 from app import processes as process_table
 from app import stats as resource_stats
 from app import terminal as terminal_transport
+from app import forwards as published_ports
+from app import system as appliance_components
 
 app = FastAPI(title="Nestbox Sandbox Runtime", version="1.0.0")
 client = docker.from_env()
@@ -45,6 +47,18 @@ app.include_router(resource_stats.router)
 app.include_router(process_table.router)
 app.include_router(inventory_probe.router)
 app.include_router(terminal_transport.router)
+app.include_router(published_ports.router)
+app.include_router(appliance_components.router)
+
+
+@app.on_event("startup")
+async def restore_published_ports() -> None:
+    """Re-open the listeners the control plane last asked for.
+
+    The runner is recreated on every deploy; without this every sandbox would be
+    unreachable until something pushed its forwards again.
+    """
+    await published_ports.manager.restore()
 NETWORK = os.getenv("NESTBOX_RUNTIME_NETWORK", "nestbox-runtime")
 # The only way out of a sandbox. It is joined to the sandbox network by this
 # adapter rather than by compose, because this adapter is what creates that

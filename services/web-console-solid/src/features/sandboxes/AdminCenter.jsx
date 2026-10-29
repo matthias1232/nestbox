@@ -36,7 +36,7 @@ const TABS = [
   { id: 'mcp', label: 'MCP', component: McpTab },
   { id: 'terminal', label: 'Terminal', component: TerminalTab },
   { id: 'access', label: 'Access', component: AccessTab },
-  { id: 'map', label: 'Map', component: MapTab },
+  { id: 'map', label: 'Topology', component: MapTab },
   { id: 'policies', label: 'Policies', component: PoliciesTab },
   { id: 'processes', label: 'Processes', component: ProcessesTab },
   { id: 'inventory', label: 'Inventory', component: InventoryTab },

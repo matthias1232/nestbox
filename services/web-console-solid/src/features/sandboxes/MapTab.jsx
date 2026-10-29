@@ -1,18 +1,12 @@
-// Map tab of the sandbox Admin Center.
+// Topology tab of the sandbox Admin Center.
 //
-// Skeleton: the panel says what belongs here and which package fills it. The
-// shell (`AdminCenter.jsx`) and the tab list belong to the integrator, so a
-// package replaces this file and touches nothing else.
+// The stack this sandbox belongs to, from you to the internet, with live state
+// and a log behind every piece. `StackTopology.jsx` draws it; this file only
+// hands it the sandbox, so the shell (`AdminCenter.jsx`) keeps its contract:
+// a tab receives `sandbox`, `revision` and `reload`, and edits nothing else.
 
-import PendingPanel from '../../components/PendingPanel.jsx';
+import StackTopology from './StackTopology.jsx';
 
 export default function MapTab(props) {
-  return (
-    <PendingPanel
-      title="Map"
-      text="Sandbox → destination edges for the last five minutes, with request counts and a red edge when anything was blocked. Clicking an edge filters the traffic tab."
-      endpoint="GET /api/v1/sandboxes/{id}/map"
-      owner="Package 15 · feat/console-map-policies. The tab receives the sandbox and a reload callback."
-    />
-  );
+  return <StackTopology sandbox={props.sandbox} revision={props.revision} />;
 }
