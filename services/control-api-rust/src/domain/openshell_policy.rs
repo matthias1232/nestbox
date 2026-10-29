@@ -172,12 +172,12 @@ fn endpoint_for(rule: &NetworkRule) -> Result<Value, String> {
             endpoint.insert("protocol".into(), json!("mcp"));
             endpoint.insert("enforcement".into(), json!(enforce));
             // OpenShell allows only the newest MCP revision by default; agents in the
-            // field still speak the earlier ones.
+            // field still speak the earlier ones (the revisions OpenShell supports).
             endpoint.insert(
                 "mcp".into(),
                 json!({
                     "allow_all_known_mcp_methods": true,
-                    "versions": ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"],
+                    "versions": ["2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"],
                 }),
             );
         }
