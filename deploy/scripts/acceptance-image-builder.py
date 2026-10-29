@@ -105,7 +105,9 @@ def main() -> int:
         )
         print("template applied: revision", applied["revision"], "packages", applied["extra_packages"])
 
-        status, queued = call(f"/recipes/{recipe['id']}/build", "POST", {}, expect=200)
+        status, queued = call(f"/recipes/{recipe['id']}/build", "POST", {})
+        if status not in {200, 202}:
+            raise SystemExit(f"build -> {status}: {queued}")
         print("build queued:", queued.get("job_id"), "reused:", queued.get("reused"))
 
         for _ in range(120):
@@ -124,6 +126,10 @@ def main() -> int:
             text=True,
         )
         print("jq in image:", check.stdout.strip() or check.stderr.strip())
+        # Leave no acceptance rows or images behind on a shared test box.
+        subprocess.run(["docker", "image", "rm", image], capture_output=True)
+        call(f"/recipes/{recipe['id']}", "DELETE")
+        call(f"/image-templates/{template['id']}", "DELETE")
         return 0 if check.returncode == 0 else 1
     finally:
         psql(f"DELETE FROM api_tokens WHERE name = 'acceptance' AND token_hash = '{digest}';\n")
