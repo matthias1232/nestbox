@@ -57,6 +57,13 @@ pub struct RuntimeFacts {
     pub exit_code: Option<i64>,
     #[serde(default)]
     pub resources: RuntimeResources,
+    /// The OpenShell supervisor of this sandbox (`running`, `degraded`, `stopped`,
+    /// `missing`); empty for a runtime that has none.
+    #[serde(default)]
+    pub supervisor_status: String,
+    /// The supervisor's image, which carries its version.
+    #[serde(default)]
+    pub supervisor_image: String,
 }
 
 /// Wunsch zum Erzeugen einer Sandbox – die Sprache des Adapters.

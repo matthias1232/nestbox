@@ -348,6 +348,26 @@ def utc(value: str | None) -> str | None:
     return value
 
 
+def supervisor_facts(item: Any) -> dict[str, str]:
+    """The OpenShell supervisor next to a workload: its own container.
+
+    Empty for a sandbox of our own, which has no supervisor container. The status is
+    the container's, with Docker's health when the supervisor image defines one.
+    """
+    if not openshell_name(item.name):
+        return {}
+    try:
+        companion = client.containers.get(f"{item.name}-supervisor")
+    except (NotFound, DockerException):
+        return {"supervisor_status": "missing", "supervisor_image": ""}
+    state = companion.attrs.get("State", {})
+    health = (state.get("Health") or {}).get("Status", "")
+    status = "running" if state.get("Running") else "stopped"
+    if status == "running" and health in {"unhealthy", "starting"}:
+        status = "degraded" if health == "unhealthy" else "starting"
+    return {"supervisor_status": status, "supervisor_image": companion.attrs.get("Config", {}).get("Image", "")}
+
+
 def details(item: Any) -> dict[str, Any]:
     item.reload()
     attrs = item.attrs
@@ -382,6 +402,7 @@ def details(item: Any) -> dict[str, Any]:
             "pids_limit": attrs.get("HostConfig", {}).get("PidsLimit", 0),
         },
         "labels": {key: value for key, value in labels.items() if key.startswith("nestbox.")},
+        **supervisor_facts(item),
     }
 
 
