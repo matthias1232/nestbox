@@ -5,6 +5,7 @@ import { request, query } from './client.js';
 
 export const metrics = (id, range = '1h') => request(`sandboxes/${id}/metrics${query({ range })}`);
 export const processes = (id) => request(`sandboxes/${id}/processes`);
+export const processAction = (id, pid, body) => request(`sandboxes/${id}/processes/${pid}/action`, { method: 'POST', body });
 export const inventory = (id) => request(`sandboxes/${id}/inventory`);
 export const refreshInventory = (id) => request(`sandboxes/${id}/inventory/refresh`, { method: 'POST' });
 export const traffic = (id, params = {}) => request(`sandboxes/${id}/traffic${query(params)}`);

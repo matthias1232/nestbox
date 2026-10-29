@@ -15,6 +15,7 @@ from typing import Any
 import docker
 from docker.errors import APIError, NotFound
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 router = APIRouter()
 client = docker.from_env()
@@ -22,6 +23,12 @@ client = docker.from_env()
 # Fixed on purpose: a caller cannot add a column, an `-o` flag, or a sort key.
 PS_ARGS = "-eo pid,ppid,user,%cpu,%mem,etime,args"
 SAMPLE_LIMIT = 500
+ALLOWED_ACTIONS = {"terminate": "TERM", "kill": "KILL", "pause": "STOP", "resume": "CONT"}
+
+
+class ProcessAction(BaseModel):
+    action: str
+    nice: int | None = None
 
 
 def container(name: str) -> Any:
@@ -87,3 +94,34 @@ def processes(name: str) -> dict[str, Any]:
         "items": entries,
         "truncated": len(rows) > SAMPLE_LIMIT,
     }
+
+
+@router.post("/v1/sandboxes/{name}/processes/{pid}/action")
+def process_action(name: str, pid: int, request: ProcessAction) -> dict[str, Any]:
+    """Apply one fixed signal or a lower CPU priority to a live child process.
+
+    Docker's exec API is used with an argument vector, never a request-supplied
+    shell command. PID 1 is deliberately protected: it is the sandbox workload,
+    so its lifecycle belongs to the sandbox controls instead.
+    """
+    if pid < 2:
+        raise HTTPException(422, "PID 1 is the sandbox entrypoint; use the sandbox controls instead")
+    item = container(name)
+    live = processes(name)["items"]
+    if not any(row["pid"] == pid for row in live):
+        raise HTTPException(404, f"no live process {pid} in sandbox {name}")
+    if request.action == "set_nice":
+        if request.nice is None or not -20 <= request.nice <= 19:
+            raise HTTPException(422, "set_nice requires a nice value between -20 and 19")
+        command = ["renice", "-n", str(request.nice), "-p", str(pid)]
+        message = f"Priority of PID {pid} set to nice {request.nice}."
+    else:
+        signal = ALLOWED_ACTIONS.get(request.action)
+        if not signal or request.nice is not None:
+            raise HTTPException(422, "action must be terminate, kill, pause, resume, or set_nice")
+        command = ["kill", f"-{signal}", str(pid)]
+        message = f"Sent SIG{signal} to PID {pid}."
+    result = item.exec_run(command, stdout=True, stderr=True)
+    if result.exit_code != 0:
+        raise HTTPException(409, (result.output or b"process action failed").decode(errors="replace")[:512])
+    return {"pid": pid, "action": request.action, "message": message}

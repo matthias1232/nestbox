@@ -234,6 +234,27 @@ pub async fn processes(
         .map_err(runner_error)
 }
 
+pub async fn process_action(
+    ctx: &ServiceContext, principal: &Principal, sandbox_id: Uuid, pid: i64, action: String, nice: Option<i8>,
+) -> Result<serde_json::Value, ApiError> {
+    require(principal, Permission::SandboxWrite)?;
+    if pid < 2 { return Err(ApiError::validation("PID 1 is the sandbox entrypoint; use the sandbox controls instead.")); }
+    let allowed = ["terminate", "kill", "pause", "resume", "set_nice"];
+    if !allowed.contains(&action.as_str()) { return Err(ApiError::validation("Unknown process action.")); }
+    if action == "set_nice" {
+        let value = nice.ok_or_else(|| ApiError::validation("set_nice requires a nice value."))?;
+        if !(-20..=19).contains(&value) { return Err(ApiError::validation("Nice must be between -20 and 19.")); }
+        if value < 0 && principal.role != crate::domain::auth::Role::Admin { return Err(ApiError::forbidden("Only an admin may raise process priority.")); }
+    } else if nice.is_some() { return Err(ApiError::validation("nice is only valid for set_nice.")); }
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
+    let sandbox = sandbox_store::get(&mut scope, sandbox_id).await.map_err(|error| match error { StoreError::NotFound => ApiError::not_found(ErrorCode::SANDBOX_NOT_FOUND, "No such sandbox."), other => ApiError::from(other) })?;
+    scope.commit().await.map_err(ApiError::from)?;
+    let command = if action == "set_nice" { vec!["renice".into(), "-n".into(), nice.unwrap().to_string(), "-p".into(), pid.to_string()] } else { let signal = match action.as_str() { "terminate" => "TERM", "kill" => "KILL", "pause" => "STOP", _ => "CONT" }; vec!["kill".into(), format!("-{signal}"), pid.to_string()] };
+    let result = ctx.runtime.exec(&sandbox.name, &command, 10).await.map_err(runner_error)?;
+    if result.exit_code.unwrap_or(1) != 0 { return Err(ApiError::validation("The process action was refused.")); }
+    Ok(serde_json::json!({"pid": pid, "action": action, "message": format!("Process action applied to PID {pid}.")}))
+}
+
 /// Aggregate completed minutes into the rollup and prune what outlived it.
 ///
 /// Called by the `metrics_rollup` job, so there is no principal: the environment
