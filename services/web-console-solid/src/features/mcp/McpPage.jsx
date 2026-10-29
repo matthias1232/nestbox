@@ -127,7 +127,7 @@ export default function McpPage(props) {
       </Show>
 
       <div class="table-scroll">
-        <table>
+        <table class="mcp-table">
           <thead><tr><th>Name</th><th>Transport</th><th>Endpoint or command</th><th>Credential</th><th>Agents</th><th>Status</th><th /></tr></thead>
           <tbody>
             <For each={servers()}>
