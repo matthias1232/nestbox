@@ -172,7 +172,7 @@ export default function ConnectPanel(props) {
                         <tr>
                           <td>
                             <b>{port.label || PURPOSE[port.purpose] || port.purpose}</b>
-                            <Show when={port.description}><small class="muted block">{port.description}</small></Show>
+                            <Show when={port.description}><small class="muted block">{port.target_up ? port.description.replace(/\s*Nothing answers until[^.]*\./, '') : port.description}</small></Show>
                             <small class="muted block">inside the sandbox: <span class="mono">{port.target_port}</span></small>
                           </td>
                           <td class="small">{KIND[port.kind] || port.kind}</td>
