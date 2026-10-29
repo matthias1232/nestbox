@@ -89,6 +89,8 @@ const COLUMNS: &str = r#"
         NULLIF(e.detail->>'sni', '') AS sni,
         NULLIF(e.detail->>'listener', '') AS listener,
         NULLIF(e.detail->>'app_protocol', '') AS app_protocol,
+        CASE WHEN e.detail->>'listener' = 'openshell' THEN NULLIF(e.detail->>'source', '') END AS program,
+        NULLIF(e.detail->>'reason', '') AS reason_text,
         -- Where the destination's address is registered, from the registry's own
         -- RDAP record, looked up once per host and cached in `host_geography`.
         g.country AS country,
@@ -344,6 +346,8 @@ fn row_to_event(row: &sqlx::postgres::PgRow) -> Result<Option<TrafficEvent>, Sto
         app_protocol: row.try_get("app_protocol")?,
         country: row.try_get("country")?,
         asn: row.try_get("asn")?,
+        binary: row.try_get("program")?,
+        reason_text: row.try_get("reason_text")?,
     }))
 }
 
@@ -379,7 +383,7 @@ pub async fn rows(
          SELECT id, sandbox_id, ts, host, port, protocol, method, path, status,
                 duration_ms, bytes_in, bytes_out, decision, reason, rule_id,
                 window_id, user_agent, mcp_session_id, mcp_method, mcp_tool, inspected,
-                channel, sni, listener, app_protocol, country, asn
+                channel, sni, listener, app_protocol, program, reason_text, country, asn
            FROM base
           WHERE {FILTER}
             AND ($6::text IS NULL OR host ILIKE '%' || $6 || '%')
