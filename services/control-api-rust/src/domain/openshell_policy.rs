@@ -177,7 +177,13 @@ fn endpoint_for(rule: &NetworkRule) -> Result<Value, String> {
             if endpoint.contains_key("allowed_ips") {
                 return Err("a native TCP rule needs a hostname".into());
             }
-            endpoint.insert("protocol".into(), json!("tcp"));
+            if host.parse::<std::net::IpAddr>().is_ok() {
+                // OpenShell refuses `protocol: tcp` for an IP literal (it would bypass
+                // policy DNS). The destination is still allowed, relayed as is.
+                endpoint.insert("tls".into(), json!("skip"));
+            } else {
+                endpoint.insert("protocol".into(), json!("tcp"));
+            }
         }
         // JSON-RPC needs explicit method rules, which a flat rule does not carry:
         // fall back to a plain endpoint rather than refuse the destination.
@@ -233,6 +239,16 @@ mod tests {
         assert_eq!(entry["endpoints"][0]["protocol"], "rest");
         assert_eq!(entry["endpoints"][0]["access"], "full");
         assert_eq!(entry["binaries"][0]["path"], "/**");
+    }
+
+    #[test]
+    fn a_tcp_rule_for_an_ip_literal_is_relayed_without_a_protocol() {
+        let compiled = compile(&[rule("Model", RuleAction::Allow, "10.90.92.30", Some(20128), RuleProtocol::Tcp)]);
+        let endpoint = &entries(&compiled).values().next().unwrap()["endpoints"][0];
+        assert!(endpoint.get("protocol").is_none());
+        assert_eq!(endpoint["tls"], "skip");
+        let named = compile(&[rule("Db", RuleAction::Allow, "db.example.com", Some(5432), RuleProtocol::Tcp)]);
+        assert_eq!(entries(&named).values().next().unwrap()["endpoints"][0]["protocol"], "tcp");
     }
 
     #[test]
