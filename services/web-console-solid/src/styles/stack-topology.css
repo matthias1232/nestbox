@@ -10,14 +10,14 @@
 .stack-map { position: relative; display: flex; flex-direction: column; gap: 34px; padding: var(--space-3) 0; }
 .stack-edges { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; overflow: visible; }
 .stack-edges .edge path { fill: none; stroke-width: 1.5; stroke: var(--border-strong); }
-.stack-edges .edge.dim path { opacity: .45; }
+.stack-edges .edge.dim path { opacity: .22; stroke-width: 1; }
 .stack-edges .edge.hot path { opacity: 1; stroke-width: 2.4; }
 .stack-edges .edge.ok path { stroke: var(--ok); }
 .stack-edges .edge.warn path { stroke: var(--warn); }
 .stack-edges .edge.bad path { stroke: var(--bad); }
 .stack-edges .edge.muted path { stroke: var(--fg-faint); }
 .stack-edges .edge.dashed path { stroke-dasharray: 5 4; }
-.stack-edges text { font-size: 11px; fill: var(--fg); paint-order: stroke; stroke: var(--bg); stroke-width: 3px; text-anchor: middle; }
+.stack-edges text { font-size: 11px; fill: var(--fg); paint-order: stroke; stroke: var(--bg); stroke-width: 5px; font-weight: 600; text-anchor: middle; }
 
 .stack-band { position: relative; z-index: 1; }
 .stack-band h4 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--fg-faint); }
