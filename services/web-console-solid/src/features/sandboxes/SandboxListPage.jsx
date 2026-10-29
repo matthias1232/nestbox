@@ -15,6 +15,7 @@ import ConnectPanel from './ConnectPanel.jsx';
 import { createMemo, createSignal } from 'solid-js';
 import { groupStacks, possibleLeads, worstStatus } from './stacks.js';
 import '../../styles/stacks.css';
+import '../../styles/sandbox-hierarchy.css';
 
 export default function SandboxListPage(props) {
   const state = useSandboxes();
@@ -115,7 +116,23 @@ export default function SandboxListPage(props) {
                     </td>
                     <td><StatusBadge status={sandbox.status} /></td>
                     <td><StatusBadge status={sandbox.health} /></td>
-                    <td class="mono small">{sandbox.pack_key}</td>
+                    <td class="mono small" title="The agent this sandbox runs">{sandbox.pack_key}</td>
+                    <td class="mono small">{sandbox.cluster_name || '—'}</td>
+                    <td class="mono small">{sandbox.gateway_name || <span class="muted">not placed</span>}</td>
+                    <td class="small">
+                      <Show when={sandbox.supervisor_name} fallback={<span class="muted">none</span>}>
+                        <span class="mono">{sandbox.supervisor_name}</span>{' '}
+                        <StatusBadge status={sandbox.supervisor_status || 'unknown'} />
+                      </Show>
+                    </td>
+                    <td class="small">
+                      <span class={`runtime-tag ${sandbox.runtime_kind || 'unknown'}`}
+                            title={sandbox.runtime_kind === 'openshell'
+                              ? 'Enforced by an NVIDIA OpenShell supervisor (Landlock, seccomp, per-program network policy)'
+                              : 'A plain Docker container without an OpenShell supervisor'}>
+                        {sandbox.runtime_kind === 'openshell' ? 'OpenShell' : sandbox.runtime_kind || '—'}
+                      </span>
+                    </td>
                     <td class="mono small">
                       {/* The machine the container actually runs on. This page
                           does not know the route to the nodes screen, so the
@@ -200,6 +217,13 @@ export default function SandboxListPage(props) {
       </header>
       <HostLoad />
 
+      <p class="hierarchy muted" role="note">
+        <b>How it fits together:</b> a <b>cluster</b> holds <b>gateways</b>; a gateway carries
+        <b>sandboxes</b> and hands each its policy. Every sandbox has its own <b>supervisor</b>
+        (a service, not a sandbox) that watches it from outside and decides each network
+        connection. The agent runs inside the sandbox.
+      </p>
+
       <Show when={created()}>
         <p class="notice">{created()}</p>
       </Show>
@@ -255,7 +279,11 @@ export default function SandboxListPage(props) {
                 <th>Name</th>
                 <th>Status</th>
                 <th>Health</th>
-                <th>Pack</th>
+                <th title="The agent the sandbox runs">Agent</th>
+                <th title="The cluster the sandbox belongs to">Cluster</th>
+                <th title="The gateway that carries it and applies its policy">Gateway</th>
+                <th title="The service that watches this sandbox from outside and enforces its policy. One per sandbox, not a sandbox itself.">Supervisor</th>
+                <th title="What enforces the sandbox">Runtime</th>
                 <th>Node</th>
                 <th>Address</th>
                 <th class="narrow">Uptime</th>

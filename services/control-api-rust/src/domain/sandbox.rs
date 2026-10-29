@@ -360,4 +360,15 @@ pub struct SandboxSummary {
     /// False when the runtime could not be reached, so the console can label the
     /// row as "stored state only" instead of showing blanks as zeros.
     pub runtime_available: bool,
+    /// The cluster this sandbox belongs to, by name.
+    #[serde(default)]
+    pub cluster_name: Option<String>,
+    /// The supervisor that watches it, by name, and what it last reported.
+    #[serde(default)]
+    pub supervisor_name: Option<String>,
+    #[serde(default)]
+    pub supervisor_status: Option<String>,
+    /// Which runtime enforces it: `openshell` or `docker`.
+    #[serde(default)]
+    pub runtime_kind: Option<String>,
 }
