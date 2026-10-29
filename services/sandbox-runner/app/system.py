@@ -239,14 +239,31 @@ def set_limits(service: str, body: ComponentLimits) -> dict[str, Any]:
     if "mem_limit" in update:
         update["memswap_limit"] = update["mem_limit"]
     try:
-        # The low-level call, not `Container.update`: this docker-py version's
-        # helper does not accept `pids_limit`, and passing it there raised a
-        # TypeError that reached the operator as "Internal Server Error". The
-        # engine's own API does accept every field the form offers.
-        container.client.api.update_container(container.id, **update)
+        # Straight to the engine, with the engine's own field names. docker-py
+        # 7.2's `update_container` helper has neither `nano_cpus` nor
+        # `pids_limit`, so half of this form used to fail with a TypeError that
+        # reached the operator as "Internal Server Error". The engine accepts all
+        # of them, and this is the documented endpoint behind the helper.
+        api = container.client.api
+        api._post_json(
+            api._url("/containers/{0}/update", container.id),
+            # Only the fields that were asked for: an explicit 0 would remove a
+            # limit the caller never mentioned.
+            data={
+                engine: update[key]
+                for key, engine in (
+                    ("mem_limit", "Memory"),
+                    ("memswap_limit", "MemorySwap"),
+                    ("nano_cpus", "NanoCpus"),
+                    ("cpu_shares", "CpuShares"),
+                    ("pids_limit", "PidsLimit"),
+                )
+                if key in update
+            },
+        )
     except DockerException as failure:
         raise HTTPException(409, f"docker refused the change: {failure}") from failure
-    except TypeError as failure:  # noqa: BLE001 - a bad field must be a clear 409, not a 500
+    except Exception as failure:  # noqa: BLE001 - a bad field must be a clear 409, not a 500
         raise HTTPException(409, f"docker refused the change: {failure}") from failure
     return {"service": service, "applied": "live", "changed": sorted(update)}
 
