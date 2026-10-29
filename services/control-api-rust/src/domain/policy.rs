@@ -1575,6 +1575,28 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn the_proxy_hop_is_an_explicit_tcp_allow() {
+        let sandbox = Uuid::new_v4();
+        let environment = Uuid::new_v4();
+        let rules = rules_for_egress_proxy("host.openshell.internal", 18087, sandbox, environment);
+        assert_eq!(rules.len(), 1);
+        let rule = &rules[0];
+        assert_eq!(rule.action, RuleAction::Allow);
+        assert_eq!(rule.host, "host.openshell.internal");
+        assert_eq!(rule.port, Some(18087));
+        // `tcp`, not `rest`: a forward proxy speaks CONNECT, so there is no
+        // readable request inside the tunnel for an L7 policy to match.
+        assert_eq!(rule.protocol, RuleProtocol::Tcp);
+        assert_eq!(rule.sandbox_id, Some(sandbox));
+    }
+
+    #[test]
+    fn a_proxy_without_a_host_grants_nothing() {
+        let rules = rules_for_egress_proxy("  ", 18087, Uuid::new_v4(), Uuid::new_v4());
+        assert!(rules.is_empty());
+    }
+
+    #[test]
     fn network_is_the_only_hot_reloadable_section() {
         assert!(PolicySection::NetworkPolicies.is_hot_reloadable());
         assert!(!PolicySection::FilesystemPolicy.is_hot_reloadable());
