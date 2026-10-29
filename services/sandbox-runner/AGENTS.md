@@ -51,7 +51,7 @@ control plane.
 5. The runner's API (port 9000) listens only on the internal `control` network and
    is not published on the host. What is published is the forward range
    (`NESTBOX_FORWARD_RANGE`, default `22200-22299`): one listener per sandbox
-   forward, an SSH door (`ssh_gateway.py`, key auth, no scp/sftp/tunnels) or a
+   forward, an SSH door (`ssh_gateway.py`, key auth, no SFTP, no tunnels) or a
    byte relay to the sandbox (ADR 0033).
 6. A model server starts only from an image in `NESTBOX_MODEL_IMAGES`, compared
    as an exact `repo@sha256:…` reference. Every absolute path in its command

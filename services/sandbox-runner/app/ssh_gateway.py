@@ -8,10 +8,12 @@ real PTY when the client asks for one. That covers an interactive shell,
 `ssh host <command>` (so `ssh host claude` works), and agent CLIs that only need a
 terminal.
 
-What it is **not**: a file-transfer or port-forwarding server. `scp`, `sftp` and
-`-L` are refused, so this door cannot be used to move data around the egress
-policy. VS Code Remote-SSH needs those and therefore does not work here; the
-console says so rather than hiding it.
+What it is **not**: an SFTP or port-forwarding server. There is no SFTP
+subsystem, and `-L`, `-R` and `-D` are refused, so this door cannot be used to
+tunnel traffic around the egress policy. VS Code Remote-SSH needs both and does
+not work here; the console says so rather than hiding it. Legacy `scp -O` still
+works when the image has `scp`, because it is only a command run inside the
+sandbox (`scp -t`), the same as typing it in a shell.
 
 Authentication is public-key only. The authorised keys are the sandbox's own
 public key (the pair the control plane generated), delivered with the forward
@@ -247,7 +249,7 @@ async def serve(
         x11_forwarding=False,
         allow_pty=True,
         line_editor=False,
-        # No sftp_factory and no scp: neither is offered. `-L`/`-R`/`-D` are
+        # No sftp_factory: SFTP is not offered. `-L`/`-R`/`-D` are
         # refused because `Door` does not override `connection_requested` or
         # `server_requested`, whose default is to say no. This door opens a
         # shell, not a tunnel around the egress policy.

@@ -110,7 +110,7 @@ pub struct ForwardState {
 }
 
 /// What the SSH door does not do, said once.
-pub const SSH_LIMITS: &str = "This SSH door opens a shell or runs one command. It does not offer scp, sftp or port forwarding, so VS Code Remote-SSH does not work through it.";
+pub const SSH_LIMITS: &str = "This SSH door opens a shell or runs one command. It has no SFTP and no port forwarding, so VS Code Remote-SSH and ssh -L/-R do not work through it. Legacy scp -O works only because it runs scp inside the sandbox.";
 
 /// The URL a browser or client uses for a port, or `None` when there is no host.
 fn url_for(dial: &str, access: &PortAccess) -> String {
