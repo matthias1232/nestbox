@@ -205,6 +205,21 @@ pub fn enrich(
         }
     }
 
+    if let (Some(host), Some(ssh_port)) = (
+        info.host.clone(),
+        info.ports.iter().find(|port| port.purpose == ForwardPurpose::Ssh),
+    ) {
+        info.commands.push(ConnectCommand {
+            label: "PuTTY (Windows)".to_string(),
+            description: format!(
+                "Host name {host}, port {port}, user {SSH_USER}. PuTTY reads .ppk keys: open the downloaded key in PuTTYgen, choose Save private key, and select it under Connection > SSH > Auth. \
+                 With no key at all, issue a temporary login in the SSH access section and use its user name and password instead.",
+                port = ssh_port.public_port
+            ),
+            command: format!("putty.exe -ssh -P {} {SSH_USER}@{host}", ssh_port.public_port),
+        });
+    }
+
     if info.ports.iter().any(|port| port.purpose == ForwardPurpose::Ssh) {
         info.notes.push(SSH_LIMITS.to_string());
     }
@@ -281,7 +296,7 @@ mod tests {
     fn the_pack_adds_a_start_line_and_a_client_line() {
         let ports = [forward(ForwardPurpose::Ssh, 22201, 22), forward(ForwardPurpose::Agent, 22202, 4096)];
         let info = enrich(base(&ports), "opencode", &opencode(), None);
-        assert_eq!(info.commands.len(), 2);
+        assert_eq!(info.commands.len(), 3, "start line, client line, PuTTY");
         assert_eq!(
             info.commands[0].command,
             "ssh -t -i ~/.ssh/nestbox-oc-01 -p 22201 nestbox@192.168.55.50 opencode"
@@ -296,7 +311,7 @@ mod tests {
         }));
         let ports = [forward(ForwardPurpose::Ssh, 22201, 22)];
         let info = enrich(base(&ports), "ubuntu-dev", &access, None);
-        assert!(info.commands.is_empty());
+        assert!(info.commands.iter().all(|c| c.label.starts_with("PuTTY")), "only the PuTTY help, no agent start line");
     }
 
     #[test]

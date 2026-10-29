@@ -74,6 +74,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/sandboxes/{id}/rules", get(policies::sandbox_rules))
         // Which sandboxes belong together.
         .route("/api/v1/sandboxes/{id}/stack", put(sandboxes::put_stack))
+        .route("/api/v1/sandboxes/{id}/resources", put(sandboxes::put_resources))
+        .route("/api/v1/host/load", get(sandboxes::host_load))
         // Admin Center: resource history, processes, inventory
         .route(
             "/api/v1/internal/metrics/ingest",
@@ -100,6 +102,11 @@ pub fn router(state: AppState) -> Router {
             post(sandboxes_settings::action),
         )
         .route("/api/v1/sandboxes/{id}/connect", get(access::connect))
+        .route("/api/v1/sandboxes/{id}/ssh-access", get(access::ssh_access))
+        .route("/api/v1/sandboxes/{id}/ssh-keys", post(access::add_user_key))
+        .route("/api/v1/sandboxes/{id}/ssh-keys/{key}", delete(access::remove_user_key))
+        .route("/api/v1/sandboxes/{id}/ssh-credentials", post(access::issue_credential))
+        .route("/api/v1/sandboxes/{id}/ssh-credentials/{credential}", delete(access::revoke_credential))
         .route("/api/v1/sandboxes/{id}/stack-topology", get(stack::stack_topology))
         .route("/api/v1/system/components", get(stack::components))
         .route("/api/v1/system/components/{service}/logs", get(stack::component_logs))
@@ -169,6 +176,7 @@ pub fn router(state: AppState) -> Router {
         // the agent used `GET`. The handler reads headers, not a body, and
         // ignores the suffix; without both routes every request would be a 404
         // and therefore (fail closed) a deny.
+        .route("/api/v1/internal/metrics/batch", post(metrics::ingest_node))
         .route(
             "/api/v1/internal/policy/check",
             any(policies::internal_check),

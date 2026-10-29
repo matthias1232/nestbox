@@ -578,3 +578,161 @@ pub async fn open_session_count(
     .await?;
     Ok(count)
 }
+
+// ---------------------------------------------------------------------------
+// Operator keys and temporary logins (migration 0040)
+// ---------------------------------------------------------------------------
+
+use crate::domain::ssh_access::{TempCredential, UserKey};
+
+pub async fn list_user_keys(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+) -> Result<Vec<UserKey>, StoreError> {
+    let rows = sqlx::query(
+        "SELECT id, label, public_key, fingerprint, created_at FROM sandbox_user_keys
+          WHERE environment_id = $1 AND sandbox_id = $2 ORDER BY created_at",
+    )
+    .bind(scope.environment_id())
+    .bind(sandbox_id)
+    .fetch_all(scope.connection())
+    .await?;
+    rows.iter()
+        .map(|row| {
+            Ok(UserKey {
+                id: row.try_get("id")?,
+                label: row.try_get("label")?,
+                public_key: row.try_get("public_key")?,
+                fingerprint: row.try_get("fingerprint")?,
+                created_at: row.try_get("created_at")?,
+            })
+        })
+        .collect()
+}
+
+pub async fn insert_user_key(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+    label: &str,
+    public_key: &str,
+    fingerprint: &str,
+    created_by: Uuid,
+) -> Result<Option<Uuid>, StoreError> {
+    Ok(sqlx::query_scalar(
+        "INSERT INTO sandbox_user_keys (environment_id, sandbox_id, label, public_key, fingerprint, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (sandbox_id, fingerprint) DO NOTHING RETURNING id",
+    )
+    .bind(scope.environment_id())
+    .bind(sandbox_id)
+    .bind(label)
+    .bind(public_key)
+    .bind(fingerprint)
+    .bind(created_by)
+    .fetch_optional(scope.connection())
+    .await?)
+}
+
+pub async fn delete_user_key(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+    key_id: Uuid,
+) -> Result<(), StoreError> {
+    let result = sqlx::query(
+        "DELETE FROM sandbox_user_keys WHERE environment_id = $1 AND sandbox_id = $2 AND id = $3",
+    )
+    .bind(scope.environment_id())
+    .bind(sandbox_id)
+    .bind(key_id)
+    .execute(scope.connection())
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(StoreError::NotFound);
+    }
+    Ok(())
+}
+
+pub struct CredentialRow {
+    pub credential: TempCredential,
+    pub salt: String,
+    pub hash: String,
+}
+
+pub async fn list_credentials(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+) -> Result<Vec<CredentialRow>, StoreError> {
+    let rows = sqlx::query(
+        "SELECT id, username, salt, password_hash, expires_at, created_at, revoked_at
+           FROM sandbox_temp_credentials
+          WHERE environment_id = $1 AND sandbox_id = $2 ORDER BY created_at DESC LIMIT 50",
+    )
+    .bind(scope.environment_id())
+    .bind(sandbox_id)
+    .fetch_all(scope.connection())
+    .await?;
+    let now = chrono::Utc::now();
+    rows.iter()
+        .map(|row| {
+            let expires_at = row.try_get("expires_at")?;
+            let revoked_at: Option<chrono::DateTime<chrono::Utc>> = row.try_get("revoked_at")?;
+            Ok(CredentialRow {
+                credential: TempCredential {
+                    id: row.try_get("id")?,
+                    username: row.try_get("username")?,
+                    expires_at,
+                    created_at: row.try_get("created_at")?,
+                    revoked_at,
+                    state: TempCredential::state_at(expires_at, revoked_at, now).to_string(),
+                },
+                salt: row.try_get("salt")?,
+                hash: row.try_get("password_hash")?,
+            })
+        })
+        .collect()
+}
+
+pub async fn insert_credential(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+    username: &str,
+    salt: &str,
+    hash: &str,
+    expires_at: chrono::DateTime<chrono::Utc>,
+    created_by: Uuid,
+) -> Result<Uuid, StoreError> {
+    Ok(sqlx::query_scalar(
+        "INSERT INTO sandbox_temp_credentials
+             (environment_id, sandbox_id, username, salt, password_hash, expires_at, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+    )
+    .bind(scope.environment_id())
+    .bind(sandbox_id)
+    .bind(username)
+    .bind(salt)
+    .bind(hash)
+    .bind(expires_at)
+    .bind(created_by)
+    .fetch_one(scope.connection())
+    .await?)
+}
+
+pub async fn revoke_credential(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+    credential_id: Uuid,
+) -> Result<(), StoreError> {
+    let result = sqlx::query(
+        "UPDATE sandbox_temp_credentials SET revoked_at = now()
+          WHERE environment_id = $1 AND sandbox_id = $2 AND id = $3 AND revoked_at IS NULL",
+    )
+    .bind(scope.environment_id())
+    .bind(sandbox_id)
+    .bind(credential_id)
+    .execute(scope.connection())
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(StoreError::NotFound);
+    }
+    Ok(())
+}

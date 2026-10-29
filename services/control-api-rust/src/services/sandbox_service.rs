@@ -1160,3 +1160,132 @@ mod tests {
         }
     }
 }
+
+
+/// What an operator may change on a running sandbox.
+#[derive(Debug, Default)]
+pub struct ResourceRequest {
+    /// `512Mi`, `2g`, ... as everywhere else.
+    pub memory_limit: Option<String>,
+    pub cpu_limit: Option<f64>,
+    pub pids_limit: Option<i64>,
+}
+
+/// Change a sandbox's resources, live when it is running.
+///
+/// The stored spec is the desired state and is updated first-class so a restart
+/// keeps the new figures; the runtime is told to apply them to the running
+/// container. A runtime that cannot is reported, not hidden: the spec is saved,
+/// and the answer says the running container still has the old limits.
+pub async fn set_resources(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    id: Uuid,
+    request: ResourceRequest,
+) -> Result<serde_json::Value, ApiError> {
+    require(principal, Permission::SandboxWrite)?;
+    let memory_limit = request
+        .memory_limit
+        .as_deref()
+        .map(crate::domain::runtime::normalize_memory_limit)
+        .transpose()
+        .map_err(ApiError::validation)?;
+    if let Some(cpus) = request.cpu_limit {
+        if !(0.1..=64.0).contains(&cpus) {
+            return Err(ApiError::validation("CPU cores must be between 0.1 and 64."));
+        }
+    }
+    if let Some(pids) = request.pids_limit {
+        if !(32..=65536).contains(&pids) {
+            return Err(ApiError::validation("The process limit must be between 32 and 65536."));
+        }
+    }
+    if memory_limit.is_none() && request.cpu_limit.is_none() && request.pids_limit.is_none() {
+        return Err(ApiError::validation("Nothing to change."));
+    }
+
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let sandbox = store::get(&mut scope, id).await.map_err(ApiError::from)?;
+
+    let memory_bytes = memory_limit
+        .as_deref()
+        .map(crate::domain::runtime::memory_bytes)
+        .transpose()
+        .map_err(ApiError::validation)?;
+    if let Some(wanted) = memory_bytes {
+        let budget = crate::services::node_service::free_budget(&mut scope, sandbox.node_id).await?;
+        // The sandbox already holds its current memory; only growth is checked
+        // against what the node has left.
+        let current = sandbox
+            .spec
+            .get("memory_limit")
+            .and_then(|value| value.as_str())
+            .and_then(|text| crate::domain::runtime::memory_bytes(text).ok())
+            .unwrap_or(0);
+        if budget.ram_total_bytes > 0 && wanted > current {
+            budget
+                .can_host(wanted - current, request.cpu_limit.unwrap_or(0.0))
+                .map_err(|error| ApiError::unprocessable(ErrorCode::NODE_INSUFFICIENT_RESOURCES, error.message()))?;
+        }
+    }
+
+    let mut spec = sandbox.spec.clone();
+    if let Some(object) = spec.as_object_mut() {
+        if let Some(limit) = &memory_limit {
+            object.insert("memory_limit".into(), serde_json::json!(limit));
+        }
+        if let Some(cpus) = request.cpu_limit {
+            object.insert("cpu_limit".into(), serde_json::json!(cpus));
+        }
+        if let Some(pids) = request.pids_limit {
+            object.insert("pids_limit".into(), serde_json::json!(pids));
+        }
+    }
+    store::update_spec(&mut scope, id, &spec).await.map_err(ApiError::from)?;
+    crate::store::postgres::audit::record(
+        &mut scope,
+        crate::store::postgres::audit::NewAuditEvent {
+            actor_id: Some(principal.user_id),
+            actor_label: &principal.display_name,
+            kind: "sandbox.resources_changed",
+            subject_type: Some("sandbox"),
+            subject_id: Some(id),
+            detail: &serde_json::json!({
+                "memory_limit": memory_limit, "cpu_limit": request.cpu_limit, "pids_limit": request.pids_limit
+            }),
+            request_id: None,
+        },
+    )
+    .await
+    .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+
+    let live = if sandbox.status == SandboxStatus::Running {
+        match ctx
+            .runtime
+            .update_resources(&sandbox.name, memory_bytes, request.cpu_limit, request.pids_limit)
+            .await
+        {
+            Ok(()) => "applied",
+            Err(error) => {
+                tracing::warn!(sandbox = %sandbox.name, error = %error, "live resource change failed");
+                "saved_not_applied"
+            }
+        }
+    } else {
+        "saved_applies_on_start"
+    };
+    Ok(serde_json::json!({ "applied": live, "memory_limit": memory_limit, "cpu_limit": request.cpu_limit, "pids_limit": request.pids_limit }))
+}
+
+/// The host's load, for the console's live strip.
+pub async fn host_load(ctx: &ServiceContext, principal: &Principal) -> Result<serde_json::Value, ApiError> {
+    require(principal, Permission::NodeRead)?;
+    match tokio::time::timeout(std::time::Duration::from_secs(6), ctx.runtime.host_load()).await {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(error)) => Err(ApiError::internal("The runner did not report the host's load.").with_internal(error.to_string())),
+        Err(_) => Err(ApiError::internal("The runner did not answer in time.")),
+    }
+}

@@ -24,6 +24,7 @@ from app import terminal as terminal_transport
 from app import forwards as published_ports
 from app import system as appliance_components
 from app import telemetry_shipper
+from app import host as host_load
 
 app = FastAPI(title="Nestbox Sandbox Runtime", version="1.0.0")
 client = docker.from_env()
@@ -50,6 +51,7 @@ app.include_router(inventory_probe.router)
 app.include_router(terminal_transport.router)
 app.include_router(published_ports.router)
 app.include_router(appliance_components.router)
+app.include_router(host_load.router)
 
 
 @app.on_event("startup")

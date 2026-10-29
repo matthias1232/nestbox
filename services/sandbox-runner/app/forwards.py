@@ -75,8 +75,18 @@ class ForwardSpec(BaseModel):
     purpose: Literal["ssh", "agent", "custom"] = "custom"
 
 
+class Credential(BaseModel):
+    """A temporary login as a hash; the runner never holds the password."""
+
+    username: str
+    salt: str
+    hash: str
+    expires_at: int
+
+
 class ForwardSet(BaseModel):
     forwards: list[ForwardSpec] = Field(default_factory=list)
+    credentials: list[Credential] = Field(default_factory=list)
     # OpenSSH `authorized_keys` lines. Public keys only.
     authorized_keys: list[str] = Field(default_factory=list)
 
@@ -133,6 +143,10 @@ class Manager:
         current = self.sets.get(sandbox)
         return "\n".join(current.authorized_keys) if current else ""
 
+    def credentials_for(self, sandbox: str) -> list[dict[str, Any]]:
+        current = self.sets.get(sandbox)
+        return [item.model_dump() for item in current.credentials] if current else []
+
     # -- listeners --------------------------------------------------------------------------
     async def _open(self, sandbox: str, spec: ForwardSpec) -> Listener:
         listener = Listener(sandbox=sandbox, spec=spec)
@@ -151,6 +165,7 @@ class Manager:
                     bind=BIND,
                     port=spec.port,
                     keys_for=self.keys_for,
+                    credentials_for=self.credentials_for,
                     host_key=ssh_gateway.ensure_host_key(STATE_DIR),
                 )
             else:

@@ -475,7 +475,26 @@ pub async fn push_forwards(
         Err(StoreError::NotFound) => None,
         Err(error) => return Err(ApiError::from(error)),
     };
+    let user_keys = store::list_user_keys(&mut scope, sandbox.id)
+        .await
+        .map_err(ApiError::from)?;
+    let credential_rows = store::list_credentials(&mut scope, sandbox.id)
+        .await
+        .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
+
+    // Only logins that are still good are sent; the runner checks the expiry again
+    // on every attempt, so a clock skew here cannot extend one.
+    let credentials: Vec<crate::domain::runtime::SshCredential> = credential_rows
+        .iter()
+        .filter(|row| row.credential.state == "active")
+        .map(|row| crate::domain::runtime::SshCredential {
+            username: row.credential.username.clone(),
+            salt: row.salt.clone(),
+            hash: row.hash.clone(),
+            expires_at: row.credential.expires_at.timestamp(),
+        })
+        .collect();
 
     let requests: Vec<ForwardRequest> = ports
         .iter()
@@ -485,11 +504,14 @@ pub async fn push_forwards(
             purpose: port.purpose.as_str().to_string(),
         })
         .collect();
-    let keys: Vec<String> = public_key.into_iter().collect();
+    let keys: Vec<String> = public_key
+        .into_iter()
+        .chain(user_keys.into_iter().map(|key| key.public_key))
+        .collect();
 
     let states = ctx
         .runtime
-        .set_forwards(&sandbox.name, &requests, &keys)
+        .set_forwards(&sandbox.name, &requests, &keys, &credentials)
         .await
         .map_err(|error| {
             ApiError::internal("The runner did not open the published ports.")
@@ -1167,4 +1189,225 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+
+// ---------------------------------------------------------------------------
+// Operator keys and temporary logins
+// ---------------------------------------------------------------------------
+
+/// What may open this sandbox's SSH door besides the generated key.
+#[derive(Debug, serde::Serialize)]
+pub struct SshAccessView {
+    pub generated_key_fingerprint: Option<String>,
+    pub keys: Vec<crate::domain::ssh_access::UserKey>,
+    pub credentials: Vec<crate::domain::ssh_access::TempCredential>,
+}
+
+pub async fn ssh_access(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+) -> Result<SshAccessView, ApiError> {
+    require(principal, Permission::SandboxRead)?;
+    load_sandbox(ctx, principal, sandbox_id).await?;
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let generated = match store::get_key(&mut scope, sandbox_id).await {
+        Ok(key) => Some(key.fingerprint),
+        Err(StoreError::NotFound) => None,
+        Err(error) => return Err(ApiError::from(error)),
+    };
+    let keys = store::list_user_keys(&mut scope, sandbox_id).await.map_err(ApiError::from)?;
+    let credentials = store::list_credentials(&mut scope, sandbox_id)
+        .await
+        .map_err(ApiError::from)?
+        .into_iter()
+        .map(|row| row.credential)
+        .collect();
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(SshAccessView { generated_key_fingerprint: generated, keys, credentials })
+}
+
+pub async fn add_user_key(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+    label: &str,
+    public_key: &str,
+) -> Result<crate::domain::ssh_access::UserKey, ApiError> {
+    require(principal, Permission::SandboxExec)?;
+    let sandbox = load_sandbox(ctx, principal, sandbox_id).await?;
+    let label = label.trim();
+    if label.is_empty() || label.len() > 80 {
+        return Err(ApiError::validation("Give the key a label of 1 to 80 characters, e.g. the machine it belongs to."));
+    }
+    let (normalised, fingerprint) =
+        crate::domain::ssh_access::parse_public_key(public_key).map_err(ApiError::validation)?;
+
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let existing = store::list_user_keys(&mut scope, sandbox_id).await.map_err(ApiError::from)?;
+    if existing.len() as i64 >= crate::domain::ssh_access::MAX_USER_KEYS_PER_SANDBOX {
+        return Err(ApiError::conflict(ErrorCode::CONFLICT, "This sandbox already has the most keys it may have; remove one first."));
+    }
+    let Some(id) = store::insert_user_key(&mut scope, sandbox_id, label, &normalised, &fingerprint, principal.user_id)
+        .await
+        .map_err(ApiError::from)?
+    else {
+        return Err(ApiError::conflict(ErrorCode::CONFLICT, "That key is already added to this sandbox."));
+    };
+    audit::record(
+        &mut scope,
+        audit::NewAuditEvent {
+            actor_id: Some(principal.user_id),
+            actor_label: &principal.display_name,
+            kind: "sandbox.ssh_user_key_added",
+            subject_type: Some("sandbox"),
+            subject_id: Some(sandbox_id),
+            detail: &serde_json::json!({ "fingerprint": fingerprint, "label": label }),
+            request_id: None,
+        },
+    )
+    .await
+    .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    push_forwards_logged(ctx, principal, &sandbox).await;
+    Ok(crate::domain::ssh_access::UserKey {
+        id,
+        label: label.to_string(),
+        public_key: normalised,
+        fingerprint,
+        created_at: chrono::Utc::now(),
+    })
+}
+
+pub async fn remove_user_key(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+    key_id: Uuid,
+) -> Result<(), ApiError> {
+    require(principal, Permission::SandboxExec)?;
+    let sandbox = load_sandbox(ctx, principal, sandbox_id).await?;
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    store::delete_user_key(&mut scope, sandbox_id, key_id).await.map_err(|error| match error {
+        StoreError::NotFound => ApiError::not_found(ErrorCode::FORWARD_NOT_FOUND, "No such key on this sandbox."),
+        other => ApiError::from(other),
+    })?;
+    audit::record(
+        &mut scope,
+        audit::NewAuditEvent {
+            actor_id: Some(principal.user_id),
+            actor_label: &principal.display_name,
+            kind: "sandbox.ssh_user_key_removed",
+            subject_type: Some("sandbox"),
+            subject_id: Some(sandbox_id),
+            detail: &serde_json::json!({ "key_id": key_id }),
+            request_id: None,
+        },
+    )
+    .await
+    .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    push_forwards_logged(ctx, principal, &sandbox).await;
+    Ok(())
+}
+
+fn random_token(length: usize) -> String {
+    use rand::Rng;
+    const ALPHABET: &[u8] = b"abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let mut rng = rand::rngs::OsRng;
+    (0..length).map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char).collect()
+}
+
+/// Make a temporary user name and password for this sandbox. The password is in
+/// the answer once and nowhere else: only a salted hash is stored.
+pub async fn issue_credential(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+    minutes: Option<i64>,
+) -> Result<crate::domain::ssh_access::IssuedCredential, ApiError> {
+    require(principal, Permission::SandboxExec)?;
+    let sandbox = load_sandbox(ctx, principal, sandbox_id).await?;
+    let now = chrono::Utc::now();
+    let expires_at = crate::domain::ssh_access::expiry(now, crate::domain::ssh_access::clamp_minutes(minutes));
+
+    let username = crate::domain::ssh_access::username_from(rand::RngCore::next_u32(&mut rand::rngs::OsRng));
+    let password = random_token(20);
+    let salt = random_token(16);
+    let hash = crate::domain::ssh_access::hash_password(&salt, &password);
+
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let active = store::list_credentials(&mut scope, sandbox_id)
+        .await
+        .map_err(ApiError::from)?
+        .iter()
+        .filter(|row| row.credential.state == "active")
+        .count() as i64;
+    if active >= crate::domain::ssh_access::MAX_ACTIVE_CREDENTIALS_PER_SANDBOX {
+        return Err(ApiError::conflict(ErrorCode::CONFLICT, "This sandbox already has the most temporary logins it may have; revoke one first."));
+    }
+    let id = store::insert_credential(&mut scope, sandbox_id, &username, &salt, &hash, expires_at, principal.user_id)
+        .await
+        .map_err(ApiError::from)?;
+    audit::record(
+        &mut scope,
+        audit::NewAuditEvent {
+            actor_id: Some(principal.user_id),
+            actor_label: &principal.display_name,
+            kind: "sandbox.ssh_credential_issued",
+            subject_type: Some("sandbox"),
+            subject_id: Some(sandbox_id),
+            // The user name and expiry are evidence; the password is not recorded.
+            detail: &serde_json::json!({ "username": username, "expires_at": expires_at }),
+            request_id: None,
+        },
+    )
+    .await
+    .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    push_forwards_logged(ctx, principal, &sandbox).await;
+    Ok(crate::domain::ssh_access::IssuedCredential { id, username, password, expires_at })
+}
+
+pub async fn revoke_credential(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+    credential_id: Uuid,
+) -> Result<(), ApiError> {
+    require(principal, Permission::SandboxExec)?;
+    let sandbox = load_sandbox(ctx, principal, sandbox_id).await?;
+    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    store::revoke_credential(&mut scope, sandbox_id, credential_id).await.map_err(|error| match error {
+        StoreError::NotFound => ApiError::not_found(ErrorCode::FORWARD_NOT_FOUND, "No active login with that id on this sandbox."),
+        other => ApiError::from(other),
+    })?;
+    audit::record(
+        &mut scope,
+        audit::NewAuditEvent {
+            actor_id: Some(principal.user_id),
+            actor_label: &principal.display_name,
+            kind: "sandbox.ssh_credential_revoked",
+            subject_type: Some("sandbox"),
+            subject_id: Some(sandbox_id),
+            detail: &serde_json::json!({ "credential_id": credential_id }),
+            request_id: None,
+        },
+    )
+    .await
+    .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    push_forwards_logged(ctx, principal, &sandbox).await;
+    Ok(())
 }

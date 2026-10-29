@@ -58,3 +58,22 @@ class HostKeyPathTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PasswordTest(unittest.TestCase):
+    def entry(self, user="tmp-1", salt="s", password="pw", expires=2_000_000_000):
+        import hashlib
+
+        return {"username": user, "salt": salt, "hash": hashlib.sha256(f"{salt}{password}".encode()).hexdigest(), "expires_at": expires}
+
+    def test_the_right_user_and_password_within_the_time(self) -> None:
+        self.assertTrue(ssh_gateway.password_matches([self.entry()], "tmp-1", "pw", now=1.0))
+
+    def test_a_wrong_password_a_wrong_user_and_an_expired_login_are_refused(self) -> None:
+        entries = [self.entry()]
+        self.assertFalse(ssh_gateway.password_matches(entries, "tmp-1", "nope", now=1.0))
+        self.assertFalse(ssh_gateway.password_matches(entries, "root", "pw", now=1.0))
+        self.assertFalse(ssh_gateway.password_matches(entries, "tmp-1", "pw", now=2_000_000_001))
+
+    def test_no_logins_means_no_password_works(self) -> None:
+        self.assertFalse(ssh_gateway.password_matches([], "tmp-1", "pw", now=1.0))

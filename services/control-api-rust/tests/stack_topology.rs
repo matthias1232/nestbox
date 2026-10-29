@@ -250,3 +250,79 @@ async fn a_sandbox_from_before_ports_existed_gets_a_way_in_when_its_panel_is_rea
     let again = access_service::connect(&ctx, &principal, legacy).await.expect("connect");
     assert_eq!(again.ports.len(), info.ports.len());
 }
+
+#[tokio::test]
+async fn an_operator_key_and_a_temporary_login_reach_the_runner_and_can_be_taken_back() {
+    let Some(pool) = connect().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+    let runtime = Arc::new(FakeRuntime::new());
+    let ctx = context(&pool, &runtime);
+    let principal = principal_of(user(&pool).await);
+    let created = sandbox_service::create(&ctx, &principal, request("ssh-01", "claude-code")).await.expect("create");
+    access_service::provision(&ctx, &principal, &created).await.expect("provision");
+
+    // A private key pasted by mistake is refused, a real public key is kept.
+    assert!(access_service::add_user_key(&ctx, &principal, created.id, "oops", "-----BEGIN OPENSSH PRIVATE KEY-----\nx\n-----END OPENSSH PRIVATE KEY-----").await.is_err());
+    let line = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIECZIlOh/xPXL7cP+DXG0WkxDRpM3r9xm/gaOay5jTiY laptop";
+    let key = access_service::add_user_key(&ctx, &principal, created.id, "laptop", line).await.expect("add key");
+    let (_, keys) = runtime.forwards_for("ssh-01").expect("pushed");
+    assert_eq!(keys.len(), 2, "the generated key and the operator's");
+    assert!(access_service::add_user_key(&ctx, &principal, created.id, "again", line).await.is_err(), "the same key twice is a conflict");
+
+    // A temporary login: the password is shown once, only a hash goes anywhere.
+    let issued = access_service::issue_credential(&ctx, &principal, created.id, Some(30)).await.expect("issue");
+    assert!(issued.username.starts_with("tmp-") && issued.password.len() >= 16);
+    let sent = runtime.credentials_for("ssh-01");
+    assert_eq!(sent.len(), 1);
+    assert_eq!(
+        sent[0].hash,
+        nestbox_control_api::domain::ssh_access::hash_password(&sent[0].salt, &issued.password)
+    );
+    assert_ne!(sent[0].hash, issued.password);
+    let listed = access_service::ssh_access(&ctx, &principal, created.id).await.expect("list");
+    assert_eq!(listed.credentials[0].state, "active");
+    let serialised = serde_json::to_string(&listed).expect("json");
+    assert!(!serialised.contains(&issued.password), "a listing never carries the password");
+
+    access_service::revoke_credential(&ctx, &principal, created.id, issued.id).await.expect("revoke");
+    assert!(runtime.credentials_for("ssh-01").is_empty(), "a revoked login is no longer sent to the runner");
+    access_service::remove_user_key(&ctx, &principal, created.id, key.id).await.expect("remove");
+    assert_eq!(runtime.forwards_for("ssh-01").expect("pushed").1.len(), 1);
+}
+
+#[tokio::test]
+async fn resources_change_live_are_remembered_and_checked() {
+    let Some(pool) = connect().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+    let runtime = Arc::new(FakeRuntime::new());
+    let ctx = context(&pool, &runtime);
+    let principal = principal_of(user(&pool).await);
+    let created = sandbox_service::create(&ctx, &principal, request("res-01", "claude-code")).await.expect("create");
+
+    let answer = sandbox_service::set_resources(
+        &ctx,
+        &principal,
+        created.id,
+        sandbox_service::ResourceRequest { memory_limit: Some("1Gi".into()), cpu_limit: Some(1.5), pids_limit: Some(300) },
+    )
+    .await
+    .expect("change");
+    assert_eq!(answer["applied"], "applied");
+    let changes = runtime.resource_changes();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].1, Some(1_073_741_824));
+    assert_eq!(changes[0].2, Some(1.5));
+
+    // The desired state is stored, so a restart keeps it.
+    let stored = sandbox_service::get(&ctx, &principal, created.id).await.expect("get");
+    assert_eq!(stored.sandbox.spec["memory_limit"], "1073741824b");
+    assert_eq!(stored.sandbox.spec["cpu_limit"], 1.5);
+
+    assert!(sandbox_service::set_resources(&ctx, &principal, created.id, sandbox_service::ResourceRequest::default()).await.is_err());
+    assert!(sandbox_service::set_resources(&ctx, &principal, created.id, sandbox_service::ResourceRequest { cpu_limit: Some(500.0), ..Default::default() }).await.is_err());
+    assert!(sandbox_service::set_resources(&ctx, &principal, created.id, sandbox_service::ResourceRequest { memory_limit: Some("lots".into()), ..Default::default() }).await.is_err());
+}

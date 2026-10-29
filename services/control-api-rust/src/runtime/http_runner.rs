@@ -15,7 +15,7 @@ use crate::domain::pack_access::ForwardState;
 use crate::domain::runtime::{
     BuildRequest, BuildResult, ComponentState, ExecResult, ForwardRequest, HardwareReport,
     ModelDownload, ModelDownloadResult, ModelServe, ModelServeResult, NetworkInterface,
-    RuntimeFacts, RuntimeResources, SandboxSpec,
+    RuntimeFacts, RuntimeResources, SandboxSpec, SshCredential,
 };
 use crate::runtime::{BoxTerminal, RunnerTerminal, RuntimeAdapter, RuntimeError};
 
@@ -344,6 +344,7 @@ impl RuntimeAdapter for HttpRunner {
         name: &str,
         forwards: &[ForwardRequest],
         authorized_keys: &[String],
+        credentials: &[SshCredential],
     ) -> Result<Vec<ForwardState>, RuntimeError> {
         #[derive(Deserialize)]
         struct Answer {
@@ -353,6 +354,7 @@ impl RuntimeAdapter for HttpRunner {
         let payload = serde_json::json!({
             "forwards": forwards,
             "authorized_keys": authorized_keys,
+            "credentials": credentials,
         });
         let answer: Answer = self
             .send(reqwest::Method::PUT, &format!("/v1/sandboxes/{name}/forwards"), Some(&payload))
@@ -375,6 +377,28 @@ impl RuntimeAdapter for HttpRunner {
     async fn clear_forwards(&self, name: &str) -> Result<(), RuntimeError> {
         let _: serde_json::Value = self
             .send(reqwest::Method::DELETE, &format!("/v1/sandboxes/{name}/forwards"), None)
+            .await?;
+        Ok(())
+    }
+
+    async fn host_load(&self) -> Result<serde_json::Value, RuntimeError> {
+        self.send(reqwest::Method::GET, "/v1/host/load", None).await
+    }
+
+    async fn update_resources(
+        &self,
+        name: &str,
+        memory_bytes: Option<i64>,
+        cpus: Option<f64>,
+        pids_limit: Option<i64>,
+    ) -> Result<(), RuntimeError> {
+        let payload = serde_json::json!({
+            "memory_bytes": memory_bytes,
+            "cpus": cpus,
+            "pids_limit": pids_limit,
+        });
+        let _: serde_json::Value = self
+            .send(reqwest::Method::PATCH, &format!("/v1/sandboxes/{name}/resources"), Some(&payload))
             .await?;
         Ok(())
     }

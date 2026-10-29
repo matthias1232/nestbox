@@ -22,9 +22,12 @@ set; the private half never reaches the runner.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import logging
 import os
 import struct
+import time
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +58,24 @@ def demux(buffer: bytes) -> tuple[list[tuple[int, bytes]], bytes]:
         frames.append((stream, buffer[offset + 8 : end]))
         offset = end
     return frames, buffer[offset:]
+
+
+def password_matches(credentials: list[dict[str, Any]], username: str, password: str, now: float | None = None) -> bool:
+    """Whether `username`/`password` is a temporary login that is still good.
+
+    The control plane stores `sha256(salt || password)` and sends only that; the
+    password is never here. The expiry is checked on every attempt against this
+    machine's clock, so a login ends on time even if the control plane is gone.
+    Every entry is compared, so the time taken does not say which user names exist.
+    """
+    moment = time.time() if now is None else now
+    ok = False
+    for entry in credentials:
+        digest = hashlib.sha256(f"{entry.get('salt', '')}{password}".encode()).hexdigest()
+        same = hmac.compare_digest(digest, str(entry.get("hash", "")))
+        if same and entry.get("username") == username and float(entry.get("expires_at", 0)) > moment:
+            ok = True
+    return ok
 
 
 def shell_command(command: str | None) -> list[str]:
@@ -208,6 +229,7 @@ async def serve(
     port: int,
     keys_for: Any,
     host_key: Path,
+    credentials_for: Any = lambda _sandbox: [],
 ) -> Any:
     """Start an SSH listener on `port` that opens `sandbox`.
 
@@ -233,7 +255,17 @@ async def serve(
             return True
 
         def password_auth_supported(self) -> bool:
-            return False
+            # Only a still-valid temporary login passes `validate_password`; with
+            # none issued every attempt fails, so offering it costs nothing.
+            return True
+
+        async def validate_password(self, username: str, password: str) -> bool:
+            good = password_matches(credentials_for(sandbox), username, password)
+            if not good:
+                # Slows a guesser without making a typo painful.
+                await asyncio.sleep(1.0)
+            logger.info("password login for %s as %s: %s", sandbox, username, "accepted" if good else "refused")
+            return good
 
         def kbdint_auth_supported(self) -> bool:
             return False

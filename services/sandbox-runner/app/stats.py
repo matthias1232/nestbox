@@ -124,6 +124,21 @@ def stats(name: str) -> dict[str, Any]:
     return sample(name)
 
 
+def node_headers() -> dict[str, str]:
+    """Who the runner is: the node id, the environment, and the node token.
+
+    The token comes from a file when one is configured (an environment variable
+    is visible in `docker inspect`), exactly as the terminal endpoint reads it.
+    """
+    from app.telemetry_shipper import node_token
+
+    return {
+        "x-nestbox-node": os.getenv("NESTBOX_NODE_ID", ""),
+        "x-nestbox-environment": os.getenv("NESTBOX_ENVIRONMENT_ID", "00000000-0000-0000-0000-000000000002"),
+        "Authorization": f"Bearer {node_token() or os.getenv('NESTBOX_NODE_TOKEN', '')}",
+    }
+
+
 def poster_loop(url: str, token: str, interval: float = SAMPLE_INTERVAL_SECONDS) -> None:
     """Sample every managed sandbox and post one batch to the control plane.
 
@@ -142,7 +157,7 @@ def poster_loop(url: str, token: str, interval: float = SAMPLE_INTERVAL_SECONDS)
                     url,
                     data=body,
                     method="POST",
-                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+                    headers={"Content-Type": "application/json", **node_headers()},
                 )
                 with urllib.request.urlopen(request, timeout=SAMPLE_TIMEOUT_SECONDS) as answer:
                     answer.read()
