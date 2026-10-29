@@ -155,8 +155,16 @@ def set_policy(name: str, document: dict[str, Any]) -> None:
     """`openshell policy set`, with the document written to a private temp file."""
     import tempfile
 
+    current = get(name)
+    if current is None:
+        raise OpenShellError("sandbox not found on the gateway")
+    # Startup-only sections (filesystem, Landlock, process) cannot change on a live
+    # sandbox, so keep the sandbox's own and replace just the network policies.
+    merged = {key: value for key, value in (current.get("policy") or {}).items() if key != "network_policies"}
+    merged["version"] = 1
+    merged["network_policies"] = document.get("network_policies", {})
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as handle:
-        json.dump(document, handle)  # JSON is YAML
+        json.dump(merged, handle)  # JSON is YAML
         path = handle.name
     try:
         run(["policy", "set", name, "--policy", path, "--wait", "--timeout", "45"], timeout=75)
