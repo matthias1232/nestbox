@@ -433,6 +433,12 @@ pub async fn create_for_sandbox(
     let hash: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
     let supervisor =
         store::insert_supervisor_with_token(scope, gateway_id, sandbox_id, name, &hash).await?;
+    // The sandbox points at its supervisor, so a list can show who watches whom.
+    sqlx::query("UPDATE sandboxes SET supervisor_id = $1 WHERE id = $2")
+        .bind(supervisor.id)
+        .bind(sandbox_id)
+        .execute(scope.connection())
+        .await?;
     Ok((supervisor, token))
 }
 
@@ -792,6 +798,13 @@ pub async fn ensure_supervisors(ctx: &ServiceContext) -> Result<u64, ApiError> {
                 changed += 1;
             }
         }
+        sqlx::query(
+            "UPDATE sandboxes s SET supervisor_id = v.id FROM supervisors v
+              WHERE v.sandbox_id = s.id AND s.supervisor_id IS NULL",
+        )
+        .execute(scope.connection())
+        .await
+        .map_err(|error| ApiError::from(StoreError::Database(error)))?;
         let rows: Vec<(Uuid, String)> = sqlx::query_as(
             "SELECT v.id, s.name FROM supervisors v JOIN sandboxes s ON s.id = v.sandbox_id",
         )
@@ -805,7 +818,8 @@ pub async fn ensure_supervisors(ctx: &ServiceContext) -> Result<u64, ApiError> {
                 "missing" => "failed",
                 _ => continue,
             };
-            let version = fact.supervisor_image.rsplit(':').next().filter(|tag| !tag.is_empty());
+            // The supervisor ships with the gateway, so its version is the gateway's.
+            let version = Some(fact.supervisor_image.as_str()).filter(|version| !version.is_empty());
             sqlx::query(
                 "UPDATE supervisors SET status = $2, version = COALESCE($3, version), last_seen = now()
                   WHERE id = $1 AND (status IS DISTINCT FROM $2 OR version IS DISTINCT FROM COALESCE($3, version))",

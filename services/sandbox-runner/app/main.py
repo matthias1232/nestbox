@@ -365,7 +365,9 @@ def supervisor_facts(item: Any) -> dict[str, str]:
     status = "running" if state.get("Running") else "stopped"
     if status == "running" and health in {"unhealthy", "starting"}:
         status = "degraded" if health == "unhealthy" else "starting"
-    return {"supervisor_status": status, "supervisor_image": companion.attrs.get("Config", {}).get("Image", "")}
+    # The supervisor ships with the gateway: its version is the gateway's.
+    version = osh.gateway_version()
+    return {"supervisor_status": status, "supervisor_image": f"openshell-supervisor {version}" if version else ""}
 
 
 def details(item: Any) -> dict[str, Any]:
