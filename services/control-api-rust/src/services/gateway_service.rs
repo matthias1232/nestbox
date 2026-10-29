@@ -822,7 +822,7 @@ pub async fn ensure_supervisors(ctx: &ServiceContext) -> Result<u64, ApiError> {
             let version = Some(fact.supervisor_image.as_str()).filter(|version| !version.is_empty());
             sqlx::query(
                 "UPDATE supervisors SET status = $2, version = COALESCE($3, version), last_seen = now()
-                  WHERE id = $1 AND (status IS DISTINCT FROM $2 OR version IS DISTINCT FROM COALESCE($3, version))",
+                  WHERE id = $1",
             )
             .bind(supervisor_id)
             .bind(status)

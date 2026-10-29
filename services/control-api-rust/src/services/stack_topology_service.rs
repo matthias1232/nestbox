@@ -115,12 +115,14 @@ pub async fn stack(
 
     let mut sandboxes = Vec::new();
     for sandbox in &members {
-        let internal_address = tokio::time::timeout(RUNNER_TIMEOUT, ctx.runtime.inspect(&sandbox.name))
+        let facts = tokio::time::timeout(RUNNER_TIMEOUT, ctx.runtime.inspect(&sandbox.name))
             .await
             .ok()
-            .and_then(Result::ok)
-            .map(|facts| facts.ip)
-            .filter(|ip| !ip.is_empty());
+            .and_then(Result::ok);
+        let openshell = facts
+            .as_ref()
+            .is_some_and(|facts| facts.container_name.starts_with("openshell-default--"));
+        let internal_address = facts.map(|facts| facts.ip).filter(|ip| !ip.is_empty());
         sandboxes.push(SandboxFacts {
             id: sandbox.id,
             name: sandbox.name.clone(),
@@ -136,6 +138,7 @@ pub async fn stack(
             parent_id: sandbox.parent_id,
             internal_address,
             gateway_name: sandbox.gateway_name.clone(),
+            openshell,
         });
     }
 

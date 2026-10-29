@@ -2,3 +2,6 @@
 .runtime-tag { display: inline-block; padding: 0 .45rem; border-radius: 999px; font-size: .75rem; border: 1px solid var(--border, #444); }
 .runtime-tag.openshell { background: #1f3d2b; color: #8ee0a8; border-color: #2f6b47; }
 .runtime-tag.docker { background: #3d321f; color: #e0c58e; border-color: #6b5a2f; }
+td .runtime-tag { white-space: nowrap; }
+.table-scroll td.actions { white-space: normal; min-width: 22rem; }
+.table-scroll td.actions .stack-select { max-width: 9rem; }

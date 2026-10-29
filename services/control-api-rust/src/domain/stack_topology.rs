@@ -48,7 +48,7 @@ pub const LAYERS: &[(&str, &str)] = &[
     ("tools", "Tools and MCP"),
     ("supervisor", "Supervisor"),
     ("control", "Control plane and gateway"),
-    ("egress", "Egress proxy"),
+    ("egress", "Egress proxy (Docker sandboxes)"),
     ("destinations", "Destinations"),
     ("internet", "Internet"),
 ];
@@ -83,6 +83,9 @@ pub struct SandboxFacts {
     /// because it is what the other pieces of the stack call this sandbox.
     pub internal_address: Option<String>,
     pub gateway_name: Option<String>,
+    /// Enforced by an NVIDIA OpenShell supervisor, which mediates every connection
+    /// itself; such a sandbox does not go through the egress proxy.
+    pub openshell: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -607,7 +610,14 @@ pub fn build(input: &StackInput) -> StackTopology {
                 "supervisor",
                 "supervisor",
                 supervisor.name.clone(),
-                format!("Watches {} and applies the policy the control plane assigns.", sandbox.name),
+                if sandbox.openshell {
+                    format!(
+                        "The trusted OpenShell supervisor of {}. It sits outside the sandbox, checks every connection against the policy, adds credentials only where policy allows, and freezes the agent if it loses the gateway.",
+                        sandbox.name
+                    )
+                } else {
+                    format!("Watches {} and applies the policy the control plane assigns.", sandbox.name)
+                },
                 status,
                 supervisor.status.clone(),
             );
@@ -729,16 +739,34 @@ pub fn build(input: &StackInput) -> StackTopology {
     }
 
     // -- the egress proxy, destinations, internet ---------------------------------
+    // The proxy is drawn only when a sandbox of the stack goes through it. An
+    // OpenShell sandbox does not: its supervisor mediates every connection.
+    let via_proxy = input.sandboxes.iter().any(|sandbox| !sandbox.openshell);
     let proxy = system_node(PROXY, "egress_proxy", "egress-proxy", "Egress proxy",
         "The only way out of the sandbox network. Asks the control API per request; default deny.");
     let proxy_status = proxy.status.clone();
-    if proxy_status == "error" || proxy_status == "absent" {
-        problems.push((0, "The egress proxy is not running: sandboxes have no way out.".to_string()));
+    if via_proxy {
+        if proxy_status == "error" || proxy_status == "absent" {
+            problems.push((0, "The egress proxy is not running: sandboxes have no way out.".to_string()));
+        }
+        nodes.push(proxy);
+        edges.push(edge(PROXY, CONTROL_API, "decides", "asks per request", &proxy_status));
     }
-    nodes.push(proxy);
-    edges.push(edge(PROXY, CONTROL_API, "decides", "asks per request", &proxy_status));
+    // Where a sandbox's connections leave from: its supervisor, or the proxy.
+    let exit_of = |sandbox: &SandboxFacts| -> String {
+        if sandbox.openshell {
+            if let Some(supervisor) = input
+                .supervisors
+                .iter()
+                .find(|supervisor| supervisor.sandbox_id == Some(sandbox.id))
+            {
+                return format!("supervisor:{}", supervisor.id);
+            }
+        }
+        PROXY.to_string()
+    };
 
-    for sandbox in &input.sandboxes {
+    for sandbox in input.sandboxes.iter().filter(|sandbox| !sandbox.openshell) {
         let mut totals = (0i64, 0i64);
         for row in input.egress.iter().filter(|row| row.sandbox_id == sandbox.id) {
             totals.0 += row.requests;
@@ -796,10 +824,28 @@ pub fn build(input: &StackInput) -> StackTopology {
         item.facts.push(fact("Allowed", allowed.to_string()));
         item.facts.push(fact("Blocked", denied.to_string()));
         nodes.push(item);
-        let mut link = edge(PROXY, &id, "reaches", format!("{requests} req"), status);
-        link.requests = requests;
-        link.denied = denied;
-        edges.push(link.clone());
+        // One edge from each exit that reached it: the proxy for Docker sandboxes,
+        // the sandbox's own supervisor on OpenShell.
+        let mut exits: Vec<(String, i64, i64)> = Vec::new();
+        for row in input.egress.iter().filter(|row| row.host == host && row.port == port) {
+            let Some(sandbox) = input.sandboxes.iter().find(|sandbox| sandbox.id == row.sandbox_id) else {
+                continue;
+            };
+            let exit = exit_of(sandbox);
+            match exits.iter_mut().find(|(name, ..)| *name == exit) {
+                Some(entry) => {
+                    entry.1 += row.requests;
+                    entry.2 += row.denied;
+                }
+                None => exits.push((exit, row.requests, row.denied)),
+            }
+        }
+        for (exit, exit_requests, exit_denied) in exits {
+            let mut link = edge(&exit, &id, "reaches", format!("{exit_requests} req"), status);
+            link.requests = exit_requests;
+            link.denied = exit_denied;
+            edges.push(link);
+        }
         edges.push(edge(&id, INTERNET, "reaches", "", status));
         if denied > 0 {
             problems.push((2, format!("{denied} request(s) to {host}:{port} were blocked by policy.")));
@@ -813,12 +859,13 @@ pub fn build(input: &StackInput) -> StackTopology {
         "internet",
         "internet",
         "Internet",
-        "Everything beyond the proxy: model APIs, package registries, the web.",
+        "Everything beyond the supervisor or proxy: model APIs, package registries, the web.",
         "ok",
-        "beyond the proxy",
+        "beyond the boundary",
     ));
     if input.egress.is_empty() {
-        edges.push(edge(PROXY, INTERNET, "reaches", "no traffic in the window", "idle"));
+        let exit = input.sandboxes.first().map(&exit_of).unwrap_or_else(|| PROXY.to_string());
+        edges.push(edge(&exit, INTERNET, "reaches", "no traffic in the window", "idle"));
     }
 
     // Keep the order stable: by layer, then insertion, so the console does not
@@ -882,6 +929,7 @@ mod tests {
             parent_id: parent,
             internal_address: Some("172.30.0.5".into()),
             gateway_name: None,
+            openshell: false,
         }
     }
 

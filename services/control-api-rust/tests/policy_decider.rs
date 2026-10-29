@@ -435,6 +435,12 @@ async fn the_compiled_hash_changes_with_the_rule_set() {
     let dir = secret_dir();
     let ctx = context(&pool, &dir);
     let sandbox_id = sandbox(&pool).await;
+    // A provider another test (or a real probe of the seeded endpoint) marked
+    // reachable contributes an allow rule; this test counts only its own.
+    sqlx::query("UPDATE provider_profiles SET status = 'unreachable'")
+        .execute(&pool)
+        .await
+        .expect("reset provider status");
 
     let first = check(&ctx, sandbox_id, "example.com", 443).await;
     assert_eq!(

@@ -218,9 +218,9 @@ export default function SandboxListPage(props) {
       <HostLoad />
 
       <p class="hierarchy muted" role="note">
-        <b>How it fits together:</b> a <b>cluster</b> holds <b>gateways</b>; a gateway carries
-        <b>sandboxes</b> and hands each its policy. Every sandbox has its own <b>supervisor</b>
-        (a service, not a sandbox) that watches it from outside and decides each network
+        <b>How it fits together:</b> a <b>cluster</b> holds <b>gateways</b>; a gateway carries{' '}
+        <b>sandboxes</b> and hands each its policy. Every sandbox has its own <b>supervisor</b>{' '}
+        (a service, not a sandbox) that watches it from outside and decides each network{' '}
         connection. The agent runs inside the sandbox.
       </p>
 
