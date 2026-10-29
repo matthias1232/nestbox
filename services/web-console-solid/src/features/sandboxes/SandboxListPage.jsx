@@ -118,7 +118,17 @@ export default function SandboxListPage(props) {
                     <td><StatusBadge status={sandbox.health} /></td>
                     <td class="mono small" title="The agent this sandbox runs">{sandbox.pack_key}</td>
                     <td class="mono small">{sandbox.cluster_name || '—'}</td>
-                    <td class="mono small">{sandbox.gateway_name || <span class="muted">not placed</span>}</td>
+                    <td class="mono small">
+                      {sandbox.gateway_name || <span class="muted">not placed</span>}
+                      <Show when={sandbox.node_name}>
+                        {' · '}
+                        <Show when={props.onOpenNode} fallback={<span>{sandbox.node_name}</span>}>
+                          <button class="link" title="Show this node" onClick={() => props.onOpenNode(sandbox.node_id)}>
+                            {sandbox.node_name}
+                          </button>
+                        </Show>
+                      </Show>
+                    </td>
                     <td class="small">
                       <Show when={sandbox.supervisor_name} fallback={<span class="muted">none</span>}>
                         <span class="mono">{sandbox.supervisor_name}</span>{' '}
@@ -133,24 +143,6 @@ export default function SandboxListPage(props) {
                         {sandbox.runtime_kind === 'openshell' ? 'OpenShell' : sandbox.runtime_kind || '—'}
                       </span>
                     </td>
-                    <td class="mono small">
-                      {/* The machine the container actually runs on. This page
-                          does not know the route to the nodes screen, so the
-                          integrator passes `onOpenNode`; without it the name is
-                          shown, just not clickable. */}
-                      <Show when={sandbox.node_name} fallback={<span class="muted">—</span>}>
-                        <Show when={props.onOpenNode} fallback={<span>{sandbox.node_name}</span>}>
-                          <button
-                            class="link"
-                            title="Show this node"
-                            onClick={() => props.onOpenNode(sandbox.node_id)}
-                          >
-                            {sandbox.node_name}
-                          </button>
-                        </Show>
-                      </Show>
-                    </td>
-                    <td class="mono small">{sandbox.address || '—'}</td>
                     <td class="narrow mono small">{shortUptime(sandbox)}</td>
                     <td class="actions">
                       <button class="tiny" title="How to reach this sandbox: host, ports, SSH"
@@ -281,11 +273,9 @@ export default function SandboxListPage(props) {
                 <th>Health</th>
                 <th title="The agent the sandbox runs">Agent</th>
                 <th title="The cluster the sandbox belongs to">Cluster</th>
-                <th title="The gateway that carries it and applies its policy">Gateway</th>
+                <th title="The gateway that carries it, and the node (machine) it runs on">Gateway · node</th>
                 <th title="The service that watches this sandbox from outside and enforces its policy. One per sandbox, not a sandbox itself.">Supervisor</th>
                 <th title="What enforces the sandbox">Runtime</th>
-                <th>Node</th>
-                <th>Address</th>
                 <th class="narrow">Uptime</th>
                 <th>Actions</th>
               </tr>
