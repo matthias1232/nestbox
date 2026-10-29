@@ -207,8 +207,10 @@ async fn the_stack_diagram_covers_the_lead_and_its_members_and_what_is_missing()
     }
     assert_eq!(kinds.iter().filter(|kind| **kind == "sandbox").count(), 2);
     assert!(from_lead.edges.iter().any(|edge| edge.kind == "stack"));
-    // No supervisor is bound to the agent, and the diagram says so.
-    assert!(from_lead.nodes.iter().any(|node| node.kind == "absent"));
+    // Every sandbox gets its supervisor when it is created, so the agent has one
+    // and the diagram has nothing to flag as missing.
+    assert!(from_lead.nodes.iter().any(|node| node.kind == "supervisor"));
+    assert!(!from_lead.nodes.iter().any(|node| node.kind == "absent"));
     // Every component card names a log the console can open.
     let proxy = from_lead.nodes.iter().find(|node| node.kind == "egress_proxy").expect("proxy");
     assert_eq!(proxy.status, "ok");
