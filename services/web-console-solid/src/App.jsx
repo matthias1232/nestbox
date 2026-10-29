@@ -23,6 +23,8 @@ import LogsPage from './features/logs/LogsPage.jsx';
 import McpPage from './features/mcp/McpPage.jsx';
 import BuilderPage from './features/builder/BuilderPage.jsx';
 import JobsPage from './features/jobs/JobsPage.jsx';
+import SkillsPage from './features/skills/SkillsPage.jsx';
+import CudaXPage from './features/cudax/CudaXPage.jsx';
 import AdminCenter from './features/sandboxes/AdminCenter.jsx';
 
 // The Admin Center is the only view with an address of its own: an operator
@@ -46,6 +48,8 @@ const ROUTES = [
   { id: 'providers', label: 'Providers' },
   { id: 'mcp', label: 'MCP servers' },
   { id: 'models', label: 'Models' },
+  { id: 'skills', label: 'Skills' },
+  { id: 'cudax', label: 'CUDA-X' },
   { id: 'builder', label: 'Build image' },
   { id: 'recipes', label: 'Recipes' },
   { id: 'persistent', label: 'Persistent data' },
@@ -164,6 +168,8 @@ export default function App() {
                   </Show>
                   <Show when={route() === 'providers'}><ProvidersPage /></Show>
                   <Show when={route() === 'models'}><ModelsPage /></Show>
+                  <Show when={route() === 'skills'}><SkillsPage /></Show>
+                  <Show when={route() === 'cudax'}><CudaXPage /></Show>
                   <Show when={route() === 'builder'}><BuilderPage /></Show>
                   <Show when={route() === 'recipes'}><RecipesPage /></Show>
                   <Show when={route() === 'persistent'}><PersistentPage /></Show>
