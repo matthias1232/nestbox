@@ -39,7 +39,7 @@ use crate::error::{ApiError, ErrorCode, StoreError};
 use crate::store::TenantScope;
 use crate::store::postgres::{
     agent_packs as catalog, environments as env_store, gateways, jobs as job_store,
-    model_installs, models, nodes as node_store, persistent_roots, recipes as store,
+        mcp as mcp_store, model_installs, models, nodes as node_store, persistent_roots, recipes as store,
     sandboxes as sandbox_store,
 };
 
@@ -48,7 +48,7 @@ use crate::store::postgres::{
 /// Bump this when the Dockerfile template changes in a way that must produce a
 /// new image for an unchanged recipe. Without it a code deploy would keep
 /// reusing the previous template's image because no recipe field moved.
-const GENERATOR_VERSION: u32 = 3;
+const GENERATOR_VERSION: u32 = 4;
 
 /// The supervisor program shipped inside every image the builder produces.
 ///
@@ -67,6 +67,9 @@ pub struct RecipeInput {
     pub name: String,
     pub baseline_key: String,
     pub tools: Vec<String>,
+    pub extra_packages: Vec<String>,
+    pub repositories: Vec<crate::domain::builder::RepositorySpec>,
+    pub mcp_server_keys: Vec<String>,
     pub agents: Vec<AgentSpec>,
     pub resources: ResourceLimits,
     pub project_mounts: Vec<ProjectMount>,
@@ -123,6 +126,7 @@ pub struct ImagePlan {
     pub manager: PackageManager,
     /// Package names for the baseline's manager, in install order.
     pub packages: Vec<String>,
+    pub repositories: Vec<crate::domain::builder::RepositorySpec>,
     pub agents: Vec<PlannedAgent>,
     /// Directories created in the image; a bind mount replaces them at run time.
     pub home_directories: Vec<String>,
@@ -133,6 +137,9 @@ struct Prepared {
     name: String,
     baseline_key: String,
     tools: Vec<String>,
+    extra_packages: Vec<String>,
+    repositories: Vec<crate::domain::builder::RepositorySpec>,
+    mcp_server_keys: Vec<String>,
     agents: Vec<AgentSpec>,
     resources: ResourceLimits,
     mounts: Vec<ProjectMount>,
@@ -202,6 +209,9 @@ pub async fn create(
             baseline_key: &prepared.baseline_key,
             tool_profile_id: None,
             tools: &prepared.tools,
+            extra_packages: &prepared.extra_packages,
+            repositories: &prepared.repositories,
+            mcp_server_keys: &prepared.mcp_server_keys,
             agents: &prepared.agents,
             resources: &prepared.resources,
             project_mounts: &prepared.mounts,
@@ -250,6 +260,9 @@ pub async fn update(
             baseline_key: &prepared.baseline_key,
             tool_profile_id: None,
             tools: &prepared.tools,
+            extra_packages: &prepared.extra_packages,
+            repositories: &prepared.repositories,
+            mcp_server_keys: &prepared.mcp_server_keys,
             agents: &prepared.agents,
             resources: &prepared.resources,
             project_mounts: &prepared.mounts,
@@ -544,7 +557,40 @@ pub async fn run_build(
     tracing::info!(job = %job_id, "build: runner answered");
     match outcome {
         Ok(result) if result.success => {
-            record_success(ctx, environment_id, recipe_id, job_id, &tag, &hash, &result.log).await
+            // A Dockerfile that ran is not a verified image: a package that the
+            // index offered but the build skipped would surface later as a
+            // missing tool. The image's own package database answers, and a
+            // mismatch fails the build instead of being reported as success.
+            let verification = ctx
+                .runtime
+                .verify_image(crate::domain::runtime::ImageVerification {
+                    tag: tag.clone(),
+                    package_manager: prepared.plan.manager.as_str().to_string(),
+                    packages: prepared.plan.packages.clone(),
+                })
+                .await;
+            match verification {
+                Ok(answer) if answer.missing.is_empty() => {
+                    record_success(ctx, environment_id, recipe_id, job_id, &tag, &hash, &result.log)
+                        .await
+                }
+                Ok(answer) => {
+                    let detail = format!(
+                        "The image was built but {} of {} packages are missing: {}. {}",
+                        answer.missing.len(),
+                        prepared.plan.packages.len(),
+                        answer.missing.join(", "),
+                        answer.note.unwrap_or_default()
+                    );
+                    record_failure(ctx, environment_id, recipe_id, job_id, &detail).await
+                }
+                Err(error) => {
+                    let detail = format!(
+                        "The image was built but its packages could not be verified: {error}"
+                    );
+                    record_failure(ctx, environment_id, recipe_id, job_id, &detail).await
+                }
+            }
         }
         Ok(result) => {
             let detail = format!("The build failed: {}", tail(&result.log));
@@ -815,6 +861,17 @@ pub async fn instantiate(
     store::attach_sandbox(&mut scope, recipe.id, sandbox.id)
         .await
         .map_err(recipe_error)?;
+    for key in &recipe.mcp_server_keys {
+        let server = mcp_store::get_server(&mut scope, key).await.map_err(|_| {
+            recipe_invalid(format!("MCP server '{key}' is not in the registry."))
+        })?;
+        if !server.enabled {
+            return Err(recipe_invalid(format!("MCP server '{key}' is disabled.")));
+        }
+        mcp_store::insert_attachment(&mut scope, sandbox.id, key, true)
+            .await
+            .map_err(ApiError::from)?;
+    }
 
     for (root_id, target, read_only) in &mount_rows {
         persistent_roots::insert_mount(&mut scope, *root_id, sandbox.id, target, *read_only)
@@ -1129,6 +1186,31 @@ async fn prepare(
             packages.push(package);
         }
     }
+    for package in super::selection::packages(&input.extra_packages).map_err(recipe_invalid)? {
+        if !packages.contains(&package) {
+            packages.push(package);
+        }
+    }
+    let repositories = input
+        .repositories
+        .iter()
+        .map(super::selection::repository)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(recipe_invalid)?;
+    // An MCP assignment is checked when the recipe is saved, not when the
+    // sandbox starts: a key that the registry does not have is an operator
+    // typo, and finding it after a five-minute build is too late.
+    for key in &input.mcp_server_keys {
+        let server = mcp_store::get_server(scope, key).await.map_err(|error| match error {
+            StoreError::NotFound => recipe_invalid(format!(
+                "MCP server '{key}' is not in the registry."
+            )),
+            other => ApiError::from(other),
+        })?;
+        if !server.enabled {
+            return Err(recipe_invalid(format!("MCP server '{key}' is disabled.")));
+        }
+    }
 
     let memory_limit = normalize_memory_limit(&input.resources.memory_limit)
         .map_err(|message| ApiError::unprocessable(ErrorCode::RECIPE_INVALID, message))?;
@@ -1206,6 +1288,7 @@ async fn prepare(
         base_image: baseline.base_image.clone(),
         manager: baseline.package_manager,
         packages,
+        repositories,
         agents: planned,
         home_directories: home_directories.into_iter().collect(),
     };
@@ -1214,6 +1297,9 @@ async fn prepare(
         name: name.as_str().to_string(),
         baseline_key: baseline.key,
         tools: input.tools.clone(),
+        extra_packages: input.extra_packages.clone(),
+        repositories: input.repositories.clone(),
+        mcp_server_keys: input.mcp_server_keys.clone(),
         agents: input.agents.clone(),
         resources,
         mounts,
@@ -1228,6 +1314,9 @@ fn input_from(recipe: &Recipe) -> RecipeInput {
         name: recipe.name.clone(),
         baseline_key: recipe.baseline_key.clone(),
         tools: recipe.tools.clone(),
+        extra_packages: recipe.extra_packages.clone(),
+        repositories: recipe.repositories.clone(),
+        mcp_server_keys: recipe.mcp_server_keys.clone(),
         agents: recipe.agents.clone(),
         resources: recipe.resources.clone(),
         project_mounts: recipe.project_mounts.clone(),
@@ -1409,6 +1498,62 @@ pub fn dockerfile(plan: &ImagePlan) -> Result<String, String> {
     out.push_str("# Do not edit: the next build regenerates this file from the recipe.\n");
     out.push_str(&format!("FROM {base}\n"));
 
+    for repository in &plan.repositories {
+        let name = super::selection::repository_name(&repository.name)?;
+        let url = super::selection::repository_url(&repository.url)?;
+        match manager {
+            PackageManager::Apt => {
+                let suite = repository.suite.as_deref().unwrap_or("stable");
+                let components = repository.components.join(" ");
+                let line = if repository.signing_key.is_some() {
+                    format!("deb [signed-by=/etc/apt/keyrings/nestbox-{name}.asc] {url} {suite} {components}\n")
+                } else {
+                    format!("deb {url} {suite} {components}\n")
+                };
+                if let Some(key) = &repository.signing_key {
+                    out.push_str(&format!(
+                        "RUN mkdir -p /etc/apt/keyrings && printf %s {} > /etc/apt/keyrings/nestbox-{name}.asc\n",
+                        shell_quote(key)
+                    ));
+                }
+                out.push_str(&format!(
+                    "RUN printf %s {} > /etc/apt/sources.list.d/nestbox-{name}.list\n",
+                    shell_quote(&line)
+                ));
+            }
+            PackageManager::Dnf => {
+                let mut block = format!("[nestbox-{name}]\nname=Nestbox {name}\nbaseurl={url}\nenabled=1\n");
+                if let Some(key) = &repository.signing_key {
+                    block.push_str(&format!("gpgcheck=1\ngpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-nestbox-{name}\n"));
+                    out.push_str(&format!(
+                        "RUN mkdir -p /etc/pki/rpm-gpg && printf %s {} > /etc/pki/rpm-gpg/RPM-GPG-KEY-nestbox-{name}\n",
+                        shell_quote(key)
+                    ));
+                } else {
+                    block.push_str("gpgcheck=0\n");
+                }
+                out.push_str(&format!(
+                    "RUN printf %s {} > /etc/yum.repos.d/nestbox-{name}.repo\n",
+                    shell_quote(&block)
+                ));
+            }
+            PackageManager::Apk => {
+                // Alpine keeps every repository in one file; the line is the
+                // repository URL and its optional tag, nothing else.
+                out.push_str(&format!(
+                    "RUN printf %s {} >> /etc/apk/repositories\n",
+                    shell_quote(&format!("{url}\n"))
+                ));
+                if let Some(key) = &repository.signing_key {
+                    out.push_str(&format!(
+                        "RUN printf %s {} > /etc/apk/keys/nestbox-{name}.rsa.pub\n",
+                        shell_quote(key)
+                    ));
+                }
+            }
+        }
+    }
+
     // The homes and the search path come first: an installer that writes to
     // `~/.local/bin` (the common shape for an agent CLI) needs both to exist
     // before it runs, and the supervisor later needs the same PATH.
@@ -1452,6 +1597,10 @@ pub fn dockerfile(plan: &ImagePlan) -> Result<String, String> {
                 out.push_str(&format!(
                     "RUN dnf install -y {packages} \\\n && dnf clean all\n"
                 ));
+            }
+            PackageManager::Apk => {
+                out.push_str("\n# Baseline tools and the tools the recipe chose.\n");
+                out.push_str(&format!("RUN apk add --no-cache {packages}\n"));
             }
         }
     }
@@ -1663,6 +1812,7 @@ pub fn content_hash(
         "base_image": plan.base_image,
         "package_manager": plan.manager.as_str(),
         "packages": plan.packages,
+        "repositories": plan.repositories,
         "agents": agents,
         "homes": plan.home_directories,
         "resources": {
@@ -2009,6 +2159,7 @@ mod tests {
             base_image: "ubuntu:24.04".into(),
             manager,
             packages: packages.iter().map(|p| p.to_string()).collect(),
+            repositories: vec![],
             agents: vec![PlannedAgent {
                 instance: "hermes".into(),
                 pack_key: "hermes".into(),
@@ -2065,6 +2216,7 @@ mod tests {
             description: None,
             apt_name: Some("build-essential".into()),
             rpm_name: None,
+            apk_name: Some("build-base".into()),
         };
         let package = tool.package_for(PackageManager::Dnf);
         assert_eq!(package, None);
@@ -2183,6 +2335,52 @@ mod tests {
         assert!(supervisor.contains("exec sleep infinity"));
         assert!(supervisor.contains("wait -n"));
         assert!(supervisor.contains("export OPENAI_API_KEY="));
+    }
+
+    #[test]
+    fn a_signed_repository_is_registered_before_the_packages_are_installed() {
+        let mut plan = plan(PackageManager::Apt, &["nginx"]);
+        plan.repositories = vec![crate::domain::builder::RepositorySpec {
+            name: "artgate".into(),
+            url: "https://packages.example.test/apt".into(),
+            suite: Some("stable".into()),
+            components: vec!["main".into()],
+            signing_key: Some("-----BEGIN PGP PUBLIC KEY BLOCK-----\nabc\n-----END-----\n".into()),
+            credential_ref: None,
+        }];
+        let text = dockerfile(&plan).expect("a valid repository renders");
+        let keyring = text.find("/etc/apt/keyrings/nestbox-artgate.asc").expect("keyring written");
+        let list = text.find("/etc/apt/sources.list.d/nestbox-artgate.list").expect("repo written");
+        let install = text.find("apt-get install").expect("install step");
+        assert!(keyring < install && list < install, "the repository exists before the install");
+        assert!(text.contains("signed-by=/etc/apt/keyrings/nestbox-artgate.asc"));
+    }
+
+    #[test]
+    fn an_alpine_recipe_uses_apk() {
+        let mut plan = plan(PackageManager::Apk, &["nginx"]);
+        plan.base_image = "alpine:3.21".into();
+        let text = dockerfile(&plan).expect("a valid plan renders");
+        assert!(text.contains("FROM alpine:3.21"));
+        assert!(text.contains("apk add --no-cache nginx"));
+        assert!(!text.contains("apt-get"));
+    }
+
+    #[test]
+    fn the_content_hash_changes_when_a_repository_is_added() {
+        let plain = plan(PackageManager::Apt, &["nginx"]);
+        let mut with_repo = plan(PackageManager::Apt, &["nginx"]);
+        with_repo.repositories = vec![crate::domain::builder::RepositorySpec {
+            name: "artgate".into(),
+            url: "https://packages.example.test/apt".into(),
+            suite: None,
+            components: vec![],
+            signing_key: None,
+            credential_ref: None,
+        }];
+        let a = content_hash(&plain, &resources(), &[], SUPERVISOR_PROGRAM);
+        let b = content_hash(&with_repo, &resources(), &[], SUPERVISOR_PROGRAM);
+        assert_ne!(a, b, "a new repository must produce a new image tag");
     }
 
     #[test]

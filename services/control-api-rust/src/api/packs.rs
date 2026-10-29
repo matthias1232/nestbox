@@ -10,6 +10,8 @@ use serde::Deserialize;
 
 use crate::api::principal::Auth;
 use crate::error::ApiError;
+use crate::domain::runtime::CatalogueAnswer;
+use crate::services::catalogue_service;
 use crate::services::pack_service;
 use crate::state::AppState;
 
@@ -60,4 +62,31 @@ pub async fn tool_catalog(
     )
     .await?;
     Ok(Json(serde_json::json!({ "items": tools })))
+}
+
+/// A live package search: which distribution, and what fragment.
+///
+/// The baseline decides the distribution and the package manager; omitting it
+/// keeps the console's current baseline usable without a second request.
+#[derive(Debug, Deserialize)]
+pub struct PackageQuery {
+    pub baseline: Option<String>,
+    pub q: Option<String>,
+}
+
+/// Search the live package index of one baseline's distribution.
+pub async fn catalogue(
+    State(state): State<AppState>,
+    auth: Auth,
+    Query(query): Query<PackageQuery>,
+) -> Result<Json<CatalogueAnswer>, ApiError> {
+    let baseline = query.baseline.as_deref().unwrap_or("ubuntu-24.04");
+    let answer = catalogue_service::search(
+        &state.services,
+        &auth.principal,
+        baseline,
+        query.q.as_deref().unwrap_or(""),
+    )
+    .await?;
+    Ok(Json(answer))
 }

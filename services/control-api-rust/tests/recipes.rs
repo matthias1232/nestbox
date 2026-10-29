@@ -145,6 +145,9 @@ fn shell_recipe(name: &str) -> RecipeInput {
         name: name.to_string(),
         baseline_key: "ubuntu-24.04".into(),
         tools: vec!["git".into()],
+        extra_packages: vec![],
+        repositories: vec![],
+        mcp_server_keys: vec![],
         agents: vec![AgentSpec {
             pack_key: "hermes".into(),
             instance: "hermes".into(),

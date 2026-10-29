@@ -61,3 +61,13 @@ export function build(id) {
 export function instantiate(id, name) {
   return request(`recipes/${id}/instantiate`, { method: 'POST', body: { name } });
 }
+
+/**
+ * Copy a template's selection onto a recipe.
+ *
+ * The recipe keeps its agents, resources and mounts; the server clears the built
+ * image because the previous one does not contain the new selection.
+ */
+export function applyTemplate(id, templateId) {
+  return request(`recipes/${id}/apply-template`, { method: 'POST', body: { template_id: templateId } });
+}

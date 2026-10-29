@@ -12,9 +12,10 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::api::principal::Auth;
-use crate::domain::builder::{AgentSpec, ProjectMount, Recipe, ResourceLimits};
+use crate::domain::builder::{AgentSpec, ProjectMount, Recipe, RepositorySpec, ResourceLimits};
 use crate::error::ApiError;
 use crate::services::builder_service::{self, RecipeInput};
+use crate::services::template_service;
 use crate::state::AppState;
 
 /// A create or edit body.
@@ -29,6 +30,12 @@ pub struct RecipeRequest {
     /// Tools by `tool_catalog` key.
     #[serde(default)]
     pub tools: Vec<String>,
+    #[serde(default)]
+    pub extra_packages: Vec<String>,
+    #[serde(default)]
+    pub repositories: Vec<RepositorySpec>,
+    #[serde(default)]
+    pub mcp_server_keys: Vec<String>,
     #[serde(default)]
     pub agents: Vec<AgentSpec>,
     #[serde(default)]
@@ -46,12 +53,22 @@ impl RecipeRequest {
             name: self.name,
             baseline_key: self.baseline_key,
             tools: self.tools,
+            extra_packages: self.extra_packages,
+            repositories: self.repositories,
+            mcp_server_keys: self.mcp_server_keys,
             agents: self.agents,
             resources: self.resources,
             project_mounts: self.project_mounts,
             node: self.node,
         }
     }
+}
+
+/// The body of an apply-template request.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct ApplyTemplateRequest {
+    /// The template whose selection becomes the recipe's.
+    pub template_id: Uuid,
 }
 
 /// The body of an instantiate request.
@@ -102,6 +119,24 @@ pub async fn update(
 ) -> Result<Json<Recipe>, ApiError> {
     Ok(Json(
         builder_service::update(&state.services, &auth.principal, id, body.into_input()).await?,
+    ))
+}
+
+/// Copy a template's selection onto a recipe and return it as a new draft.
+pub async fn apply_template(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ApplyTemplateRequest>,
+) -> Result<Json<Recipe>, ApiError> {
+    Ok(Json(
+        template_service::apply_to_recipe(
+            &state.services,
+            &auth.principal,
+            body.template_id,
+            id,
+        )
+        .await?,
     ))
 }
 

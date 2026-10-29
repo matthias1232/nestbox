@@ -43,8 +43,9 @@ The architecture test enforces the last two.
 | `providers.rs` | Provider profiles, probe |
 | `models.rs` | Catalog per node with filters, per-node hardware, facets, requirements, installs with reservations, editing an install (`PATCH /models/{key}/install`), sync |
 | `nodes.rs` | Nodes with budget and sandbox count, one node, its sandboxes, display rename, probe through the runner |
-| `packs.rs` | Baselines, agent packs, and tool catalog as data, with `?baseline=` resolution |
-| `recipes.rs` | Recipe CRUD, build, instantiate (`feat/recipes-build`) |
+| `packs.rs` | Baselines, agent packs, tool catalog with `?baseline=` resolution, and the live package catalogue |
+| `recipes.rs` | Recipe CRUD, build, instantiate, apply-template (`feat/recipes-build`) |
+| `image_templates.rs` | Image templates: list, default, create, read, replace, delete |
 | `persistent_roots.rs` | Roots, mount, dismount, usage |
 | `sandbox_agents.rs` | Agents inside a sandbox: list, add, remove with `keep_persistent` |
 | `jobs.rs` | Jobs, schedules |

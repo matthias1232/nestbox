@@ -13,9 +13,10 @@ use chrono::{DateTime, Utc};
 use crate::domain::metrics::{InventoryProbe, ProcessTable};
 use crate::domain::pack_access::ForwardState;
 use crate::domain::runtime::{
-    BuildRequest, ComponentLimits, BuildResult, ComponentState, ExecResult, ForwardRequest, HardwareReport,
-    ModelDownload, ModelDownloadResult, ModelServe, ModelServeResult, NetworkInterface,
-    RuntimeFacts, RuntimeResources, SandboxSpec, SshCredential,
+    BuildRequest, BuildResult, CatalogueAnswer, CatalogueRequest, ComponentLimits,
+    ComponentState, ExecResult, ForwardRequest, HardwareReport, ImageVerification, ModelDownload,
+    ModelDownloadResult, ModelServe, ModelServeResult, NetworkInterface, RuntimeFacts,
+    RuntimeResources, SandboxSpec, SshCredential, VerificationAnswer,
 };
 use crate::runtime::{BoxTerminal, RunnerTerminal, RuntimeAdapter, RuntimeError};
 
@@ -278,6 +279,23 @@ impl RuntimeAdapter for HttpRunner {
         let payload = serde_json::to_value(&request)
             .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
         self.send(reqwest::Method::POST, "/v1/builds", Some(&payload))
+            .await
+    }
+
+    async fn catalogue(&self, request: CatalogueRequest) -> Result<CatalogueAnswer, RuntimeError> {
+        let payload = serde_json::to_value(&request)
+            .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        self.send(reqwest::Method::POST, "/v1/catalogue", Some(&payload))
+            .await
+    }
+
+    async fn verify_image(
+        &self,
+        request: ImageVerification,
+    ) -> Result<VerificationAnswer, RuntimeError> {
+        let payload = serde_json::to_value(&request)
+            .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        self.send(reqwest::Method::POST, "/v1/images/verify", Some(&payload))
             .await
     }
 

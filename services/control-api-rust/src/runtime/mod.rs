@@ -14,9 +14,9 @@ use crate::domain::metrics::{InventoryProbe, ProcessTable};
 use crate::domain::pack_access::ForwardState;
 use crate::domain::runtime::{
     ComponentLimits,
-    BuildRequest, BuildResult, ComponentState, ExecResult, ForwardRequest, HardwareReport,
-    ModelDownload, ModelDownloadResult, ModelServe, ModelServeResult, RuntimeFacts, SandboxSpec,
-    SshCredential,
+    BuildRequest, BuildResult, CatalogueAnswer, CatalogueRequest, ComponentState, ExecResult,
+    ForwardRequest, HardwareReport, ImageVerification, ModelDownload, ModelDownloadResult,
+    ModelServe, ModelServeResult, RuntimeFacts, SandboxSpec, SshCredential, VerificationAnswer,
 };
 
 /// Fehler aus der Ausführungsschicht.
@@ -80,6 +80,22 @@ pub trait RuntimeAdapter: Send + Sync {
 
     /// Build an image from a generated Dockerfile.
     async fn build(&self, request: BuildRequest) -> Result<BuildResult, RuntimeError>;
+
+    /// Ask one baseline image's native package manager what it offers.
+    ///
+    /// A query, not a stored catalogue: the distribution's index is the source
+    /// of truth, and an answer that claims a package the index does not have
+    /// would turn into a failed build much later.
+    async fn catalogue(&self, request: CatalogueRequest) -> Result<CatalogueAnswer, RuntimeError>;
+
+    /// Check a built image's package database against the packages a recipe asked for.
+    ///
+    /// The build is only "succeeded" when this answers with no missing package;
+    /// a Dockerfile that ran but installed nothing is the failure this catches.
+    async fn verify_image(
+        &self,
+        request: ImageVerification,
+    ) -> Result<VerificationAnswer, RuntimeError>;
 
     /// Open an interactive terminal in a sandbox.
     ///

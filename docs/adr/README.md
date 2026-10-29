@@ -53,3 +53,4 @@ supersedes the old one and note the supersession in both files.
 Copy the shape of an existing file. Keep it short. The value is in the
 *rejected alternatives* and the *invalidation conditions*, because those are
 what a future reader cannot reconstruct from the code.
+| [0039](0039-the-catalogue-is-the-distributions-and-a-build-is-verified.md) | The package catalogue is the distribution's, and a build is verified | Accepted |

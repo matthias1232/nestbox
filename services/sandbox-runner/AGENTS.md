@@ -24,6 +24,8 @@ control plane.
 | `POST` | `/v1/sandboxes/{name}/exec` | Run one argument vector, return output |
 | `GET` | `/v1/hardware` | Raw `/proc` and `nvidia-smi` text for the control plane to parse |
 | `POST` | `/v1/builds` | Build a recipe image from a generated Dockerfile |
+| `POST` | `/v1/catalogue` | Search a baseline image's native package index in a throwaway container |
+| `POST` | `/v1/images/verify` | Check a built image's package database against the recipe's packages |
 | `POST` | `/v1/models/download` | Fetch one GGUF into `NESTBOX_MODEL_BASE` |
 | `POST` | `/v1/models/serve` | Start one model server container |
 | `GET`/`DELETE` | `/v1/models/serve/{key}` | Inspect or stop it |
@@ -151,6 +153,8 @@ seconds instead of half an hour.
 | File | Responsibility |
 |---|---|
 | `app/main.py` | The FastAPI adapter, the sandbox network, the egress wiring, and model serving |
+| `app/images.py` | The one image allowlist shared by sandbox creation and the package catalogue |
+| `app/catalogue.py` | Live package search and post-build verification: fixed scripts, validated query, throwaway container |
 | `app/stats.py` | One-shot `docker stats` samples and the poster loop |
 | `app/processes.py` | `docker top` for one sandbox |
 | `app/inventory.py` | Runs the probe and parses its sections |
@@ -180,3 +184,22 @@ Three reads of the same container, each with its own cost:
   variables **by name only** (`cut -d= -f1`), and lists files under the agent's
   home rather than reading them. A partial answer carries a `note` instead of
   looking like a complete one.
+
+## Catalogues and verification
+
+Two questions, both answered by a container rather than by a scraped page:
+
+- **What does this distribution ship?** `POST /v1/catalogue` starts the baseline
+  image, runs `apt-get update && apt-cache search`, `dnf list --available` or
+  `apk search`, and returns parsed hits. The query is a package-name fragment
+  validated against a regex and passed as `NESTBOX_QUERY`; the script per manager
+  is a constant. The container runs under the same allowlist, capability drop and
+  limits as a build, and is removed on every path, including a timeout.
+- **Does the built image contain what the recipe asked for?** `POST
+  /v1/images/verify` starts the built tag and reads its package database
+  (`dpkg-query`, `rpm -qa`, `apk info -v`). The control API fails the build when
+  a package is missing, because "the Dockerfile ran" is not "the tool is there".
+
+The ten-minute cache in `app/catalogue.py` is keyed by image, manager and query.
+It is a courtesy to the package index, never control state: emptying it changes
+nothing an operator can observe except how long the next search takes.

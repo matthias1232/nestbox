@@ -86,7 +86,7 @@ pub async fn get_pack(scope: &mut TenantScope<'_>, key: &str) -> Result<AgentPac
     row_to_pack(&row)
 }
 
-const TOOL_COLUMNS: &str = "key, name, \"group\", description, apt_name, rpm_name";
+const TOOL_COLUMNS: &str = "key, name, \"group\", description, apt_name, rpm_name, apk_name";
 
 fn row_to_tool(row: &sqlx::postgres::PgRow) -> Result<Tool, StoreError> {
     Ok(Tool {
@@ -96,6 +96,7 @@ fn row_to_tool(row: &sqlx::postgres::PgRow) -> Result<Tool, StoreError> {
         description: row.try_get("description")?,
         apt_name: row.try_get("apt_name")?,
         rpm_name: row.try_get("rpm_name")?,
+        apk_name: row.try_get("apk_name")?,
     })
 }
 

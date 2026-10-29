@@ -13,6 +13,8 @@ use utoipa::ToSchema;
 pub enum PackageManager {
     Apt,
     Dnf,
+    /// Alpine's `apk`: a different package index and a musl base image.
+    Apk,
 }
 
 impl PackageManager {
@@ -20,6 +22,7 @@ impl PackageManager {
         match self {
             Self::Apt => "apt",
             Self::Dnf => "dnf",
+            Self::Apk => "apk",
         }
     }
 
@@ -27,6 +30,7 @@ impl PackageManager {
         Some(match value {
             "apt" => Self::Apt,
             "dnf" => Self::Dnf,
+            "apk" => Self::Apk,
             _ => return None,
         })
     }
@@ -124,6 +128,7 @@ pub struct Tool {
     pub description: Option<String>,
     pub apt_name: Option<String>,
     pub rpm_name: Option<String>,
+    pub apk_name: Option<String>,
 }
 
 impl Tool {
@@ -132,6 +137,9 @@ impl Tool {
         match manager {
             PackageManager::Apt => self.apt_name.as_deref(),
             PackageManager::Dnf => self.rpm_name.as_deref(),
+            // Alpine's names mostly match Debian's, but not all of them, so the
+            // column is explicit and a missing entry is "not packaged here".
+            PackageManager::Apk => self.apk_name.as_deref(),
         }
     }
 }
@@ -152,6 +160,7 @@ pub struct ToolForBaseline {
     pub description: Option<String>,
     pub apt_name: Option<String>,
     pub rpm_name: Option<String>,
+    pub apk_name: Option<String>,
     /// The name for the resolved package manager; absent without a baseline.
     pub package: Option<String>,
     /// The manager `package` was resolved for; absent without a baseline.
@@ -165,7 +174,8 @@ impl ToolForBaseline {
     /// resolution, and availability judged by the database constraint that a
     /// tool has at least one name.
     pub fn unresolved(tool: Tool) -> Self {
-        let available = tool.apt_name.is_some() || tool.rpm_name.is_some();
+        let available =
+            tool.apt_name.is_some() || tool.rpm_name.is_some() || tool.apk_name.is_some();
         Self {
             key: tool.key,
             name: tool.name,
@@ -173,6 +183,7 @@ impl ToolForBaseline {
             description: tool.description,
             apt_name: tool.apt_name,
             rpm_name: tool.rpm_name,
+            apk_name: tool.apk_name,
             package: None,
             package_manager: None,
             available,
@@ -191,6 +202,7 @@ impl ToolForBaseline {
             description: tool.description,
             apt_name: tool.apt_name,
             rpm_name: tool.rpm_name,
+            apk_name: tool.apk_name,
             package,
             package_manager: Some(manager),
             available,
@@ -253,6 +265,7 @@ mod tests {
             description: None,
             apt_name: Some("build-essential".into()),
             rpm_name: None,
+            apk_name: Some("build-base".into()),
         };
 
         let on_debian = ToolForBaseline::resolved(build_tools.clone(), PackageManager::Apt);
@@ -277,6 +290,7 @@ mod tests {
             description: None,
             apt_name: Some("vim".into()),
             rpm_name: Some("vim-enhanced".into()),
+            apk_name: Some("vim".into()),
         };
         assert_eq!(tool.package_for(PackageManager::Apt), Some("vim"));
         assert_eq!(tool.package_for(PackageManager::Dnf), Some("vim-enhanced"));

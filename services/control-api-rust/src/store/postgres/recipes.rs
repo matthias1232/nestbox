@@ -8,15 +8,17 @@ use crate::domain::builder::{AgentSpec, ProjectMount, Recipe, RecipeState, Resou
 use crate::error::StoreError;
 
 const RECIPE_COLUMNS: &str = "id, environment_id, owner_user_id, name, baseline_key, \
-     tool_profile_id, tools, agents, resources, project_mounts, node_id, state, image_ref, \
+      tool_profile_id, tools, extra_packages, repositories, mcp_server_keys, agents, resources, project_mounts, node_id, state, image_ref, \
      content_hash, revision, build_job_id, build_error, created_at, updated_at";
 
 fn row_to_recipe(row: &sqlx::postgres::PgRow) -> Result<Recipe, StoreError> {
     let state_raw: String = row.try_get("state")?;
     let agents_raw: serde_json::Value = row.try_get("agents")?;
+    let repositories_raw: serde_json::Value = row.try_get("repositories")?;
     let resources_raw: serde_json::Value = row.try_get("resources")?;
     let mounts_raw: serde_json::Value = row.try_get("project_mounts")?;
     let agents: Vec<AgentSpec> = serde_json::from_value(agents_raw).unwrap_or_default();
+    let repositories = serde_json::from_value(repositories_raw).unwrap_or_default();
     let resources: ResourceLimits = serde_json::from_value(resources_raw).unwrap_or_default();
     let project_mounts: Vec<ProjectMount> = serde_json::from_value(mounts_raw).unwrap_or_default();
     Ok(Recipe {
@@ -27,6 +29,9 @@ fn row_to_recipe(row: &sqlx::postgres::PgRow) -> Result<Recipe, StoreError> {
         baseline_key: row.try_get("baseline_key")?,
         tool_profile_id: row.try_get("tool_profile_id")?,
         tools: row.try_get("tools")?,
+        extra_packages: row.try_get("extra_packages")?,
+        repositories,
+        mcp_server_keys: row.try_get("mcp_server_keys")?,
         agents,
         resources,
         project_mounts,
@@ -73,6 +78,9 @@ pub struct NewRecipe<'a> {
     pub baseline_key: &'a str,
     pub tool_profile_id: Option<Uuid>,
     pub tools: &'a [String],
+    pub extra_packages: &'a [String],
+    pub repositories: &'a [crate::domain::builder::RepositorySpec],
+    pub mcp_server_keys: &'a [String],
     pub agents: &'a [AgentSpec],
     pub resources: &'a ResourceLimits,
     pub project_mounts: &'a [ProjectMount],
@@ -82,13 +90,14 @@ pub struct NewRecipe<'a> {
 /// Create a draft recipe.
 pub async fn insert(scope: &mut TenantScope<'_>, new: NewRecipe<'_>) -> Result<Recipe, StoreError> {
     let agents = serde_json::to_value(new.agents).unwrap_or(serde_json::Value::Array(vec![]));
+    let repositories = serde_json::to_value(new.repositories).unwrap_or(serde_json::Value::Array(vec![]));
     let resources = serde_json::to_value(new.resources).unwrap_or(serde_json::json!({}));
     let mounts = serde_json::to_value(new.project_mounts).unwrap_or(serde_json::Value::Array(vec![]));
     let sql = format!(
         "INSERT INTO recipes
-            (environment_id, owner_user_id, name, baseline_key, tool_profile_id, tools,
-             agents, resources, project_mounts, node_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             (environment_id, owner_user_id, name, baseline_key, tool_profile_id, tools, extra_packages, repositories, mcp_server_keys,
+              agents, resources, project_mounts, node_id)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          RETURNING {RECIPE_COLUMNS}"
     );
     let row = sqlx::query(&sql)
@@ -98,6 +107,9 @@ pub async fn insert(scope: &mut TenantScope<'_>, new: NewRecipe<'_>) -> Result<R
         .bind(new.baseline_key)
         .bind(new.tool_profile_id)
         .bind(new.tools)
+        .bind(new.extra_packages)
+        .bind(repositories)
+        .bind(new.mcp_server_keys)
         .bind(agents)
         .bind(resources)
         .bind(mounts)
@@ -116,12 +128,14 @@ pub async fn update(
     new: NewRecipe<'_>,
 ) -> Result<Recipe, StoreError> {
     let agents = serde_json::to_value(new.agents).unwrap_or(serde_json::Value::Array(vec![]));
+    let repositories = serde_json::to_value(new.repositories).unwrap_or(serde_json::Value::Array(vec![]));
     let resources = serde_json::to_value(new.resources).unwrap_or(serde_json::json!({}));
     let mounts = serde_json::to_value(new.project_mounts).unwrap_or(serde_json::Value::Array(vec![]));
     let sql = format!(
         "UPDATE recipes
-            SET name = $3, baseline_key = $4, tool_profile_id = $5, tools = $6, agents = $7,
-                resources = $8, project_mounts = $9, node_id = $10,
+             SET name = $3, baseline_key = $4, tool_profile_id = $5, tools = $6, extra_packages = $7,
+                 repositories = $8, mcp_server_keys = $9, agents = $10,
+                 resources = $11, project_mounts = $12, node_id = $13,
                 state = 'draft', revision = revision + 1, build_error = NULL,
                 updated_at = now()
           WHERE environment_id = $1 AND id = $2
@@ -134,6 +148,9 @@ pub async fn update(
         .bind(new.baseline_key)
         .bind(new.tool_profile_id)
         .bind(new.tools)
+        .bind(new.extra_packages)
+        .bind(repositories)
+        .bind(new.mcp_server_keys)
         .bind(agents)
         .bind(resources)
         .bind(mounts)
@@ -199,6 +216,41 @@ pub async fn attach_sandbox(
         return Err(StoreError::NotFound);
     }
     Ok(())
+}
+
+/// Copy a template's selection onto a recipe as a new revision.
+///
+/// The recipe's own choices about size and agents are untouched; the previous
+/// image reference is cleared, because an image built before this selection does
+/// not contain it, and keeping the tag would let `instantiate` start the wrong
+/// thing. `state = draft` is the honest status of a recipe that must be built.
+pub async fn apply_template(
+    scope: &mut TenantScope<'_>,
+    id: Uuid,
+    template: &crate::domain::builder::ImageTemplate,
+) -> Result<Recipe, StoreError> {
+    let repositories = serde_json::to_value(&template.repositories)
+        .unwrap_or(serde_json::Value::Array(vec![]));
+    let sql = format!(
+        "UPDATE recipes
+            SET baseline_key = $3, tools = $4, extra_packages = $5, repositories = $6,
+                mcp_server_keys = $7, revision = revision + 1, state = 'draft',
+                image_ref = NULL, content_hash = NULL, build_error = NULL, updated_at = now()
+          WHERE environment_id = $1 AND id = $2
+          RETURNING {RECIPE_COLUMNS}"
+    );
+    let row = sqlx::query(&sql)
+        .bind(scope.environment_id())
+        .bind(id)
+        .bind(&template.baseline_key)
+        .bind(&template.tools)
+        .bind(&template.extra_packages)
+        .bind(repositories)
+        .bind(&template.mcp_server_keys)
+        .fetch_optional(scope.connection())
+        .await?
+        .ok_or(StoreError::NotFound)?;
+    row_to_recipe(&row)
 }
 
 /// Delete a recipe. Sandboxes keep running; their `recipe_id` becomes null.

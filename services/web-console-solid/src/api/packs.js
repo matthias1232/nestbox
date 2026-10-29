@@ -21,3 +21,14 @@ export function agentPacks(baseline) {
 export function toolCatalog(baseline) {
   return request(`tool-catalog${query({ baseline })}`);
 }
+
+/**
+ * The live package catalogue of one baseline's distribution.
+ *
+ * The server asks the distribution's own package index, so this is a question,
+ * not a stored catalog: `available: false` means the index could not be reached
+ * and `detail` says why, rather than an empty list that looks like "no match".
+ */
+export function catalogue(baseline, q) {
+  return request(`packages${query({ baseline, q })}`);
+}

@@ -27,6 +27,7 @@ from app import telemetry_shipper
 from app import host as host_load
 from app import backups as root_backups
 from app import openshell_backend as osh
+from app.images import image_allowed
 from app.workload import get_container, list_workloads, openshell_name, sandbox_name
 
 app = FastAPI(title="Nestbox Sandbox Runtime", version="1.0.0")
@@ -56,6 +57,7 @@ app.include_router(published_ports.router)
 app.include_router(appliance_components.router)
 app.include_router(host_load.router)
 app.include_router(root_backups.router)
+app.include_router(package_catalogue.router)
 
 
 def adopt_restart_policy() -> None:
@@ -102,24 +104,11 @@ EGRESS_PROXY_PORT = 3128
 # inside the proxy container can only narrow what a sandbox reaches, never widen
 # it, which is why a failure to install the rules is reported and not fatal.
 REDIRECT_PORTS = (80, 443, 8080)
-ALLOWED_IMAGES = set(
-    os.getenv(
-        "NESTBOX_ALLOWED_IMAGES",
-        "ubuntu:24.04,nestbox-ubuntu-dev:local,nestbox-hermes:local,nestbox-openclaw:local",
-    ).split(",")
-)
-# Images the runner built itself from a recipe are always allowed: they carry
-# this prefix and a content hash, and the Dockerfile came from the control
-# plane. Anything else must be on the allowlist.
-RECIPE_IMAGE_PREFIX = "nestbox-recipe/"
 # The only directory tree a bind mount may come from. Validated as a real path
 # so `..` and symlinks cannot escape it. Empty disables mounts entirely.
 PERSISTENT_BASE = os.path.realpath(os.getenv("NESTBOX_PERSISTENT_BASE", "/var/lib/nestbox/persistent"))
 HOST_PROC = os.getenv("NESTBOX_HOST_PROC", "/proc")
 
-
-def image_allowed(image: str) -> bool:
-    return image in ALLOWED_IMAGES or image.startswith(RECIPE_IMAGE_PREFIX)
 
 
 class MountSpec(BaseModel):

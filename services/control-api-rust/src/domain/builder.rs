@@ -190,6 +190,12 @@ pub struct Recipe {
     pub baseline_key: String,
     pub tool_profile_id: Option<Uuid>,
     pub tools: Vec<String>,
+    /// Extra package names selected from the baseline's native package catalogue.
+    pub extra_packages: Vec<String>,
+    /// Public repository definitions; credentials are vault locators, never values.
+    pub repositories: Vec<RepositorySpec>,
+    /// Registry MCP servers attached when an image becomes a sandbox.
+    pub mcp_server_keys: Vec<String>,
     pub agents: Vec<AgentSpec>,
     pub resources: ResourceLimits,
     pub project_mounts: Vec<ProjectMount>,
@@ -202,6 +208,47 @@ pub struct Recipe {
     pub build_error: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// A saved builder selection that can be reused by other recipes.
+///
+/// It carries catalog keys and package names, never an image: applying a
+/// template to a recipe copies these fields, and the recipe's content hash then
+/// decides whether the next build produces a new image.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ImageTemplate {
+    pub id: Uuid,
+    pub environment_id: Uuid,
+    pub name: String,
+    pub description: String,
+    pub baseline_key: String,
+    pub tools: Vec<String>,
+    pub extra_packages: Vec<String>,
+    pub repositories: Vec<RepositorySpec>,
+    pub mcp_server_keys: Vec<String>,
+    /// The one selection a new recipe starts from; at most one per environment.
+    pub is_default: bool,
+    /// Offered to the environment's other operators.
+    pub is_shared: bool,
+    pub created_by: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// A signed repository registered before an image installs optional packages.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct RepositorySpec {
+    pub name: String,
+    pub url: String,
+    #[serde(default)]
+    pub suite: Option<String>,
+    #[serde(default)]
+    pub components: Vec<String>,
+    /// Public ASCII-armoured signing key. Private credentials use a vault locator.
+    #[serde(default)]
+    pub signing_key: Option<String>,
+    #[serde(default)]
+    pub credential_ref: Option<String>,
 }
 
 /// A valid recipe name: lowercase slug, so it can become an image tag.

@@ -73,7 +73,10 @@ shape it:
 | `model_service.rs` | Hardware probing through a node's runner (CPU, RAM, GPU, unified pool), fit against a node's free budget, facets, catalog filters, installs and their reservations, editing an install (reserved RAM, on/off; off frees the memory) |
 | `node_service.rs` | The nodes list, one node with its budget, a node's sandboxes, name-or-id resolution, display rename |
 | `pack_service.rs` | Baselines, agent packs, and tool catalog as data; pack defaults by row, baseline compatibility, package-name resolution |
-| `builder_service.rs` | Recipes: validation against the catalogs, the Dockerfile generator, content hash, build job, instantiate |
+| `builder_service.rs` | Recipes: validation against the catalogs, the Dockerfile generator, content hash, build job, package verification, instantiate with MCP attachments |
+| `catalogue_service.rs` | The live package catalogue: permission, baseline resolution, fragment validation, delegation to the runtime |
+| `template_service.rs` | Image templates: sharing and default rules, validation, apply-to-recipe |
+| `selection.rs` | The one validation for package names, repository URLs/keys and template names |
 | `gateway_service.rs` | Registry, settings, drift, sync |
 | `job_service.rs` | Job creation and progress |
 | `catalog_sync/` | The model catalogue is rebuilt from Hugging Face, Ollama, NGC, and NIM, never over a curated row |
@@ -235,6 +238,16 @@ A server that only offers the stateless `2026-07-28` discovery is recorded as an
 error naming its refusal; it is not silently retried with a second protocol,
 because two handshakes would make "discovery failed" ambiguous. Extend the probe
 when there is a server that needs it, not before.
+
+## The catalogue and templates
+
+`catalogue_service.rs` asks the runtime, which asks a container of the baseline
+image. It keeps no cache: the runner's ten-minute cache is next to the index it
+talked to, and a second cache would be a second staleness to reason about.
+
+`template_service.rs` keeps the rule that a template carries choices, never an
+image. Applying one copies fields onto a recipe, moves the revision and clears
+`image_ref`, because the previous image does not contain the new selection.
 
 ## Extending this module
 

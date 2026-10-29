@@ -14,10 +14,11 @@ use async_trait::async_trait;
 use chrono::Utc;
 use crate::domain::metrics::{InventoryProbe, ProcessEntry, ProcessTable};
 use crate::domain::pack_access::ForwardState;
-use crate::domain::runtime::{ComponentLimits, 
-    BuildRequest, BuildResult, ComponentState, ExecResult, ForwardRequest, HardwareReport,
-    ModelDownload, ModelDownloadResult, ModelServe, ModelServeResult, RuntimeFacts, SandboxSpec,
-    SshCredential,
+use crate::domain::runtime::{
+    BuildRequest, BuildResult, CatalogueAnswer, CatalogueRequest, ComponentLimits, ComponentState,
+    ExecResult, ForwardRequest, HardwareReport, ImageVerification, ModelDownload,
+    ModelDownloadResult, ModelServe, ModelServeResult, PackageHit, RuntimeFacts,
+    SandboxSpec, SshCredential, VerificationAnswer,
 };
 use crate::runtime::{BoxTerminal, RuntimeAdapter, RuntimeError, TerminalMessage, TerminalSocket};
 
@@ -292,6 +293,37 @@ impl RuntimeAdapter for FakeRuntime {
             image_id: Some("sha256:fake".into()),
             log: "fake build".into(),
             success: true,
+        })
+    }
+
+    async fn catalogue(&self, request: CatalogueRequest) -> Result<CatalogueAnswer, RuntimeError> {
+        // The fake answers with a tiny catalogue so the console's search path is
+        // testable without a package index or a container runtime.
+        let needle = request.query.to_lowercase();
+        let items = ["git", "curl", "jq", "vim", "python3"]
+            .iter()
+            .filter(|name| name.contains(&needle))
+            .map(|name| PackageHit {
+                name: (*name).to_string(),
+                version: Some("1".into()),
+                summary: Some("fake package".into()),
+            })
+            .collect();
+        Ok(CatalogueAnswer {
+            items,
+            available: true,
+            detail: format!("fake {} catalogue", request.package_manager),
+        })
+    }
+
+    async fn verify_image(
+        &self,
+        request: ImageVerification,
+    ) -> Result<VerificationAnswer, RuntimeError> {
+        Ok(VerificationAnswer {
+            present: request.packages,
+            missing: Vec::new(),
+            note: Some("fake verification".into()),
         })
     }
 

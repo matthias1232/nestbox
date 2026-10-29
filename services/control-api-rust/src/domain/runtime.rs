@@ -110,6 +110,59 @@ pub struct HardwareReport {
     pub note: Option<String>,
 }
 
+/// A live package-catalogue question against one baseline image.
+///
+/// The image and the manager come from the baseline the operator chose; the
+/// runner starts that image once and asks its native package manager. Nothing
+/// is cached in the database, because a catalogue is a fact about a remote
+/// index, not control state.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CatalogueRequest {
+    /// The baseline's base image, e.g. `ubuntu:24.04`.
+    pub image: String,
+    /// `apt`, `dnf`, or `apk`.
+    pub package_manager: String,
+    /// A package-name fragment, validated before it reaches a shell.
+    pub query: String,
+}
+
+/// One package a distribution offers.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct PackageHit {
+    pub name: String,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub summary: Option<String>,
+}
+
+/// What the distribution answered.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct CatalogueAnswer {
+    pub items: Vec<PackageHit>,
+    /// False when no index could be queried; `detail` then says why.
+    pub available: bool,
+    pub detail: String,
+}
+
+/// A request to check that an image really contains the packages a recipe named.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ImageVerification {
+    /// The built tag under `nestbox-recipe/`.
+    pub tag: String,
+    pub package_manager: String,
+    pub packages: Vec<String>,
+}
+
+/// Which of the expected packages the image's package database lists.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct VerificationAnswer {
+    pub present: Vec<String>,
+    pub missing: Vec<String>,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
 /// A request to build an image from a Dockerfile.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct BuildRequest {

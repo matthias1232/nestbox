@@ -8,6 +8,7 @@ pub mod access;
 pub mod auth;
 pub mod cluster;
 pub mod events;
+pub mod image_templates;
 pub mod inventory;
 pub mod jobs;
 pub mod mcp;
@@ -362,6 +363,25 @@ pub fn router(state: AppState) -> Router {
             get(recipes::get).patch(recipes::update).delete(recipes::delete),
         )
         .route("/api/v1/recipes/{id}/build", post(recipes::build))
+        .route(
+            "/api/v1/recipes/{id}/apply-template",
+            post(recipes::apply_template),
+        )
+        .route("/api/v1/packages", get(packs::catalogue))
+        .route(
+            "/api/v1/image-templates",
+            get(image_templates::list).post(image_templates::create),
+        )
+        .route(
+            "/api/v1/image-templates/default",
+            get(image_templates::default_template),
+        )
+        .route(
+            "/api/v1/image-templates/{id}",
+            get(image_templates::get)
+                .patch(image_templates::update)
+                .delete(image_templates::delete),
+        )
         .route("/api/v1/recipes/{id}/instantiate", post(recipes::instantiate))
         // Persistent roots
         .route(

@@ -42,7 +42,8 @@ the codebase where SQL appears.
 | `providers.rs` | Provider profiles, secret references |
 | `agent_packs.rs` | Baselines, agent packs, and the tool catalog (global data, no tenant filter) |
 | `persistent_roots.rs` | Persistent roots, mounts, and the agents inside a sandbox |
-| `recipes.rs` | Recipes, the build outcome, and the link from a sandbox to its recipe |
+| `recipes.rs` | Recipes, the build outcome, applying a template, and the link from a sandbox to its recipe |
+| `image_templates.rs` | Saved builder selections, their sharing rule and the one default per environment |
 | `audit.rs` | Append-only audit writes |
 | `traffic.rs` | Traffic rows, window counts, map and live edges, one body read, MCP calls, effective rules, the two hashes behind "deployed" |
 | `geography.rs` | `host_geography`: the cached country and AS per destination host (global table, pool not scope) |
