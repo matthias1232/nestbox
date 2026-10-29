@@ -8,7 +8,21 @@ import '@xterm/xterm/css/xterm.css';
 import '../../styles/deck.css';
 
 const keyFor = (id) => `nestbox:terminal-tabs:${id}`;
-const newId = () => `t-${crypto.randomUUID().replaceAll('-', '').slice(0, 20)}`;
+// `crypto.randomUUID` only exists in a secure context. The appliance is also
+// served over plain HTTP on a LAN address, where the property is undefined and
+// calling it throws during render — which used to blank the whole sandbox view.
+// The fallback keeps the same shape (`t-` plus 20 hex-ish characters) because
+// the runtime accepts only ASCII alphanumerics, `_` and `-` as a tab id.
+const randomToken = () => {
+  const webCrypto = globalThis.crypto;
+  if (typeof webCrypto?.randomUUID === 'function') return webCrypto.randomUUID();
+  if (typeof webCrypto?.getRandomValues === 'function') {
+    const bytes = webCrypto.getRandomValues(new Uint8Array(10));
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  }
+  return `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 12)}`.slice(0, 20);
+};
+const newId = () => `t-${randomToken().replaceAll('-', '').slice(0, 20)}`;
 const loadTabs = (id) => { try { const value = JSON.parse(localStorage.getItem(keyFor(id)) || '[]'); return Array.isArray(value) && value.length ? value : [{ id: newId(), label: 'Terminal 1' }]; } catch { return [{ id: newId(), label: 'Terminal 1' }]; } };
 
 export default function TerminalTab(props) {
@@ -31,7 +45,25 @@ export default function TerminalTab(props) {
   function add() { const next = [...tabs(), { id: newId(), label: `Terminal ${tabs().length + 1}` }]; save(next); setActive(next.at(-1).id); queueMicrotask(() => connect(next.at(-1).id)); }
   function select(id) { if (id === active()) return; setActive(id); connect(id); }
   function closeTab(id) { const item = tabs().find((tab) => tab.id === id); if (!item || !window.confirm(`Close ${item.label}? Its shell and foreground command will end.`)) return; if (id === active() && socket?.readyState === WebSocket.OPEN) socket.send('exit\r'); closeSocket(); let next = tabs().filter((tab) => tab.id !== id); if (!next.length) next = [{ id: newId(), label: 'Terminal 1' }]; save(next); setActive(next[0].id); queueMicrotask(() => connect(next[0].id)); }
-  onMount(() => { term = new Terminal({ cursorBlink: true, fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 13, theme: { background: '#000000' } }); fit = new FitAddon(); term.loadAddon(fit); term.open(host); fit.fit(); term.onData((data) => socket?.readyState === WebSocket.OPEN && socket.send(data)); observer = new ResizeObserver(() => { fit.fit(); if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows })); }); observer.observe(host); connect(); });
+  onMount(() => {
+    // A terminal that cannot attach must explain itself on its own tab instead
+    // of taking the whole sandbox view down with it.
+    try {
+      term = new Terminal({ cursorBlink: true, fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 13, theme: { background: '#000000' } });
+      fit = new FitAddon();
+      term.loadAddon(fit);
+      term.open(host);
+      fit.fit();
+      term.onData((data) => socket?.readyState === WebSocket.OPEN && socket.send(data));
+      observer = new ResizeObserver(() => { fit.fit(); if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows })); });
+      observer.observe(host);
+    } catch (failure) {
+      setState('closed');
+      setNote(`The terminal renderer could not start: ${failure?.message || failure}`);
+      return;
+    }
+    connect();
+  });
   onCleanup(() => { observer?.disconnect(); closeSocket(); term?.dispose(); });
   return <section class="tab-panel"><div class="controls"><For each={tabs()}>{(tab) => <span class={`terminal-tab ${active() === tab.id ? 'active' : ''}`}><button class="tiny" onClick={() => select(tab.id)}>{tab.label}</button><button class="tiny danger" title="Close terminal" onClick={() => closeTab(tab.id)}>×</button></span>}</For><button class="tiny" onClick={add}>+ Terminal</button></div><div class="controls"><span class={`badge ${state() === 'open' ? 'ok' : state() === 'connecting' ? 'warn' : 'muted'}`}><i />{state()}</span><Show when={state() === 'closed'}><button class="primary tiny" onClick={() => connect()}>Reconnect</button></Show><span class="muted small">Tabs persist across reloads. Closing the browser detaches; × ends only that terminal.</span></div><Show when={note()}><p class="notice">{note()}</p></Show><div class="term-wrap"><div ref={host} style="height:100%" /></div></section>;
 }
