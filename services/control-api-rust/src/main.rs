@@ -100,6 +100,11 @@ async fn main() {
                     Err(error) => tracing::debug!(code = error.code.0, "reconcile pass skipped"),
                 }
                 if let Err(error) =
+                    nestbox_control_api::services::telemetry_service::pull_openshell_events(&services).await
+                {
+                    tracing::debug!(code = error.code.0, "OpenShell event pull skipped");
+                }
+                if let Err(error) =
                     nestbox_control_api::services::gateway_service::ensure_supervisors(&services).await
                 {
                     tracing::debug!(code = error.code.0, "supervisor sync skipped");

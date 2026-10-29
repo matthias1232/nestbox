@@ -455,6 +455,26 @@ def set_openshell_policy(name: str, body: OpenShellPolicy) -> dict[str, Any]:
     return {"name": name, "applied": True}
 
 
+@app.get("/v1/openshell/events")
+def openshell_events(since: int = 120) -> dict[str, Any]:
+    """Network decisions the OpenShell supervisors logged in the last `since` seconds."""
+    from app import openshell_events as events
+
+    since = max(10, min(since, 3600))
+    found: list[dict[str, Any]] = []
+    for item in list_workloads(client):
+        name = openshell_name(item.name)
+        if not name or item.status != "running":
+            continue
+        try:
+            text = osh.run(["logs", name, "--source", "sandbox", "--since", f"{since}s", "-n", "1000"], timeout=30)
+        except osh.OpenShellError:
+            continue
+        for event in events.parse(text):
+            found.append({**event, "sandbox": name})
+    return {"events": found}
+
+
 @app.get("/v1/openshell")
 def openshell_status() -> dict[str, Any]:
     """Whether the OpenShell gateway answers, and what version it is."""

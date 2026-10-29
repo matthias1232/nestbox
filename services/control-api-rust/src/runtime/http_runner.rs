@@ -414,6 +414,18 @@ impl RuntimeAdapter for HttpRunner {
         Ok(())
     }
 
+    async fn openshell_events(&self, since_seconds: u32) -> Result<Vec<serde_json::Value>, RuntimeError> {
+        #[derive(Deserialize)]
+        struct Answer {
+            #[serde(default)]
+            events: Vec<serde_json::Value>,
+        }
+        let answer: Answer = self
+            .send(reqwest::Method::GET, &format!("/v1/openshell/events?since={since_seconds}"), None)
+            .await?;
+        Ok(answer.events)
+    }
+
     async fn set_openshell_policy(
         &self,
         name: &str,

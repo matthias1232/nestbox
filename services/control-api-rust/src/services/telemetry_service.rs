@@ -1230,3 +1230,128 @@ mod tests {
         assert!(prepared.call.is_none());
     }
 }
+
+/// Take the connection decisions OpenShell supervisors logged into the traffic
+/// history, with the sandbox they belong to.
+///
+/// The runner reads the supervisors' logs; this side owns the sandbox ids, the
+/// redaction and the storage, exactly as for the proxy's access log. Event ids are
+/// derived from (sandbox, time, destination, verdict), so reading the same log
+/// window twice stores each decision once.
+pub async fn pull_openshell_events(ctx: &ServiceContext) -> Result<u64, ApiError> {
+    let raw = ctx
+        .runtime
+        .openshell_events(90)
+        .await
+        .map_err(|error| ApiError::conflict(ErrorCode::SANDBOX_INVALID_STATE, error.to_string()))?;
+    if raw.is_empty() {
+        return Ok(0);
+    }
+    let environments: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM environments")
+        .fetch_all(&ctx.pool)
+        .await
+        .map_err(|error| ApiError::from(crate::error::StoreError::Database(error)))?;
+    let mut stored_total = 0;
+    for environment_id in environments {
+        let mut scope = TenantScope::begin(&ctx.pool, environment_id)
+            .await
+            .map_err(ApiError::from)?;
+        let rows: Vec<(Uuid, String)> = sqlx::query_as("SELECT id, name FROM sandboxes")
+            .fetch_all(scope.connection())
+            .await
+            .map_err(|error| ApiError::from(crate::error::StoreError::Database(error)))?;
+        scope.commit().await.map_err(ApiError::from)?;
+        let ids: std::collections::HashMap<String, Uuid> = rows.into_iter().map(|(id, name)| (name, id)).collect();
+
+        let now = Utc::now();
+        let mut prepared = Vec::new();
+        for event in &raw {
+            let Some(sandbox_id) = event.get("sandbox").and_then(|v| v.as_str()).and_then(|name| ids.get(name)) else {
+                continue;
+            };
+            let host = event.get("host").and_then(|v| v.as_str()).unwrap_or_default();
+            if host.is_empty() {
+                continue;
+            }
+            let seconds = event.get("ts").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let ts = DateTime::<Utc>::from_timestamp_millis((seconds * 1000.0) as i64);
+            let port = event.get("port").and_then(|v| v.as_i64()).map(|p| p as i32);
+            let decision = event.get("decision").and_then(|v| v.as_str()).unwrap_or("deny");
+            let dns = event.get("kind").and_then(|v| v.as_str()) == Some("dns");
+            let reason = [
+                event.get("policy").and_then(|v| v.as_str()).map(|p| format!("policy {p}")),
+                event.get("reason").and_then(|v| v.as_str()).map(str::to_string),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("; ");
+            let entry = ProxyTrafficEntry {
+                ts,
+                sandbox_id: Some(*sandbox_id),
+                host: host.to_string(),
+                port,
+                protocol: Some(if dns { "dns" } else { "tcp" }.to_string()),
+                method: None,
+                path: None,
+                status: None,
+                duration_ms: None,
+                bytes_in: 0,
+                bytes_out: 0,
+                client: event.get("binary").and_then(|v| v.as_str()).map(str::to_string),
+                listener: Some("openshell".to_string()),
+                connect: None,
+                sni: None,
+                app_protocol: None,
+                user_agent: None,
+                request_id: Some(format!(
+                    "osh:{}:{}:{}:{}:{}",
+                    sandbox_id,
+                    (seconds * 1000.0) as i64,
+                    host,
+                    port.unwrap_or(0),
+                    decision
+                )),
+                decision: Some(decision.to_string()),
+                reason: if reason.is_empty() { None } else { Some(reason) },
+                rule_id: None,
+                mcp_session_id: None,
+                mcp_method: None,
+                mcp_tool: None,
+                mcp_server: None,
+                request_body: None,
+                response_body: None,
+            };
+            if let Ok(item) = prepare_traffic(&entry, environment_id, now) {
+                prepared.push(item);
+            }
+        }
+        if prepared.is_empty() {
+            continue;
+        }
+        let events: Vec<store::BatchEvent<'_>> = prepared
+            .iter()
+            .map(|item| store::BatchEvent {
+                id: item.id,
+                environment_id,
+                sandbox_id: item.sandbox_id,
+                gateway_id: None,
+                kind: item.kind,
+                source: Some("openshell"),
+                ts: item.ts,
+                detail: item.detail.clone(),
+            })
+            .collect();
+        let stored = store::insert_batch(&ctx.pool, environment_id, &events)
+            .await
+            .map_err(ApiError::from)?;
+        // Only decisions that were not stored before are announced live.
+        if stored > 0 {
+            for item in &prepared {
+                ctx.bus.publish(LiveEvent::Telemetry(item.live.clone()));
+            }
+        }
+        stored_total += stored as u64;
+    }
+    Ok(stored_total)
+}
