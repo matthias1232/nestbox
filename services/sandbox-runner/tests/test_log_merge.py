@@ -29,6 +29,15 @@ class MergeTest(unittest.TestCase):
         self.assertEqual(len(lines), 2)
         self.assertIn("Traceback File x", lines[0])
 
+    def test_the_runtime_heartbeat_does_not_bury_the_log(self):
+        agent = (
+            "2026-10-29T13:55:01.000000000Z 2026-10-29T13:55:01.000Z OCSF CONFIG:UNKNOWN [INFO] Provider file snapshot updated [file_count:0]\n"
+            "2026-10-29T13:55:02.000000000Z real output\n"
+        )
+        lines = log_merge.merge(agent, "", 10).splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertIn("real output", lines[0])
+
     def test_garbage_is_ignored_not_fatal(self):
         self.assertEqual(log_merge.merge("", "no timestamp here\n\n", 5), "")
 
