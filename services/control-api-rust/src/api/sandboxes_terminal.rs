@@ -20,11 +20,12 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::header::{HOST, ORIGIN};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use uuid::Uuid;
+use serde::Deserialize;
 
 use crate::api::principal::Auth;
 use crate::domain::auth::CredentialSource;
@@ -36,11 +37,15 @@ use crate::state::AppState;
 /// inspects the upgrade sees a protocol rather than a bare socket.
 const SUBPROTOCOL: &str = "nestbox-terminal";
 
+#[derive(Debug, Deserialize)]
+pub struct TerminalQuery { pub tab: Option<String> }
+
 /// Attach a terminal to a sandbox.
 pub async fn terminal(
     State(state): State<AppState>,
     auth: Auth,
     Path(id): Path<Uuid>,
+    Query(query): Query<TerminalQuery>,
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
@@ -55,7 +60,11 @@ pub async fn terminal(
     // quota that is full — happens here, while an HTTP status code is still
     // possible. A WebSocket that upgrades and then closes is a worse answer than
     // a 429 with a message.
-    let ticket = terminal_service::open(&state.services, &auth.principal, id, limits).await?;
+    let tab_id = query.tab.unwrap_or_else(|| Uuid::new_v4().simple().to_string());
+    if tab_id.len() > 64 || !tab_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_') {
+        return Err(ApiError::validation("Terminal tab ids contain only letters, digits, dashes, and underscores."));
+    }
+    let ticket = terminal_service::open(&state.services, &auth.principal, id, limits, tab_id).await?;
 
     let services = state.services.clone();
     let upgrade = upgrade

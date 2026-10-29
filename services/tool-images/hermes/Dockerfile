@@ -16,7 +16,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates curl git python3 nodejs npm jq less procps htop ripgrep vim \
+        ca-certificates curl git python3 nodejs npm jq less procps htop ripgrep vim tmux \
         libatomic1 \
     && rm -rf /var/lib/apt/lists/*
 

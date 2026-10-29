@@ -221,6 +221,7 @@ pub struct Ticket {
     pub environment_id: Uuid,
     pub limits: Limits,
     pub opened_at: chrono::DateTime<chrono::Utc>,
+    pub tab_id: String,
 }
 
 /// What a finished session did, for the log and the return value.
@@ -241,6 +242,7 @@ pub async fn open(
     principal: &Principal,
     sandbox_id: Uuid,
     limits: Limits,
+    tab_id: String,
 ) -> Result<Ticket, ApiError> {
     require(principal, Permission::SandboxExec)?;
 
@@ -369,6 +371,7 @@ pub async fn open(
         environment_id: principal.environment_id,
         limits,
         opened_at,
+        tab_id,
     })
 }
 
@@ -382,7 +385,7 @@ pub async fn attach(
     ticket: &Ticket,
     client: &mut dyn ClientSocket,
 ) -> Result<SessionOutcome, ApiError> {
-    let mut terminal = match ctx.runtime.open_terminal(&ticket.sandbox_name).await {
+    let mut terminal = match ctx.runtime.open_terminal(&ticket.sandbox_name, &ticket.tab_id).await {
         Ok(terminal) => terminal,
         Err(error) => {
             let failure = runtime_failure(error);
