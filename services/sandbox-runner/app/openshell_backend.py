@@ -39,8 +39,8 @@ def run(args: list[str], *, timeout: float = DEFAULT_TIMEOUT, env: dict[str, str
     except subprocess.TimeoutExpired as exc:
         raise OpenShellError(f"openshell {args[0]} did not finish within {timeout:.0f}s") from exc
     if done.returncode != 0:
-        message = (done.stderr or done.stdout).strip().splitlines()
-        raise OpenShellError(message[-1] if message else f"openshell exited {done.returncode}")
+        text = " ".join(part.strip(" │├─╰×") for part in (done.stderr or done.stdout).strip().splitlines())
+        raise OpenShellError(" ".join(text.split())[:900] or f"openshell exited {done.returncode}")
     return done.stdout
 
 
