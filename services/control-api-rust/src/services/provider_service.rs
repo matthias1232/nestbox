@@ -17,7 +17,6 @@ use crate::domain::model_install::ModelInstall;
 use crate::domain::node::Node;
 use crate::domain::provider::{ProviderKind, ProviderProfile, ProviderStatus};
 use crate::error::{ApiError, ErrorCode, StoreError};
-use crate::security::secrets;
 use crate::store::TenantScope;
 use crate::store::postgres::providers as store;
 
@@ -348,15 +347,15 @@ pub async fn probe(
 /// listening".
 pub(crate) async fn measure(ctx: &ServiceContext, profile: &ProviderProfile) -> ProbeResult {
     let credential = match profile.secret_ref.as_deref() {
-        Some(locator) => match secrets::resolve(locator, &ctx.secret_dir) {
+        Some(locator) => match crate::services::secret_service::credential(ctx, profile.environment_id, locator).await {
             Ok(value) => Some(value),
-            Err(error) => {
+            Err(message) => {
                 return ProbeResult {
                     reachable: false,
                     credential_configured: true,
                     status: None,
                     model_count: None,
-                    detail: error.message().to_string(),
+                    detail: message,
                 };
             }
         },
@@ -456,15 +455,15 @@ pub async fn inference_environment(
     environment.insert("HERMES_PROVIDER".to_string(), "openai".to_string());
 
     match profile.secret_ref.as_deref() {
-        Some(locator) => match secrets::resolve(locator, &ctx.secret_dir) {
+        Some(locator) => match crate::services::secret_service::credential(ctx, environment_id, locator).await {
             Ok(value) => {
                 environment.insert("OPENAI_API_KEY".to_string(), value);
             }
-            Err(error) => {
+            Err(reason) => {
                 // Logged without the locator: even a path can disclose layout.
                 tracing::warn!(
                     provider = %profile.name,
-                    reason = error.message(),
+                    reason = %reason,
                     "provider credential could not be resolved; sandbox gets no inference key"
                 );
             }
@@ -536,9 +535,13 @@ async fn model_environment_for_pack(
                     Ok(BTreeMap::new())
                 };
             };
-            let key = match profile.secret_ref.as_deref().map(|locator| secrets::resolve(locator, &ctx.secret_dir)) {
-                Some(Ok(value)) => value,
-                _ => {
+            let key = match &profile.secret_ref {
+                Some(locator) => crate::services::secret_service::credential(ctx, environment_id, locator).await.ok(),
+                None => None,
+            };
+            let key = match key {
+                Some(value) => value,
+                None => {
                     tracing::warn!(provider = %profile.name, "gateway credential could not be resolved; sandbox gets no endpoint");
                     return Ok(BTreeMap::new());
                 }
@@ -551,11 +554,11 @@ async fn model_environment_for_pack(
 
 /// Reject a locator this phase cannot resolve, at write time.
 fn validate_locator(locator: &str) -> Result<(), ApiError> {
-    if !locator.starts_with("file://") {
+    if !(locator.starts_with("file://") || locator.starts_with("db://")) {
         return Err(ApiError::new(
             axum::http::StatusCode::UNPROCESSABLE_ENTITY,
             ErrorCode::SECRET_UNRESOLVABLE,
-            "Only file:// secret locators are supported in this phase.",
+            "A secret locator is file://<path> or db://<name> of a stored key.",
         ));
     }
     if locator.len() <= "file://".len() {

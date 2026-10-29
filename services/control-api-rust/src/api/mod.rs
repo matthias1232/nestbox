@@ -19,6 +19,7 @@ pub mod persistent_roots;
 pub mod policies;
 pub mod principal;
 pub mod providers;
+pub mod secrets;
 pub mod recipes;
 pub mod sandbox_agents;
 pub mod sandboxes;
@@ -294,6 +295,8 @@ pub fn router(state: AppState) -> Router {
                 .delete(providers::delete),
         )
         .route("/api/v1/providers/{id}/probe", post(providers::probe))
+        .route("/api/v1/secrets", get(secrets::list).post(secrets::put))
+        .route("/api/v1/secrets/{id}", axum::routing::delete(secrets::delete))
         // Models
         .route("/api/v1/models", get(models::catalog))
         .route("/api/v1/models/installed", get(models::installed))

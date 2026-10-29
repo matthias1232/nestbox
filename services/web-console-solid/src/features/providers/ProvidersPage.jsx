@@ -14,6 +14,7 @@ import { For, Show, createMemo, createSignal, onMount } from 'solid-js';
 import StatusBadge from '../../components/StatusBadge.jsx';
 import { ApiError } from '../../api/client.js';
 import * as api from '../../api/providers.js';
+import * as vault from '../../api/secrets.js';
 import * as models from '../../api/models.js';
 import '../../styles/providers-status.css';
 
@@ -103,15 +104,20 @@ export default function ProvidersPage() {
   const [form, setForm] = createSignal({ ...blank });
   const [editing, setEditing] = createSignal(null);
   const [busy, setBusy] = createSignal(false);
+  // Stored keys (write-only: the list never carries a value) and the add/rotate form.
+  const [keys, setKeys] = createSignal([]);
+  const [keyForm, setKeyForm] = createSignal({ name: '', kind: 'api_key', value: '' });
 
   onMount(load);
 
   async function load() {
     setError(null);
-    const [profiles, installList] = await Promise.allSettled([
+    const [profiles, installList, keyList] = await Promise.allSettled([
       api.list(),
       models.installs(),
+      vault.list(),
     ]);
+    setKeys(keyList.status === 'fulfilled' ? keyList.value?.items || [] : []);
 
     if (profiles.status === 'fulfilled') {
       setItems(profiles.value.items || []);
@@ -151,6 +157,39 @@ export default function ProvidersPage() {
     if (status() === 'all') return items();
     return items().filter((profile) => statusOf(profile) === status());
   });
+
+  async function saveKey(event) {
+    event.preventDefault();
+    setError(null);
+    setNotice(null);
+    const body = keyForm();
+    try {
+      const stored = await vault.put({ name: body.name.trim(), kind: body.kind, value: body.value });
+      setKeyForm({ name: '', kind: 'api_key', value: '' });
+      setNotice(`Key “${stored.name}” stored (ends …${stored.last4}). The value is not shown again.`);
+      await load();
+    } catch (failure) {
+      setError(failure.message);
+    }
+  }
+
+  async function removeKey(item) {
+    if (!window.confirm(`Delete the stored key "${item.name}"? This cannot be undone.`)) return;
+    setError(null);
+    try {
+      await vault.remove(item.id);
+      setNotice(`Key “${item.name}” deleted.`);
+      await load();
+    } catch (failure) {
+      setError(failure.message);
+    }
+  }
+
+  // Rotating is putting a new value under the same name: providers keep working.
+  function rotate(item) {
+    setKeyForm({ name: item.name, kind: item.kind, value: '' });
+    document.getElementById('key-value')?.focus();
+  }
 
   async function submit(event) {
     event.preventDefault();
@@ -445,9 +484,10 @@ export default function ProvidersPage() {
                    onInput={(e) => setEditing({ ...editing(), model: e.currentTarget.value })} />
           </label>
           <label class="field">
-            <span>Secret locator (never the value)</span>
-            <input value={editing().secret_ref || ''}
-                   onInput={(e) => setEditing({ ...editing(), secret_ref: e.currentTarget.value })} />
+            <span>API key</span>
+            <KeyPicker keys={keys()} value={editing().secret_ref || ''}
+                       onChange={(value) => setEditing({ ...editing(), secret_ref: value })} />
+            <small class="muted">The key this provider is called with. Add keys in “API keys” above; the value is never shown again.</small>
           </label>
           <div class="actions">
             <button type="submit">Save</button>
@@ -456,11 +496,79 @@ export default function ProvidersPage() {
         </form>
       </Show>
 
+      <section class="editor key-store">
+        <h3>API keys</h3>
+        <p class="muted small">
+          Keys are stored encrypted (AES-256-GCM) and are <b>write-only</b>: once saved, only the last
+          four characters are ever shown. A provider uses a key by name. To change a key, rotate it:
+          save a new value under the same name and every provider that uses it keeps working.
+        </p>
+        <Show when={keys().length > 0} fallback={<p class="muted">No keys stored yet.</p>}>
+          <div class="table-scroll">
+            <table class="dense">
+              <thead>
+                <tr><th>Name</th><th>Kind</th><th>Ends in</th><th>Used by</th><th>Updated</th><th>Last used</th><th /></tr>
+              </thead>
+              <tbody>
+                <For each={keys()}>
+                  {(item) => (
+                    <tr>
+                      <td class="mono">{item.name}</td>
+                      <td>{item.kind}</td>
+                      <td class="mono">…{item.last4}</td>
+                      <td>{item.used_by} provider{item.used_by === 1 ? '' : 's'}</td>
+                      <td class="small">{relative(item.updated_at)}</td>
+                      <td class="small">{item.last_used_at ? relative(item.last_used_at) : 'never'}</td>
+                      <td class="actions">
+                        <button class="tiny" onClick={() => rotate(item)}>Rotate</button>
+                        <button class="tiny danger" disabled={item.used_by > 0}
+                                title={item.used_by > 0 ? 'A provider still uses this key' : 'Delete this key'}
+                                onClick={() => removeKey(item)}>Delete</button>
+                      </td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </div>
+        </Show>
+        <form onSubmit={saveKey}>
+          <div class="form-grid">
+            <label class="field">
+              <span>Name</span>
+              <input value={keyForm().name} required placeholder="openai-main"
+                     onInput={(e) => setKeyForm({ ...keyForm(), name: e.currentTarget.value })} />
+              <small class="muted">Lowercase letters, digits, dots, dashes, underscores. Example: <code>anthropic-team</code>.</small>
+            </label>
+            <label class="field">
+              <span>Kind</span>
+              <select value={keyForm().kind}
+                      onChange={(e) => setKeyForm({ ...keyForm(), kind: e.currentTarget.value })}>
+                <option value="api_key">API key</option>
+                <option value="token">Token</option>
+                <option value="password">Password</option>
+              </select>
+              <small class="muted">What it is, for your own overview. It does not change how it is stored.</small>
+            </label>
+            <label class="field">
+              <span>Value</span>
+              <input id="key-value" type="password" autocomplete="off" required minlength="8"
+                     value={keyForm().value} placeholder="sk-…"
+                     onInput={(e) => setKeyForm({ ...keyForm(), value: e.currentTarget.value })} />
+              <small class="muted">One line, 8 to 8192 characters. It is sent once and never shown again.</small>
+            </label>
+          </div>
+          <div class="actions">
+            <button type="submit">Save key</button>
+          </div>
+        </form>
+      </section>
+
       <form class="editor" onSubmit={submit}>
         <h3>Register a provider</h3>
         <p class="muted small">
-          A credential is a file on the host, mode 0600. This form records where it
-          is, never what it is.
+          A provider is an endpoint plus the key it is called with. Keys live encrypted in the
+          secret store; this form only points at one.
         </p>
         <div class="form-grid">
           <label class="field">
@@ -486,9 +594,10 @@ export default function ProvidersPage() {
                    onInput={(e) => setForm({ ...form(), model: e.currentTarget.value })} />
           </label>
           <label class="field">
-            <span>Secret locator</span>
-            <input value={form().secret_ref}
-                   onInput={(e) => setForm({ ...form(), secret_ref: e.currentTarget.value })} />
+            <span>API key</span>
+            <KeyPicker keys={keys()} value={form().secret_ref}
+                       onChange={(value) => setForm({ ...form(), secret_ref: value })} />
+            <small class="muted">Pick a stored key (add one in “API keys” above), or none for a local model.</small>
           </label>
         </div>
         <div class="actions">
@@ -496,5 +605,40 @@ export default function ProvidersPage() {
         </div>
       </form>
     </section>
+  );
+}
+
+
+// Which key a provider uses: a stored one, none, or a file on the host.
+function KeyPicker(props) {
+  const mode = () => {
+    const ref = props.value || '';
+    if (!ref) return 'none';
+    if (ref.startsWith('db://')) return 'stored';
+    return 'file';
+  };
+  return (
+    <div class="key-picker">
+      <select
+        value={mode() === 'stored' ? props.value : mode() === 'file' ? '__file' : ''}
+        onChange={(e) => {
+          const value = e.currentTarget.value;
+          props.onChange(value === '__file' ? 'file:///secrets/' : value);
+        }}
+      >
+        <option value="">No credential (a local model needs none)</option>
+        <For each={props.keys}>
+          {(item) => <option value={item.locator}>{item.name} · ends …{item.last4}</option>}
+        </For>
+        <option value="__file">A file on the host…</option>
+      </select>
+      <Show when={mode() === 'file'}>
+        <input
+          value={props.value}
+          placeholder="file:///secrets/provider_key"
+          onInput={(e) => props.onChange(e.currentTarget.value)}
+        />
+      </Show>
+    </div>
   );
 }

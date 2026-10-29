@@ -9,5 +9,6 @@ pub mod password;
 pub mod redaction;
 pub mod secrets;
 pub mod session;
+pub mod vault;
 
 pub use redaction::{redact, redact_json};
