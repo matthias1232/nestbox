@@ -170,6 +170,12 @@ static_resources:
                             envoy.filters.http.buffer:
                               "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.BufferPerRoute
                               disabled: true
+                            # The Lua filter asks the control API about a tunnel itself
+                            # (`check_tunnel` in mcp.lua): ext_authz cannot carry a
+                            # CONNECT to an HTTP authorization service.
+                            envoy.filters.http.ext_authz:
+                              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
+                              disabled: true
                         # Plain HTTP: host from `:authority`, no CONNECT.
                         - match: { prefix: "/" }
                           route:
@@ -192,7 +198,7 @@ static_resources:
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
                       default_source_code:
-                        filename: /etc/envoy/extensions/mcp.lua
+                        filename: /tmp/mcp.lua
                   - name: envoy.filters.http.ext_authz
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
@@ -353,7 +359,7 @@ static_resources:
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
                       default_source_code:
-                        filename: /etc/envoy/extensions/mcp.lua
+                        filename: /tmp/mcp.lua
                   - name: envoy.filters.http.ext_authz
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
