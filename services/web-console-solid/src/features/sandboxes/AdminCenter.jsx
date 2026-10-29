@@ -17,6 +17,7 @@
 
 import { Show, For, createSignal, createEffect, onCleanup } from 'solid-js';
 import Tabs from '../../components/Tabs.jsx';
+import TabBoundary from '../../components/TabBoundary.jsx';
 import StatusBadge from '../../components/StatusBadge.jsx';
 import * as api from '../../api/sandboxes.js';
 import DashboardTab from './DashboardTab.jsx';
@@ -163,7 +164,9 @@ export default function AdminCenter(props) {
           <For each={TABS}>
             {(entry) => (
               <Show when={entry.id === tab()}>
-                <entry.component sandbox={sandbox()} revision={revision()} reload={reload} />
+                <TabBoundary>
+                  <entry.component sandbox={sandbox()} revision={revision()} reload={reload} />
+                </TabBoundary>
               </Show>
             )}
           </For>

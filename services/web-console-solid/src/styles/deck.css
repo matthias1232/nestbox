@@ -14,6 +14,9 @@
 .deck-facts dd { margin: 0; }
 .spark { width: 100%; height: 48px; }
 .spark path { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+/* A failed tab renders here instead of blanking the sandbox view. */
+.tab-boundary { border: 1px solid var(--border); border-left: 3px solid var(--bad); border-radius: var(--radius); padding: var(--space-3); background: var(--bg-raised); }
+.tab-boundary p { margin: 0 0 var(--space-2); }
 .term-wrap { background: #000; border: 1px solid var(--border); border-radius: var(--radius); padding: 6px; height: 460px; }
 .term-wrap .xterm { height: 100%; }
 .resource-form { display: flex; gap: var(--space-3); flex-wrap: wrap; align-items: end; }
