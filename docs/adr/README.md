@@ -43,6 +43,7 @@ supersedes the old one and note the supersession in both files.
 | [0033](0033-published-ports-are-held-open-by-the-runner.md) | Published ports are held open by the runner, and SSH is answered by it | Accepted |
 | [0034](0034-the-proxy-identifies-by-address-and-asks-before-it-tunnels.md) | The proxy identifies a sandbox by its address, and asks before it tunnels | Accepted |
 | [0035](0035-a-sandbox-is-administered-live-and-starts-connected.md) | A sandbox is administered live, and its agent starts connected | Accepted |
+| [0036](0036-sandboxes-run-on-openshell.md) | Sandboxes run on the NVIDIA OpenShell gateway | Accepted |
 
 ## Writing a new ADR
 
