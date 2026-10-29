@@ -1319,6 +1319,73 @@ pub struct NetworkRuleSeed {
     pub matchers: Vec<Matcher>,
 }
 
+/// Priorities of rules that come from a policy document. They sit behind every
+/// stored rule (whose default is 100), so an operator's explicit rule always wins
+/// over the document it was made next to, and a deny in the document is read
+/// before an allow in it.
+pub const DOCUMENT_DENY_PRIORITY: i32 = 500;
+pub const DOCUMENT_ALLOW_PRIORITY: i32 = 1000;
+
+/// The rules a policy document grants, as the decider reads them.
+///
+/// The document's `network_policies` section used to be inert for egress: an
+/// assignment wrote a row and the decider read only `network_rules`, so a sandbox
+/// with the "safe defaults" policy could reach nothing it was meant to. The rules
+/// are compiled here, at decision time, from the current document, so editing a
+/// policy changes the answer within the proxy's cache TTL with nothing to sync.
+///
+/// They carry the nil id: they are not rows, and a decision that cites one records
+/// no rule id rather than an id that points at nothing.
+pub fn rules_from_policy(policy: &Policy) -> Vec<NetworkRule> {
+    rules_from_document(&policy.spec)
+        .into_iter()
+        .enumerate()
+        .map(|(index, seed)| NetworkRule {
+            id: Uuid::nil(),
+            environment_id: policy.environment_id,
+            policy_id: Some(policy.id),
+            sandbox_id: None,
+            name: format!("{}: {}", policy.name, seed.name),
+            priority: match seed.action {
+                RuleAction::Deny => DOCUMENT_DENY_PRIORITY,
+                RuleAction::Allow => DOCUMENT_ALLOW_PRIORITY,
+            } + i32::try_from(index).unwrap_or(0),
+            action: seed.action,
+            host: seed.host,
+            port: seed.port,
+            protocol: seed.protocol,
+            methods: seed.methods,
+            binaries: seed.binaries,
+            matchers: seed.matchers,
+            enforcement: seed.enforcement,
+            enabled: true,
+            version: policy.version,
+        })
+        .collect()
+}
+
+/// The stored rules that apply to one sandbox.
+///
+/// A rule on a sandbox applies to that sandbox. A rule with neither a sandbox nor
+/// a policy applies to everyone. A rule on a policy applies only to the sandboxes
+/// that carry that policy (or to all of them while it is the global override); the
+/// decider used to treat it as applying to everyone, which made "add a rule to
+/// policy A" quietly open policy B's sandboxes.
+pub fn rules_for_sandbox_view(
+    rules: Vec<NetworkRule>,
+    sandbox_id: Uuid,
+    governing_policy: Option<Uuid>,
+) -> Vec<NetworkRule> {
+    rules
+        .into_iter()
+        .filter(|rule| match (rule.sandbox_id, rule.policy_id) {
+            (Some(target), _) => target == sandbox_id,
+            (None, None) => true,
+            (None, Some(policy)) => Some(policy) == governing_policy,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1665,5 +1732,49 @@ mod tests {
         assert_eq!(flat.protocol, RuleProtocol::Rest);
         assert_eq!(flat.methods, vec!["GET".to_string()]);
         assert_eq!(flat.binaries, vec!["/usr/local/bin/agent".to_string()]);
+    }
+
+    #[test]
+    fn a_policy_document_becomes_rules_behind_the_stored_ones() {
+        let policy = Policy {
+            id: Uuid::new_v4(),
+            environment_id: Uuid::nil(),
+            name: "defaults".into(),
+            scope: PolicyScope::Sandbox,
+            spec: json!({ "network_policies": { "models": { "endpoints": [
+                { "host": "api.anthropic.com", "port": 443, "access": "allow" },
+                { "host": "evil.example", "access": "deny" }
+            ], "enforcement": "enforced" } } }),
+            version: 3,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let rules = rules_from_policy(&policy);
+        assert_eq!(rules.len(), 2);
+        let allow = rules.iter().find(|r| r.host == "api.anthropic.com").expect("allow");
+        let deny = rules.iter().find(|r| r.host == "evil.example").expect("deny");
+        assert!(allow.priority >= DOCUMENT_ALLOW_PRIORITY && deny.priority < allow.priority);
+        assert!(allow.priority > 100, "an operator's own rule (default 100) is read first");
+        assert_eq!(allow.id, Uuid::nil());
+        assert_eq!(allow.policy_id, Some(policy.id));
+    }
+
+    #[test]
+    fn a_rule_on_a_policy_applies_only_to_sandboxes_that_carry_it() {
+        let sandbox = Uuid::new_v4();
+        let (mine, other) = (Uuid::new_v4(), Uuid::new_v4());
+        let mk = |policy: Option<Uuid>, target: Option<Uuid>| NetworkRule {
+            id: Uuid::new_v4(), environment_id: Uuid::nil(), policy_id: policy, sandbox_id: target,
+            name: "r".into(), action: RuleAction::Allow, host: "h".into(), port: None,
+            protocol: RuleProtocol::Tcp, methods: vec![], binaries: vec![], matchers: vec![],
+            enforcement: Enforcement::Enforced, priority: 100, enabled: true, version: 1,
+        };
+        let kept = rules_for_sandbox_view(
+            vec![mk(Some(mine), None), mk(Some(other), None), mk(None, None), mk(None, Some(sandbox)), mk(None, Some(Uuid::new_v4()))],
+            sandbox,
+            Some(mine),
+        );
+        assert_eq!(kept.len(), 3, "mine, global, and this sandbox's own");
+        assert!(rules_for_sandbox_view(vec![mk(Some(mine), None)], sandbox, None).is_empty());
     }
 }

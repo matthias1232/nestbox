@@ -1004,9 +1004,33 @@ pub async fn rules_for_sandbox(
     let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
         .await
         .map_err(ApiError::from)?;
-    let rules = store::rules_for_sandbox(&mut scope, sandbox_id)
-        .await
-        .map_err(ApiError::from)?;
+    // The effective view: exactly the rules the decider reads for this sandbox,
+    // in the order it reads them (stored rules, then those compiled from the
+    // governing policy's document). Showing only the sandbox's own rows hid the
+    // policy that does most of the work.
+    let governing = match store::global(&mut scope).await.map_err(ApiError::from)? {
+        Some(global) => Some(global),
+        None => match store::assignment_for_sandbox(&mut scope, sandbox_id)
+            .await
+            .map_err(ApiError::from)?
+        {
+            Some(assignment) => Some(
+                store::get(&mut scope, assignment.policy_id)
+                    .await
+                    .map_err(ApiError::from)?,
+            ),
+            None => None,
+        },
+    };
+    let mut rules = crate::domain::policy::rules_for_sandbox_view(
+        store::list_rules(&mut scope).await.map_err(ApiError::from)?,
+        sandbox_id,
+        governing.as_ref().map(|policy| policy.id),
+    );
+    if let Some(policy) = &governing {
+        rules.extend(crate::domain::policy::rules_from_policy(policy));
+    }
+    rules.sort_by_key(|rule| rule.priority);
     scope.commit().await.map_err(ApiError::from)?;
     Ok(rules)
 }
@@ -1130,7 +1154,32 @@ pub async fn check(ctx: &ServiceContext, input: CheckInput) -> Result<CheckOutco
         .await
         .map_err(ApiError::from)?;
 
-    let rules = store::list_rules(&mut scope).await.map_err(ApiError::from)?;
+    // Which policy governs this sandbox: the global override when there is one,
+    // otherwise the one assigned to it. Its document is compiled into rules here
+    // (`rules_from_policy`), and stored rules are narrowed to the ones that apply
+    // to this sandbox, so what the operator edits is what the proxy enforces.
+    let governing = match store::global(&mut scope).await.map_err(ApiError::from)? {
+        Some(global) => Some(global),
+        None => match store::assignment_for_sandbox(&mut scope, sandbox_id)
+            .await
+            .map_err(ApiError::from)?
+        {
+            Some(assignment) => Some(
+                store::get(&mut scope, assignment.policy_id)
+                    .await
+                    .map_err(ApiError::from)?,
+            ),
+            None => None,
+        },
+    };
+    let mut rules = crate::domain::policy::rules_for_sandbox_view(
+        store::list_rules(&mut scope).await.map_err(ApiError::from)?,
+        sandbox_id,
+        governing.as_ref().map(|policy| policy.id),
+    );
+    if let Some(policy) = &governing {
+        rules.extend(crate::domain::policy::rules_from_policy(policy));
+    }
     let windows = egress_store::open_windows(&mut scope, Some(sandbox_id))
         .await
         .map_err(ApiError::from)?;
@@ -1161,7 +1210,12 @@ pub async fn check(ctx: &ServiceContext, input: CheckInput) -> Result<CheckOutco
         rules,
         windows,
     };
-    let response = decide(&request, &policy, now);
+    let mut response = decide(&request, &policy, now);
+    // A rule compiled from a document has no row; a decision must not cite an id
+    // that points at nothing.
+    if response.rule_id == Some(Uuid::nil()) {
+        response.rule_id = None;
+    }
 
     egress_store::record_decision(
         &mut scope,
