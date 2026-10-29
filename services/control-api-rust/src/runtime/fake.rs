@@ -69,6 +69,8 @@ pub struct FakeRuntime {
     /// them, so a test can assert what the service asked for.
     models: Mutex<BTreeMap<String, ModelServe>>,
     downloads: Mutex<Vec<ModelDownload>>,
+    /// CUDA-X image pulls as `(component, images)`.
+    cudax_installs: Mutex<Vec<(String, Vec<String>)>>,
     /// Backup calls as `(verb, backup_id, root_path)`, so a test can assert what was
     /// asked of the node.
     backups: Mutex<Vec<(String, String, String)>>,
@@ -116,6 +118,11 @@ impl FakeRuntime {
     }
 
     /// Artefacts this fake has been asked to fetch, in order.
+    /// What the control plane asked the runner to install, by component.
+    pub fn cudax_installs(&self) -> Vec<(String, Vec<String>)> {
+        lock(&self.cudax_installs).clone()
+    }
+
     pub fn downloads(&self) -> Vec<ModelDownload> {
         lock(&self.downloads).clone()
     }
@@ -443,6 +450,15 @@ impl RuntimeAdapter for FakeRuntime {
             bytes: 1024,
             cached: false,
         })
+    }
+
+    async fn install_libraries(
+        &self,
+        component: &str,
+        images: &[String],
+    ) -> Result<Vec<String>, RuntimeError> {
+        lock(&self.cudax_installs).push((component.to_string(), images.to_vec()));
+        Ok(images.to_vec())
     }
 
     async fn serve_model(&self, request: ModelServe) -> Result<ModelServeResult, RuntimeError> {

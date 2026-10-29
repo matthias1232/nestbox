@@ -72,6 +72,22 @@ pub trait RuntimeAdapter: Send + Sync {
         timeout_seconds: u32,
     ) -> Result<ExecResult, RuntimeError>;
 
+    /// Pull the container images of one CUDA-X component on the node.
+    ///
+    /// The list comes from the component catalog, never from a request body
+    /// directly. An adapter that cannot install libraries says so; it must not
+    /// report success for software it did not fetch.
+    async fn install_libraries(
+        &self,
+        component: &str,
+        images: &[String],
+    ) -> Result<Vec<String>, RuntimeError> {
+        let _ = (component, images);
+        Err(RuntimeError::Unavailable(
+            "this runtime cannot install CUDA-X libraries".to_string(),
+        ))
+    }
+
     /// What the runner's host has: CPU, memory, GPUs, container GPU support.
     ///
     /// Asked of the runner rather than measured here, because the control

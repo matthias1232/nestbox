@@ -7,6 +7,7 @@
 pub mod access;
 pub mod auth;
 pub mod cluster;
+pub mod cudax;
 pub mod events;
 pub mod image_templates;
 pub mod inventory;
@@ -343,6 +344,12 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/models/requirements", get(models::requirements))
         .route("/api/v1/models/installs", get(models::installs))
         .route("/api/v1/models/sync", post(models::sync))
+        // CUDA-X libraries
+        .route("/api/v1/cuda-x/components", get(cudax::components))
+        .route("/api/v1/cuda-x/installs", get(cudax::installs))
+        .route("/api/v1/cuda-x/components/{key}/assign", post(cudax::assign))
+        .route("/api/v1/cuda-x/components/{key}/install", post(cudax::install))
+        .route("/api/v1/cuda-x/components/{key}/remove", post(cudax::remove))
         .route("/api/v1/models/{key}/install", post(models::install))
         .route("/api/v1/models/{key}/uninstall", post(models::uninstall))
         .route("/api/v1/models/{key}/install", patch(models::update_install))

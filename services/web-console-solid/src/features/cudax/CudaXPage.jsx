@@ -1,38 +1,204 @@
-// CUDA-X is its own catalogue. Entries remain disabled until the node reports
-// an NVIDIA container runtime and a compatible CUDA driver; this is intentional
-// so the screen cannot claim an installation or VRAM reservation that the node
-// cannot enforce.
+// CUDA-X is a real catalogue, not a wish list.
+//
+// A component can be assigned and installed on any node. A node without a GPU,
+// an old driver or a missing container runtime produces a warning next to the
+// row and the state `installed_unsupported`; it never disables the action. That
+// is the point of this screen: an operator may prepare a machine before the
+// hardware arrives, and the console must say what will not work instead of
+// pretending the action is impossible.
 
 import { For, Show, createMemo, createSignal, onMount } from 'solid-js';
-import * as models from '../../api/models.js';
-import { gib } from '../../components/ResourceBars.jsx';
-
-const COMPONENTS = [
-  { key: 'cuda-toolkit', name: 'CUDA Toolkit', group: 'Compute & base', description: 'Compiler, runtime and developer tools for CUDA applications.', ram: 2, disk: 6, gpu: false },
-  { key: 'cudnn', name: 'cuDNN', group: 'Deep learning', description: 'Optimised neural-network primitives used by PyTorch and TensorFlow.', ram: 2, disk: 2, gpu: true },
-  { key: 'tensorrt', name: 'TensorRT', group: 'Deep learning', description: 'Optimised inference runtime and engine builder.', ram: 4, disk: 5, gpu: true },
-  { key: 'tensorrt-llm', name: 'TensorRT-LLM', group: 'Deep learning', description: 'LLM inference runtime; model VRAM is reserved separately in Models.', ram: 8, disk: 8, gpu: true },
-  { key: 'nccl', name: 'NCCL', group: 'Deep learning', description: 'Collective communication for multi-GPU training.', ram: 1, disk: 1, gpu: true, multi: true },
-  { key: 'rapids', name: 'RAPIDS', group: 'Data science', description: 'GPU dataframes, machine learning and graph analytics.', ram: 8, disk: 12, gpu: true },
-  { key: 'dali', name: 'NVIDIA DALI', group: 'Data science', description: 'GPU-accelerated data loading and image/video pipelines.', ram: 4, disk: 3, gpu: true },
-  { key: 'triton', name: 'Triton Inference Server', group: 'Serving', description: 'A managed local inference server for assigned models.', ram: 8, disk: 5, gpu: true },
-  { key: 'nemo', name: 'NeMo Framework', group: 'Training', description: 'Training and customisation framework for generative AI.', ram: 16, disk: 15, gpu: true },
-  { key: 'video-codec', name: 'Video Codec SDK', group: 'Graphics & video', description: 'NVENC/NVDEC access for supported NVIDIA GPUs.', ram: 2, disk: 1, gpu: true },
-];
+import * as cudax from '../../api/cudax.js';
+import * as nodesApi from '../../api/nodes.js';
 
 export default function CudaXPage() {
-  const [hardware, setHardware] = createSignal(null);
+  const [components, setComponents] = createSignal([]);
+  const [installs, setInstalls] = createSignal([]);
+  const [nodes, setNodes] = createSignal([]);
+  const [node, setNode] = createSignal('');
   const [search, setSearch] = createSignal('');
   const [error, setError] = createSignal(null);
-  const capable = () => Boolean(hardware()?.container_gpu && hardware()?.has_gpu);
-  async function probe() { setError(null); try { setHardware(await models.hardware(true)); } catch (failure) { setError(failure.message); } }
-  onMount(probe);
-  const visible = createMemo(() => { const n = search().trim().toLowerCase(); return COMPONENTS.filter((c) => !n || `${c.name} ${c.group} ${c.description}`.toLowerCase().includes(n)); });
-  return <section class="page"><header class="page-head"><div><h1>CUDA-X</h1><p class="muted">NVIDIA compute libraries are managed separately from models and skills. Requirements come before any installation action.</p></div><button class="secondary" onClick={probe}>Probe node again</button></header>
-    <Show when={error()}><p class="error">{error()}</p></Show>
-    <Show when={hardware()}><div class="oc-box"><b>{hardware().node}</b> · {hardware().cpu_cores || 'unknown'} CPU cores · {gib(hardware().system_ram_bytes || 0)} RAM · {hardware().gpu_count || 0} GPU(s) · {gib(hardware().total_vram_bytes || hardware().unified_memory_bytes || 0)} GPU/unified memory<div class="muted small">{capable() ? `Container GPU enabled · CUDA ${hardware().cuda_version || 'version not reported'} · driver ${hardware().driver_version || 'not reported'}` : `Unavailable for installation: ${hardware().note || 'this node does not offer a container-addressable NVIDIA GPU.'}`}</div></div></Show>
-    <p class="notice">Download/installation is disabled until the image-builder has a verified, version-pinned CUDA-X artifact source. This avoids installing unverified binaries into a sandbox. Resource figures are planning minima; model VRAM reservations stay on the Models page.</p>
-    <label class="field"><span>Find a CUDA-X component</span><input value={search()} placeholder="TensorRT, video, training …" onInput={(e) => setSearch(e.currentTarget.value)} /></label>
-    <div class="table-scroll"><table><thead><tr><th>Component</th><th>What it is for</th><th>Minimum host need</th><th>Node status</th><th>Install / assign</th></tr></thead><tbody><For each={visible()}>{(item) => <tr><td><b>{item.name}</b><div class="muted small">{item.group}</div></td><td class="small">{item.description}</td><td class="small">{item.gpu ? 'NVIDIA GPU · ' : ''}{item.multi ? 'multi-GPU · ' : ''}{item.ram} GiB RAM · {item.disk} GiB disk</td><td>{item.gpu && !capable() ? <span class="badge warn"><i />GPU unavailable</span> : <span class="badge"><i />catalogued</span>}</td><td><button class="tiny" disabled title="A verified artifact source and reproducible image build are required before this is enabled.">Download & assign</button></td></tr>}</For></tbody></table></div>
-  </section>;
+  const [notice, setNotice] = createSignal(null);
+  const [busy, setBusy] = createSignal('');
+  const [force, setForce] = createSignal({});
+
+  async function load() {
+    const [catalog, assigned, machines] = await Promise.all([
+      cudax.components(),
+      cudax.installs(node() || undefined),
+      nodesApi.list(),
+    ]);
+    setComponents(catalog.items || []);
+    setInstalls(assigned.items || []);
+    setNodes(machines.items || []);
+    if (!node() && machines.items?.length) {
+      setNode(machines.items[0].name);
+    }
+  }
+
+  onMount(() => {
+    load().catch((failure) => setError(failure.message));
+  });
+
+  const installationFor = (key) =>
+    installs().find((row) => row.component?.key === key && row.node_name === node());
+
+  const warningsFor = (key) => installationFor(key)?.assessment?.warnings || [];
+
+  const visible = createMemo(() => {
+    const needle = search().trim().toLowerCase();
+    if (!needle) return components();
+    return components().filter((item) =>
+      `${item.name} ${item.key} ${item.category}`.toLowerCase().includes(needle));
+  });
+
+  const summary = createMemo(() => {
+    const rows = installs().filter((row) => row.node_name === node());
+    return {
+      installed: rows.filter((row) => row.state === 'installed').length,
+      unsupported: rows.filter((row) => row.state === 'installed_unsupported').length,
+      failed: rows.filter((row) => row.state === 'failed').length,
+      warnings: rows.reduce((count, row) => count + (row.assessment?.warnings?.length || 0), 0),
+    };
+  });
+
+  async function run(key, action, label) {
+    setBusy(`${action}:${key}`);
+    setError(null);
+    setNotice(null);
+    try {
+      if (action === 'assign') {
+        const result = await cudax.assign(key, node(), Boolean(force()[key]));
+        setNotice(`${result.component?.name || key}: assigned to ${result.node_name}.`);
+      } else if (action === 'install') {
+        const result = await cudax.install(key, node(), Boolean(force()[key]));
+        setNotice(
+          `${result.component}: ${result.state} on ${result.node}` +
+          (result.warnings?.length ? ` — ${result.warnings.length} warning(s).` : '.'),
+        );
+      } else {
+        await cudax.remove(key, node());
+        setNotice(`${key}: assignment removed from ${node()}.`);
+      }
+      await load();
+    } catch (failure) {
+      setError(failure.message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  return (
+    <section class="page">
+      <div class="page-head">
+        <div>
+          <h2>CUDA-X</h2>
+          <p class="muted">
+            Components you can install on a node. Warnings describe what the hardware will not
+            support; they never replace your decision.
+          </p>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <label class="field">
+          <span>Node</span>
+          <select value={node()} onChange={(event) => {
+            setNode(event.currentTarget.value);
+            load().catch((failure) => setError(failure.message));
+          }}>
+            <For each={nodes()}>{(item) => <option value={item.name}>{item.name}</option>}</For>
+          </select>
+        </label>
+        <label class="field">
+          <span>Find a component</span>
+          <input value={search()} placeholder="TensorRT, NCCL, driver …"
+                 onInput={(event) => setSearch(event.currentTarget.value)} />
+        </label>
+        <div class="muted small">
+          {summary().installed} installed · {summary().unsupported} installed with warnings ·{' '}
+          {summary().failed} failed · {summary().warnings} warning(s)
+        </div>
+      </div>
+
+      <Show when={notice()}><p class="notice">{notice()}</p></Show>
+      <Show when={error()}><p class="error">{error()}</p></Show>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Component</th>
+              <th>What it is for</th>
+              <th>Requirements</th>
+              <th>State on {node() || 'this node'}</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <For each={visible()}>{(item) => {
+              const row = () => installationFor(item.key);
+              return (
+                <tr>
+                  <td>
+                    <b>{item.name}</b>
+                    <div class="muted small mono">{item.key} · {item.version}</div>
+                    <Show when={item.docs_url}>
+                      <a class="small" href={item.docs_url} target="_blank" rel="noreferrer">docs</a>
+                    </Show>
+                  </td>
+                  <td class="small">{item.description}</td>
+                  <td class="small mono">
+                    <div>{item.requires_gpu ? 'NVIDIA GPU' : 'no GPU required'}</div>
+                    <Show when={item.min_driver}><div class="muted">driver ≥ {item.min_driver}</div></Show>
+                    <Show when={item.min_cuda}><div class="muted">CUDA ≥ {item.min_cuda}</div></Show>
+                  </td>
+                  <td class="small">
+                    <Show when={row()} fallback={<span class="badge">not assigned</span>}>
+                      <span class={`badge ${row().state === 'failed' ? 'warn' : ''}`}>
+                        <i />{row().state.replaceAll('_', ' ')}
+                      </span>
+                      <For each={warningsFor(item.key)}>
+                        {(warning) => <div class="muted small">{warning}</div>}
+                      </For>
+                      <Show when={row().last_error}>
+                        <div class="error small">{row().last_error}</div>
+                      </Show>
+                    </Show>
+                  </td>
+                  <td class="actions">
+                    <label class="small">
+                      <input type="checkbox" checked={Boolean(force()[item.key])}
+                             onChange={(event) => setForce({ ...force(), [item.key]: event.currentTarget.checked })} />
+                      {' '}force
+                    </label>
+                    <button class="tiny" disabled={busy() !== ''}
+                            onClick={() => run(item.key, 'assign', 'Assign')}>
+                      {row() ? 'Re-assess' : 'Assign'}
+                    </button>
+                    <button class="tiny" disabled={busy() !== ''}
+                            onClick={() => run(item.key, 'install', 'Install')}>
+                      Install
+                    </button>
+                    <Show when={row()}>
+                      <button class="tiny danger" disabled={busy() !== ''}
+                              onClick={() => run(item.key, 'remove', 'Remove')}>
+                        Remove
+                      </button>
+                    </Show>
+                  </td>
+                </tr>
+              );
+            }}</For>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="muted small">
+        Installing pulls the images the catalog declares for the component. Components distributed
+        only as host packages are recorded and reported as unsupported instead of pretending the
+        packages were installed.
+      </p>
+    </section>
+  );
 }

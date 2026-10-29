@@ -209,6 +209,10 @@ pub async fn sync(
 #[derive(Debug, Default, Deserialize)]
 pub struct NodeRequest {
     pub node: Option<String>,
+    /// Install even when the hardware verdict or the free budget says the node
+    /// cannot hold it. The refusal reason is returned and recorded as a warning.
+    #[serde(default)]
+    pub force: bool,
 }
 
 /// Install a model on a node.
@@ -218,9 +222,12 @@ pub async fn install(
     Path(key): Path<String>,
     body: Option<Json<NodeRequest>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let node = body.and_then(|Json(request)| request.node);
+    let (node, force) = body
+        .map(|Json(request)| (request.node, request.force))
+        .unwrap_or((None, false));
     Ok(Json(
-        model_service::install(&state.services, &auth.principal, &key, node.as_deref()).await?,
+        model_service::install(&state.services, &auth.principal, &key, node.as_deref(), force)
+            .await?,
     ))
 }
 

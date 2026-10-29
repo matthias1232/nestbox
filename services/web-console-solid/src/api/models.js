@@ -51,8 +51,8 @@ export function facets() {
  * Install on a node. The answer is the reservation it made, or
  * `422 node.insufficient_resources` naming what the node's other installs hold.
  */
-export function install(key, node) {
-  return request(`models/${key}/install`, { method: 'POST', body: node ? { node } : {} });
+export function install(key, node, force = false) {
+  return request(`models/${key}/install`, { method: 'POST', body: { node, force } });
 }
 
 export function uninstall(key, node) {
