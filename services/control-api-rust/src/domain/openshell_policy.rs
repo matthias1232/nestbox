@@ -14,10 +14,6 @@ use sha2::{Digest, Sha256};
 
 use super::policy::{Enforcement, MatcherKind, NetworkRule, RuleAction, RuleProtocol};
 
-/// The workload's filesystem baseline: what a sandbox may read and write.
-const READ_ONLY: &[&str] = &["/bin", "/usr", "/lib", "/lib64", "/etc", "/var/log", "/opt"];
-const READ_WRITE: &[&str] = &["/tmp", "/home", "/var/tmp", "/workspace", "/data"];
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct Compiled {
     pub document: Value,
@@ -63,12 +59,10 @@ pub fn compile(rules: &[NetworkRule]) -> Compiled {
         }
     }
 
-    let document = json!({
-        "version": 1,
-        "filesystem_policy": { "include_workdir": true, "read_only": READ_ONLY, "read_write": READ_WRITE },
-        "landlock": { "compatibility": "best_effort" },
-        "network_policies": Value::Object(entries),
-    });
+    // Network rules only. Filesystem, Landlock and process settings take effect at
+    // startup and cannot be changed on a live sandbox, so the runner keeps the
+    // sandbox's own and replaces just this section.
+    let document = json!({ "version": 1, "network_policies": Value::Object(entries) });
     Compiled { document, skipped }
 }
 
