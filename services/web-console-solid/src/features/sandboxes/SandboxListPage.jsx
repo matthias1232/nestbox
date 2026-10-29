@@ -4,7 +4,7 @@
 // few pixels. Detail lives in the drawer.
 
 import HostLoad from '../../components/HostLoad.jsx';
-import { For, Show, onMount } from 'solid-js';
+import { For, Show, onCleanup, onMount } from 'solid-js';
 import StatusBadge from '../../components/StatusBadge.jsx';
 import Empty from '../../components/Empty.jsx';
 import Drawer from '../../components/Drawer.jsx';
@@ -12,6 +12,8 @@ import { useSandboxes } from './useSandboxes.js';
 import SandboxDetail from './SandboxDetail.jsx';
 import CreateSandboxForm from './CreateSandboxForm.jsx';
 import ConnectPanel from './ConnectPanel.jsx';
+import LoginBadge from '../../components/LoginBadge.jsx';
+import * as deck from '../../api/deck.js';
 import { createMemo, createSignal } from 'solid-js';
 import { groupStacks, possibleLeads, worstStatus } from './stacks.js';
 import '../../styles/stacks.css';
@@ -25,7 +27,23 @@ export default function SandboxListPage(props) {
   const [connecting, setConnecting] = createSignal(null);
   const [created, setCreated] = createSignal(null);
 
-  onMount(() => state.load({ cursor: null }));
+  // How each running sandbox's agent is signed in. Read apart from the list: it asks each
+  // sandbox, so it is slower and refreshed less often, and a failure leaves the list intact.
+  const [logins, setLogins] = createSignal({});
+  async function loadLogins() {
+    try {
+      const data = await deck.loginSessions();
+      setLogins(Object.fromEntries((data.items || []).map((item) => [item.sandbox_id, item])));
+    } catch {
+      /* the column shows a dash */
+    }
+  }
+  onMount(() => {
+    state.load({ cursor: null });
+    loadLogins();
+    const timer = setInterval(loadLogins, 30000);
+    onCleanup(() => clearInterval(timer));
+  });
 
   // Which stacks are folded shut. Open is the default: a stack that hides its
   // members by default would hide a failing one.
@@ -135,6 +153,7 @@ export default function SandboxListPage(props) {
                         <StatusBadge status={sandbox.supervisor_status || 'unknown'} />
                       </Show>
                     </td>
+                    <td class="small"><LoginBadge entry={logins()[sandbox.id]} /></td>
                     <td class="small">
                       <span class={`runtime-tag ${sandbox.runtime_kind || 'unknown'}`}
                             title={sandbox.runtime_kind === 'openshell'
@@ -275,6 +294,7 @@ export default function SandboxListPage(props) {
                 <th title="The cluster the sandbox belongs to">Cluster</th>
                 <th title="The gateway that carries it, and the node (machine) it runs on">Gateway · node</th>
                 <th title="The service that watches this sandbox from outside and enforces its policy. One per sandbox, not a sandbox itself.">Supervisor</th>
+                <th title="How the agent in the sandbox is signed in: the gateway key, or your own account">Login</th>
                 <th title="What enforces the sandbox">Runtime</th>
                 <th class="narrow">Uptime</th>
                 <th>Actions</th>
