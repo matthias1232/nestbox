@@ -122,7 +122,7 @@ pub async fn ingest(
     names.sort();
     names.dedup();
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let resolved: HashMap<String, Uuid> = store::resolve_sandbox_names(&mut scope, &names)
@@ -161,7 +161,7 @@ pub async fn series(
 ) -> Result<MetricSeries, ApiError> {
     require(principal, Permission::SandboxRead)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     sandbox_store::get(&mut scope, sandbox_id)
@@ -215,7 +215,7 @@ pub async fn processes(
 ) -> Result<ProcessTable, ApiError> {
     require(principal, Permission::SandboxRead)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let sandbox = sandbox_store::get(&mut scope, sandbox_id)

@@ -41,7 +41,7 @@ pub async fn summary(
     principal: &Principal,
 ) -> Result<EnvironmentSummary, ApiError> {
     require(principal, Permission::SandboxRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let summary = env_store::summary(&mut scope).await.map_err(ApiError::from)?;

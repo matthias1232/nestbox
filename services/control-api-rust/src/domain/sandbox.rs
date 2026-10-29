@@ -360,6 +360,11 @@ pub struct SandboxSummary {
     /// False when the runtime could not be reached, so the console can label the
     /// row as "stored state only" instead of showing blanks as zeros.
     pub runtime_available: bool,
+    /// Who owns it: the user who created it. Absent for a shared sandbox.
+    #[serde(default)]
+    pub owner_user_id: Option<Uuid>,
+    #[serde(default)]
+    pub owner_name: Option<String>,
     /// The cluster this sandbox belongs to, by name.
     #[serde(default)]
     pub cluster_name: Option<String>,

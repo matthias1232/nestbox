@@ -216,7 +216,7 @@ pub struct SyncSummary {
 pub async fn start(ctx: &ServiceContext, principal: &Principal) -> Result<SyncSummary, ApiError> {
     require(principal, Permission::ModelInstall)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let job = jobs::create(

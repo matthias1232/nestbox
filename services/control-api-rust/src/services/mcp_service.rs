@@ -203,7 +203,7 @@ impl Validated {
 /// Every server in the registry.
 pub async fn list(ctx: &ServiceContext, principal: &Principal) -> Result<Vec<McpServer>, ApiError> {
     require(principal, Permission::SandboxRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let servers = store::list_servers(&mut scope).await.map_err(ApiError::from)?;
@@ -218,7 +218,7 @@ pub async fn get(
     key: &str,
 ) -> Result<McpServer, ApiError> {
     require(principal, Permission::SandboxRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let server = store::get_server(&mut scope, key)
@@ -237,7 +237,7 @@ pub async fn create(
     require(principal, Permission::SandboxWrite)?;
     let validated = validate(&input, None)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let server = store::insert_server(&mut scope, &validated.definition())
@@ -263,7 +263,7 @@ pub async fn replace(
     require(principal, Permission::SandboxWrite)?;
     let validated = validate(&input, Some(key))?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let server = store::replace_server(&mut scope, &validated.definition())
@@ -284,7 +284,7 @@ pub async fn delete(
     key: &str,
 ) -> Result<(), ApiError> {
     require(principal, Permission::SandboxWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let attached = store::count_attachments(&mut scope, key)
@@ -314,7 +314,7 @@ pub async fn sandbox_servers(
     sandbox_id: Uuid,
 ) -> Result<Vec<SandboxMcpServer>, ApiError> {
     require(principal, Permission::SandboxRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     // The sandbox is checked first, so an unknown id is a 404 rather than an
@@ -336,7 +336,7 @@ pub async fn attach(
     enabled: bool,
 ) -> Result<SandboxMcpServer, ApiError> {
     require(principal, Permission::SandboxWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     load_sandbox(&mut scope, sandbox_id).await?;
@@ -370,7 +370,7 @@ pub async fn detach(
     key: &str,
 ) -> Result<(), ApiError> {
     require(principal, Permission::SandboxWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     store::delete_attachment(&mut scope, sandbox_id, key)
@@ -398,7 +398,7 @@ pub async fn discover(
     key: &str,
 ) -> Result<SandboxMcpServer, ApiError> {
     require(principal, Permission::SandboxWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let sandbox = load_sandbox(&mut scope, sandbox_id).await?;
@@ -463,7 +463,7 @@ pub async fn discover(
         },
     };
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let updated = match (reason, tools) {
@@ -498,7 +498,7 @@ pub async fn calls(
     limit: i64,
 ) -> Result<Vec<McpToolCall>, ApiError> {
     require(principal, Permission::TelemetryRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     load_sandbox(&mut scope, sandbox_id).await?;

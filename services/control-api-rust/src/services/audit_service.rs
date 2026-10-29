@@ -16,7 +16,7 @@ pub async fn list(
     limit: i64,
 ) -> Result<Vec<serde_json::Value>, ApiError> {
     require(principal, Permission::AuditRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let events = audit::list(&mut scope, limit.clamp(1, 500))

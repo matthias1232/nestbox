@@ -135,6 +135,7 @@ export default function SandboxListPage(props) {
                     <td><StatusBadge status={sandbox.status} /></td>
                     <td><StatusBadge status={sandbox.health} /></td>
                     <td class="mono small" title="The agent this sandbox runs">{sandbox.pack_key}</td>
+                    <td class="small" title="Who created it and manages it">{sandbox.owner_name || <span class="muted">shared</span>}</td>
                     <td class="mono small">{sandbox.cluster_name || '—'}</td>
                     <td class="mono small">
                       {sandbox.gateway_name || <span class="muted">not placed</span>}
@@ -291,6 +292,7 @@ export default function SandboxListPage(props) {
                 <th>Status</th>
                 <th>Health</th>
                 <th title="The agent the sandbox runs">Agent</th>
+                <th title="The user who owns it. A user sees only their own sandboxes and the shared ones; an admin sees all.">Owner</th>
                 <th title="The cluster the sandbox belongs to">Cluster</th>
                 <th title="The gateway that carries it, and the node (machine) it runs on">Gateway · node</th>
                 <th title="The service that watches this sandbox from outside and enforces its policy. One per sandbox, not a sandbox itself.">Supervisor</th>

@@ -31,6 +31,7 @@ pub mod telemetry;
 pub mod stack;
 pub mod topology;
 pub mod traffic;
+pub mod users;
 
 use axum::Router;
 use axum::routing::{any, delete, get, patch, post, put};
@@ -58,6 +59,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/auth/logout", post(auth::logout))
         .route("/api/v1/auth/me", get(auth::me))
         // Environments
+        .route("/api/v1/users", get(users::list).post(users::create))
+        .route("/api/v1/users/{id}", axum::routing::put(users::update).delete(users::remove))
+        .route("/api/v1/users/{id}/password", post(users::set_password))
         .route("/api/v1/environments", get(system::environments))
         .route("/api/v1/environments/current", get(system::current_environment))
         // Sandboxes

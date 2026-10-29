@@ -111,7 +111,7 @@ pub async fn catalog(
     // of what the fit and the response depend on.
     let node = measured.node.clone();
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let installs = install_store::list(&mut scope, Some(node.id))
@@ -166,7 +166,7 @@ pub async fn requirements(
     let measured = load_hardware(ctx, principal.environment_id, false, &resolved).await?;
     let node = measured.node.clone();
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let installs = install_store::list(&mut scope, Some(node.id))
@@ -218,7 +218,7 @@ pub async fn facets(
     let measured = load_hardware(ctx, principal.environment_id, false, &resolved).await?;
     let node = measured.node.clone();
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let installs = install_store::list(&mut scope, Some(node.id))
@@ -266,7 +266,7 @@ pub async fn installed(
 ) -> Result<Vec<Model>, ApiError> {
     require(principal, Permission::ModelRead)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let node = resolve_node(&mut scope, None).await?;
@@ -354,7 +354,7 @@ pub async fn installs(
 ) -> Result<Vec<InstallView>, ApiError> {
     require(principal, Permission::ModelRead)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let node_filter = match node_name {
@@ -482,7 +482,7 @@ pub async fn install(
     // The node as the probe left it: install decides on the fresh `container_gpu`.
     let node = measured.node.clone();
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 
@@ -687,7 +687,7 @@ pub async fn uninstall(
 ) -> Result<serde_json::Value, ApiError> {
     require(principal, Permission::ModelInstall)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let node = resolve_node(&mut scope, node_name).await?;
@@ -753,7 +753,7 @@ pub async fn uninstall(
             ),
         ));
     }
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 
@@ -841,7 +841,7 @@ pub async fn update_install(
         return Err(ApiError::validation("Reserved VRAM cannot be negative."));
     }
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let node = resolve_node(&mut scope, node_name).await?;
@@ -925,7 +925,7 @@ pub async fn update_install(
                 ),
             )
         })?;
-        let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        let mut scope = TenantScope::begin_for(&ctx.pool, principal)
             .await
             .map_err(ApiError::from)?;
         if figures_changed {
@@ -1589,7 +1589,7 @@ async fn resolve_node_for(
     principal: &Principal,
     node_ref: Option<&str>,
 ) -> Result<Node, ApiError> {
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let node = resolve_node(&mut scope, node_ref).await?;
@@ -1641,7 +1641,7 @@ async fn model_by_key(
     principal: &Principal,
     key: &str,
 ) -> Result<Model, ApiError> {
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let model = store::get_by_key(&mut scope, key)

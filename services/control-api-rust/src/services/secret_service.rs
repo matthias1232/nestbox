@@ -28,7 +28,7 @@ fn key(ctx: &ServiceContext) -> Result<[u8; 32], ApiError> {
 
 pub async fn list(ctx: &ServiceContext, principal: &Principal) -> Result<Vec<SecretMeta>, ApiError> {
     require(principal, Permission::ProviderRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id).await.map_err(ApiError::from)?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
     let items = store::list(&mut scope).await.map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
     Ok(items)
@@ -65,7 +65,7 @@ pub async fn put(
     let (ciphertext, nonce) = vault::seal(&master, &principal.environment_id.to_string(), name, value)
         .map_err(|error| ApiError::validation(error.message()))?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id).await.map_err(ApiError::from)?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
     let meta = store::upsert(&mut scope, name, kind, &ciphertext, &nonce, &vault::last4(value), principal.user_id)
         .await
         .map_err(ApiError::from)?;
@@ -92,7 +92,7 @@ pub async fn put(
 /// removed out from under a working sandbox.
 pub async fn delete(ctx: &ServiceContext, principal: &Principal, id: Uuid) -> Result<(), ApiError> {
     require(principal, Permission::ProviderWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id).await.map_err(ApiError::from)?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
     let all = store::list(&mut scope).await.map_err(ApiError::from)?;
     let Some(item) = all.into_iter().find(|item| item.id == id) else {
         return Err(ApiError::from(StoreError::NotFound));

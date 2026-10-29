@@ -71,7 +71,7 @@ pub async fn list(
     principal: &Principal,
 ) -> Result<Vec<NodeView>, ApiError> {
     require(principal, Permission::NodeRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 
@@ -99,7 +99,7 @@ pub async fn get(
     id: Uuid,
 ) -> Result<NodeView, ApiError> {
     require(principal, Permission::NodeRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 
@@ -127,7 +127,7 @@ pub async fn sandboxes(
 
     // A node that does not exist is a 404, not an empty page: an empty page is
     // what "this node has no sandboxes" looks like.
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let node = find(&mut scope, node_id).await?;
@@ -156,7 +156,7 @@ pub async fn resolve(
     require(principal, Permission::NodeRead)?;
     let reference = reference.trim();
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 
@@ -208,7 +208,7 @@ pub async fn update_display(
         }
     }
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 

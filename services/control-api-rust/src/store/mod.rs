@@ -38,6 +38,25 @@ impl<'a> TenantScope<'a> {
         Ok(Self { tx, environment_id })
     }
 
+    /// Begin a transaction for a request: the environment, and who is acting.
+    ///
+    /// The acting user and role are set next to the environment, so row-level security
+    /// can decide what that user may see (a user sees their own sandboxes, an admin
+    /// all of them) for every query in the transaction.
+    pub async fn begin_for(
+        pool: &'a sqlx::PgPool,
+        principal: &crate::domain::auth::Principal,
+    ) -> Result<Self, StoreError> {
+        let scope = Self::begin(pool, principal.environment_id).await?;
+        let mut scope = scope;
+        sqlx::query("SELECT set_config('app.actor_id', $1, true), set_config('app.actor_role', $2, true)")
+            .bind(principal.user_id.to_string())
+            .bind(principal.role.as_str())
+            .execute(&mut *scope.tx)
+            .await?;
+        Ok(scope)
+    }
+
     /// The environment this scope is bound to. Repositories use it as the first
     /// bind parameter, which is what keeps application and database filters
     /// identical.

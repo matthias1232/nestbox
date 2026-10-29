@@ -127,7 +127,7 @@ pub async fn create(
         &slug,
     );
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let node = resolve_node(&mut scope, request.node.as_deref()).await?;
@@ -176,7 +176,7 @@ pub async fn list(
 ) -> Result<Vec<PersistentRoot>, ApiError> {
     require(principal, Permission::SandboxRead)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let mut roots = store::list_roots(&mut scope).await.map_err(ApiError::from)?;
@@ -197,7 +197,7 @@ pub async fn get(
 ) -> Result<PersistentRoot, ApiError> {
     require(principal, Permission::SandboxRead)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let mut root = root_or_not_found(&mut scope, id).await?;
@@ -220,7 +220,7 @@ pub async fn delete(
 ) -> Result<RootRemoval, ApiError> {
     require(principal, Permission::PersistWrite)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let root = root_or_not_found(&mut scope, id).await?;
@@ -261,7 +261,7 @@ pub async fn mount(
 
     let mount_path = clean_mount_path(&request.mount_path)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let root = root_or_not_found(&mut scope, id).await?;
@@ -334,7 +334,7 @@ pub async fn dismount(
 ) -> Result<(), ApiError> {
     require(principal, Permission::PersistWrite)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let root = root_or_not_found(&mut scope, id).await?;
@@ -371,7 +371,7 @@ pub async fn usage(
 ) -> Result<RootUsage, ApiError> {
     require(principal, Permission::SandboxRead)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let root = root_or_not_found(&mut scope, id).await?;

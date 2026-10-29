@@ -112,13 +112,15 @@ impl Permission {
             | Self::SandboxExec
             | Self::PolicyWrite
             | Self::ModelInstall
-            | Self::ProviderWrite
             | Self::RecipeWrite
             | Self::PersistWrite
             | Self::NodeManage
             | Self::JobWrite => Role::Operator,
 
-            Self::PolicyGlobal
+            // Providers and their keys are shared by every user of the environment, so an
+            // admin sets them; a user picks from what the admin made available.
+            Self::ProviderWrite
+            | Self::PolicyGlobal
             | Self::GatewayWrite
             | Self::SecretManage
             | Self::UserManage

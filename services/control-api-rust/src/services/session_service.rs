@@ -60,7 +60,7 @@ pub struct SandboxLogin {
 
 pub async fn overview(ctx: &ServiceContext, principal: &Principal) -> Result<Vec<SandboxLogin>, ApiError> {
     require(principal, Permission::SandboxRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id).await.map_err(ApiError::from)?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
     let db = |error: sqlx::Error| ApiError::from(StoreError::Database(error));
     let rows: Vec<(Uuid, String, String, Option<String>)> = sqlx::query_as(
         "SELECT s.id, s.name, s.pack_key, v.status

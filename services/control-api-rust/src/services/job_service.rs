@@ -16,7 +16,7 @@ pub async fn list(
     limit: i64,
 ) -> Result<Vec<Job>, ApiError> {
     require(principal, Permission::JobRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let jobs = store::list(&mut scope, limit.clamp(1, 200))
@@ -33,7 +33,7 @@ pub async fn get(
     id: Uuid,
 ) -> Result<Job, ApiError> {
     require(principal, Permission::JobRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let job = store::get(&mut scope, id).await.map_err(|error| match error {
@@ -54,7 +54,7 @@ pub async fn logs(
     limit: i64,
 ) -> Result<Vec<serde_json::Value>, ApiError> {
     require(principal, Permission::JobRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let logs = store::logs(&mut scope, id, limit.clamp(1, 1000))
@@ -70,7 +70,7 @@ pub async fn schedules(
     principal: &Principal,
 ) -> Result<Vec<Schedule>, ApiError> {
     require(principal, Permission::JobRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let schedules = store::list_schedules(&mut scope)
@@ -91,7 +91,7 @@ pub async fn run_schedule(
 ) -> Result<serde_json::Value, ApiError> {
     require(principal, Permission::JobWrite)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 

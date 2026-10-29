@@ -14,7 +14,7 @@ use crate::store::postgres::gateways as store;
 /// List gateways.
 pub async fn list(ctx: &ServiceContext, principal: &Principal) -> Result<Vec<Gateway>, ApiError> {
     require(principal, Permission::GatewayRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let gateways = store::list(&mut scope).await.map_err(ApiError::from)?;
@@ -29,7 +29,7 @@ pub async fn get(
     id: Uuid,
 ) -> Result<Gateway, ApiError> {
     require(principal, Permission::GatewayRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let gateway = store::get(&mut scope, id).await.map_err(ApiError::from)?;
@@ -55,7 +55,7 @@ pub async fn update_settings(
         return Err(ApiError::validation("Gateway settings must be an object."));
     }
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let gateway = store::update_settings(&mut scope, id, expected_version, settings)
@@ -100,7 +100,7 @@ pub async fn sandbox_settings(
     sandbox_id: Uuid,
 ) -> Result<serde_json::Value, ApiError> {
     require(principal, Permission::GatewayRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let supervisor = store::supervisor_for_sandbox(&mut scope, sandbox_id).await;
@@ -131,7 +131,7 @@ pub async fn update_sandbox_settings(
         return Err(ApiError::validation("Supervisor settings must be an object."));
     }
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let sandbox = crate::store::postgres::sandboxes::get(&mut scope, sandbox_id)
@@ -215,7 +215,7 @@ pub async fn sync(
 ) -> Result<SyncOutcome, ApiError> {
     require(principal, Permission::GatewayWrite)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let gateway = store::get(&mut scope, id).await.map_err(ApiError::from)?;
@@ -295,7 +295,7 @@ pub async fn drifted(
     principal: &Principal,
 ) -> Result<Vec<Gateway>, ApiError> {
     require(principal, Permission::GatewayRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let gateways = store::drifted(&mut scope).await.map_err(ApiError::from)?;
@@ -309,7 +309,7 @@ pub async fn supervisors(
     principal: &Principal,
 ) -> Result<Vec<Supervisor>, ApiError> {
     require(principal, Permission::GatewayRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let supervisors = store::list_supervisors(&mut scope)
@@ -346,7 +346,7 @@ pub async fn create_supervisor(
         ));
     }
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 
@@ -495,7 +495,7 @@ pub async fn bind_supervisor(
     sandbox_id: Uuid,
 ) -> Result<Supervisor, ApiError> {
     require(principal, Permission::GatewayWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 
@@ -543,7 +543,7 @@ pub async fn topology(
     principal: &Principal,
 ) -> Result<serde_json::Value, ApiError> {
     require(principal, Permission::GatewayRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 
@@ -672,7 +672,7 @@ pub async fn queue_supervisor_action(
         ));
     }
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let sandbox = crate::store::postgres::sandboxes::get(&mut scope, sandbox_id)
@@ -848,7 +848,7 @@ pub async fn supervisor_view(
     sandbox_id: Uuid,
 ) -> Result<serde_json::Value, ApiError> {
     require(principal, Permission::GatewayRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let sandbox = crate::store::postgres::sandboxes::get(&mut scope, sandbox_id)

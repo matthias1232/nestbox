@@ -45,7 +45,7 @@ pub async fn list(
     principal: &Principal,
 ) -> Result<Vec<Policy>, ApiError> {
     require(principal, Permission::PolicyRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let policies = store::list(&mut scope).await.map_err(ApiError::from)?;
@@ -60,7 +60,7 @@ pub async fn get(
     id: Uuid,
 ) -> Result<Policy, ApiError> {
     require(principal, Permission::PolicyRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let policy = store::get(&mut scope, id).await.map_err(ApiError::from)?;
@@ -74,7 +74,7 @@ pub async fn global(
     principal: &Principal,
 ) -> Result<Option<Policy>, ApiError> {
     require(principal, Permission::PolicyRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let policy = store::global(&mut scope).await.map_err(ApiError::from)?;
@@ -99,7 +99,7 @@ pub async fn create(
 
     let sections = validate_document(spec).map_err(policy_error)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let policy = store::insert(&mut scope, name, scope_value, spec, Some(principal.user_id))
@@ -127,7 +127,7 @@ pub async fn update(
 
     let sections = validate_document(spec).map_err(policy_error)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 
@@ -195,7 +195,7 @@ pub async fn diff(
 ) -> Result<PolicyDiff, ApiError> {
     require(principal, Permission::PolicyRead)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let current = store::get(&mut scope, id).await.map_err(ApiError::from)?;
@@ -257,7 +257,7 @@ pub async fn delete(
     id: Uuid,
 ) -> Result<(), ApiError> {
     require(principal, Permission::PolicyWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let policy = store::get(&mut scope, id).await.map_err(ApiError::from)?;
@@ -290,7 +290,7 @@ pub async fn list_rules(
     principal: &Principal,
 ) -> Result<Vec<NetworkRule>, ApiError> {
     require(principal, Permission::PolicyRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let rules = store::list_rules(&mut scope).await.map_err(ApiError::from)?;
@@ -307,7 +307,7 @@ pub async fn create_rule(
     require(principal, Permission::PolicyWrite)?;
     validate_rule(&rule)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let created = store::insert_rule(&mut scope, &rule)
@@ -324,7 +324,7 @@ pub async fn delete_rule(
     id: Uuid,
 ) -> Result<(), ApiError> {
     require(principal, Permission::PolicyWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     store::delete_rule(&mut scope, id).await.map_err(ApiError::from)?;
@@ -352,7 +352,7 @@ pub async fn draft_from_event(
         "source_event": event,
     });
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 
@@ -379,7 +379,7 @@ pub async fn pending_drafts(
     principal: &Principal,
 ) -> Result<Vec<serde_json::Value>, ApiError> {
     require(principal, Permission::PolicyRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let drafts = store::list_pending_drafts(&mut scope)
@@ -416,7 +416,7 @@ pub async fn decide_draft(
 ) -> Result<serde_json::Value, ApiError> {
     require(principal, Permission::PolicyWrite)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 
@@ -496,7 +496,7 @@ pub async fn open_window(
         ));
     }
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let (id, expires_at) = store::open_window(
@@ -526,7 +526,7 @@ pub async fn close_window(
     id: Uuid,
 ) -> Result<(), ApiError> {
     require(principal, Permission::PolicyWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     store::revoke_window(&mut scope, id)
@@ -592,7 +592,7 @@ pub async fn list_dns_rules(
     principal: &Principal,
 ) -> Result<Vec<DnsRule>, ApiError> {
     require(principal, Permission::PolicyRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let rules = store::list_dns_rules(&mut scope)
@@ -623,7 +623,7 @@ pub async fn create_dns_rule(
         ));
     }
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let created = store::insert_dns_rule(
@@ -643,7 +643,7 @@ pub async fn delete_dns_rule(
     id: Uuid,
 ) -> Result<(), ApiError> {
     require(principal, Permission::PolicyWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     store::delete_dns_rule(&mut scope, id)
@@ -660,7 +660,7 @@ pub async fn egress_mode(
     sandbox_id: Uuid,
 ) -> Result<EgressModeSetting, ApiError> {
     require(principal, Permission::PolicyRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let sandbox = sandbox_store::get(&mut scope, sandbox_id)
@@ -689,7 +689,7 @@ pub async fn set_egress_mode(
     trust_ca_ref: Option<String>,
 ) -> Result<EgressModeSetting, ApiError> {
     require(principal, Permission::PolicyWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let sandbox = sandbox_store::get(&mut scope, sandbox_id)
@@ -734,7 +734,7 @@ pub async fn instantiate_template(
 ) -> Result<serde_json::Value, ApiError> {
     require(principal, Permission::PolicyWrite)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let template = store::get_template(&mut scope, template_id)
@@ -819,7 +819,7 @@ pub async fn assign_policy_to_sandbox(
     policy_id: Uuid,
 ) -> Result<serde_json::Value, ApiError> {
     require(principal, Permission::PolicyWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let sandbox = sandbox_store::get(&mut scope, sandbox_id)
@@ -842,7 +842,7 @@ pub async fn unassign_policy_from_sandbox(
     sandbox_id: Uuid,
 ) -> Result<serde_json::Value, ApiError> {
     require(principal, Permission::PolicyWrite)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     store::unassign_policy(&mut scope, sandbox_id)
@@ -859,7 +859,7 @@ pub async fn policy_of_sandbox(
     sandbox_id: Uuid,
 ) -> Result<Option<PolicyAssignment>, ApiError> {
     require(principal, Permission::PolicyRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let assignment = store::assignment_for_sandbox(&mut scope, sandbox_id)
@@ -875,7 +875,7 @@ pub async fn list_templates(
     principal: &Principal,
 ) -> Result<Vec<PolicyTemplate>, ApiError> {
     require(principal, Permission::PolicyRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let templates = store::list_templates(&mut scope)
@@ -903,7 +903,7 @@ pub async fn create_template(
     }
     validate_document(spec).map_err(policy_error)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let template = store::insert_template(
@@ -925,7 +925,7 @@ pub async fn safe_defaults(
     principal: &Principal,
 ) -> Result<Option<Policy>, ApiError> {
     require(principal, Permission::PolicyRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let policy = store::get_policy_by_name(&mut scope, SAFE_DEFAULTS_POLICY_NAME)
@@ -1016,7 +1016,7 @@ pub async fn rules_for_sandbox(
     sandbox_id: Uuid,
 ) -> Result<Vec<NetworkRule>, ApiError> {
     require(principal, Permission::PolicyRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let rules = effective_rules(&mut scope, sandbox_id, principal.environment_id).await?;
@@ -1345,7 +1345,7 @@ pub async fn deployment(
     principal: &Principal,
 ) -> Result<egress_store::PolicyDeployment, ApiError> {
     require(principal, Permission::PolicyRead)?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let deployment = egress_store::deployment(&mut scope)
@@ -1499,7 +1499,7 @@ pub async fn copy_rules(
 ) -> Result<BulkResult, ApiError> {
     require(principal, Permission::PolicyWrite)?;
     let to_sandbox_ids: Vec<Uuid> = if to_all {
-        let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        let mut scope = TenantScope::begin_for(&ctx.pool, principal)
             .await
             .map_err(ApiError::from)?;
         let ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM sandboxes")

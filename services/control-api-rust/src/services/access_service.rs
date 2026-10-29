@@ -258,7 +258,7 @@ async fn load_sandbox(
     principal: &Principal,
     sandbox_id: Uuid,
 ) -> Result<Sandbox, ApiError> {
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let sandbox = sandbox_store::get(&mut scope, sandbox_id)
@@ -277,7 +277,7 @@ pub async fn key(
     require(principal, Permission::SandboxRead)?;
     load_sandbox(ctx, principal, sandbox_id).await?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let key = store::get_key(&mut scope, sandbox_id)
@@ -302,7 +302,7 @@ pub async fn download(
     require(principal, Permission::SandboxExec)?;
     let sandbox = load_sandbox(ctx, principal, sandbox_id).await?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let key = store::get_key(&mut scope, sandbox_id)
@@ -317,7 +317,7 @@ pub async fn download(
         },
     )?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let won = store::stamp_download(&mut scope, sandbox_id, principal.user_id)
@@ -375,7 +375,7 @@ pub async fn rotate(
     let path = write_key_file_fresh(&ctx.secret_dir, sandbox_id, &material.private_pem)?;
     let reference = locator(&path);
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 
@@ -464,7 +464,7 @@ pub async fn push_forwards(
     principal: &Principal,
     sandbox: &Sandbox,
 ) -> Result<Vec<ForwardState>, ApiError> {
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let ports = store::list_forwards(&mut scope, sandbox.id)
@@ -527,7 +527,7 @@ pub async fn push_forwards(
             (port.public_port, if open { "active" } else { "failed" })
         })
         .collect();
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     store::set_forward_states(&mut scope, sandbox.id, &updates)
@@ -588,7 +588,7 @@ async fn ensure_key(
     sandbox: &Sandbox,
 ) -> Result<SshKey, ApiError> {
     let existing = {
-        let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        let mut scope = TenantScope::begin_for(&ctx.pool, principal)
             .await
             .map_err(ApiError::from)?;
         let found = match store::get_key(&mut scope, sandbox.id).await {
@@ -607,7 +607,7 @@ async fn ensure_key(
     let path = write_key_file_fresh(&ctx.secret_dir, sandbox.id, &material.private_pem)?;
     let reference = locator(&path);
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let key = match store::insert_key(
@@ -655,7 +655,7 @@ async fn claim_sandbox_ports(
     principal: &Principal,
     sandbox: &Sandbox,
 ) -> Result<Vec<PublishedPort>, ApiError> {
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 
@@ -821,7 +821,7 @@ pub async fn ports(
     require(principal, Permission::SandboxRead)?;
     load_sandbox(ctx, principal, sandbox_id).await?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let ports = store::list_forwards(&mut scope, sandbox_id)
@@ -849,7 +849,7 @@ pub async fn connect(
     // reader who is allowed to write gives it one here, once; a viewer only sees
     // that nothing is published yet. Best effort: the panel must still render.
     if require(principal, Permission::SandboxWrite).is_ok() {
-        let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+        let mut scope = TenantScope::begin_for(&ctx.pool, principal)
             .await
             .map_err(ApiError::from)?;
         let none_yet = store::list_forwards(&mut scope, sandbox.id)
@@ -864,7 +864,7 @@ pub async fn connect(
         }
     }
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let endpoint = store::node_endpoint(&mut scope, sandbox.node_id)
@@ -945,7 +945,7 @@ pub async fn set_node_endpoint(
         }
     }
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     store::set_node_endpoint(&mut scope, node_id, address, hostname.as_deref())
@@ -971,7 +971,7 @@ pub async fn publish_port(
     }
     let sandbox = load_sandbox(ctx, principal, sandbox_id).await?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
 
@@ -1059,7 +1059,7 @@ pub async fn withdraw_port(
     require(principal, Permission::SandboxWrite)?;
     let sandbox = load_sandbox(ctx, principal, sandbox_id).await?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let released = store::delete_forward(&mut scope, sandbox_id, forward_id).await;
@@ -1102,7 +1102,7 @@ pub async fn sessions(
     require(principal, Permission::SandboxRead)?;
     load_sandbox(ctx, principal, sandbox_id).await?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let sessions = store::list_sessions(&mut scope, sandbox_id, SESSION_LIMIT)
@@ -1211,7 +1211,7 @@ pub async fn ssh_access(
 ) -> Result<SshAccessView, ApiError> {
     require(principal, Permission::SandboxRead)?;
     load_sandbox(ctx, principal, sandbox_id).await?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let generated = match store::get_key(&mut scope, sandbox_id).await {
@@ -1246,7 +1246,7 @@ pub async fn add_user_key(
     let (normalised, fingerprint) =
         crate::domain::ssh_access::parse_public_key(public_key).map_err(ApiError::validation)?;
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let existing = store::list_user_keys(&mut scope, sandbox_id).await.map_err(ApiError::from)?;
@@ -1292,7 +1292,7 @@ pub async fn remove_user_key(
 ) -> Result<(), ApiError> {
     require(principal, Permission::SandboxExec)?;
     let sandbox = load_sandbox(ctx, principal, sandbox_id).await?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     store::delete_user_key(&mut scope, sandbox_id, key_id).await.map_err(|error| match error {
@@ -1343,7 +1343,7 @@ pub async fn issue_credential(
     let salt = random_token(16);
     let hash = crate::domain::ssh_access::hash_password(&salt, &password);
 
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     let active = store::list_credentials(&mut scope, sandbox_id)
@@ -1386,7 +1386,7 @@ pub async fn revoke_credential(
 ) -> Result<(), ApiError> {
     require(principal, Permission::SandboxExec)?;
     let sandbox = load_sandbox(ctx, principal, sandbox_id).await?;
-    let mut scope = TenantScope::begin(&ctx.pool, principal.environment_id)
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
     store::revoke_credential(&mut scope, sandbox_id, credential_id).await.map_err(|error| match error {

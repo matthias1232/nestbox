@@ -18,6 +18,7 @@ import ModelsPage from './features/models/ModelsPage.jsx';
 import NodesPage from './features/nodes/NodesPage.jsx';
 import RecipesPage from './features/recipes/RecipesPage.jsx';
 import PersistentPage from './features/persistent/PersistentPage.jsx';
+import UsersPage from './features/users/UsersPage.jsx';
 import BuilderPage from './features/builder/BuilderPage.jsx';
 import JobsPage from './features/jobs/JobsPage.jsx';
 import AdminCenter from './features/sandboxes/AdminCenter.jsx';
@@ -45,6 +46,8 @@ const ROUTES = [
   { id: 'recipes', label: 'Recipes' },
   { id: 'persistent', label: 'Persistent data' },
   { id: 'operations', label: 'Operations' },
+  // Only an admin manages who may sign in; the page and the API both refuse anyone else.
+  { id: 'users', label: 'Users', adminOnly: true },
 ];
 
 export default function App() {
@@ -100,7 +103,7 @@ export default function App() {
             </div>
 
             <nav class="nav">
-              <For each={ROUTES}>
+              <For each={ROUTES.filter((item) => !item.adminOnly || session.identity()?.role === 'admin')}>
                 {(item) => (
                   <button
                     aria-current={route() === item.id ? 'page' : undefined}
@@ -158,6 +161,7 @@ export default function App() {
                   <Show when={route() === 'recipes'}><RecipesPage /></Show>
                   <Show when={route() === 'persistent'}><PersistentPage /></Show>
                   <Show when={route() === 'operations'}><JobsPage /></Show>
+                  <Show when={route() === 'users'}><UsersPage /></Show>
                 </>
               }
             >
