@@ -110,18 +110,29 @@ export default function ModelsPage() {
     }
   }
 
-  async function install(model) {
+  // A model that the verdict says will not fit is still installable: the
+  // server answers with the reason, and this screen offers the same request
+  // with `force` instead of hiding the button. The reservation is real either
+  // way, and the install row records the warning.
+  const [forceCandidate, setForceCandidate] = createSignal(null);
+
+  async function install(model, force = false) {
     setNotice(null);
     setError(null);
+    setForceCandidate(null);
     try {
-      const result = await models.install(model.key, nodeName());
+      const result = await models.install(model.key, nodeName(), force);
       setNotice(
         `${model.name}: ${gib(result.reserved_ram_bytes || 0)} reserved on ${result.node}` +
         (result.reserved_vram_bytes ? ` and ${gib(result.reserved_vram_bytes)} of VRAM` : '') +
-        `. Job ${result.job_id}.`,
+        `. Job ${result.job_id}.` +
+        (result.warnings?.length ? ` ${result.warnings.length} warning(s) recorded.` : ''),
       );
       await load(false);
     } catch (failure) {
+      if (failure.code === 'node.insufficient_resources' || failure.code === 'model.not_installable') {
+        setForceCandidate(model);
+      }
       setError(failure.message);
     }
   }
@@ -270,6 +281,13 @@ export default function ModelsPage() {
       </header>
 
       <Show when={error()}><p class="error">{error()}</p></Show>
+      <Show when={forceCandidate()}>
+        <p class="notice">
+          {forceCandidate().name} does not fit this node as it is. Installing it anyway reserves
+          the memory and records the warning; the server will start and may fail at run time.
+          <button class="tiny" onClick={() => install(forceCandidate(), true)}>Install anyway</button>
+        </p>
+      </Show>
       <Show when={notice()}><p class="notice">{notice()}</p></Show>
 
       <Show when={hardware()}>
@@ -485,8 +503,11 @@ export default function ModelsPage() {
                   </td>
                   <td class="actions">
                     <button class="tiny"
-                            disabled={!model.fit?.fit?.match(/installable|update_available/)}
-                            onClick={() => install(model)}>
+                            disabled={model.fit?.fit === 'already_installed'}
+                            title={model.fit?.fit?.match(/installable|cpu_installable|update_available/)
+                              ? 'Install on this node'
+                              : 'Install anyway; the verdict and its warnings are recorded'}
+                            onClick={() => install(model, !model.fit?.fit?.match(/installable|cpu_installable|update_available/))}>
                       {model.fit?.fit === 'update_available' ? 'Update' : 'Install'}
                     </button>
                     <button class="tiny danger"

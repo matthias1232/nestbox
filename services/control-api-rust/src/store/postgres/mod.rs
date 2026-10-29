@@ -4,6 +4,7 @@ pub mod agent_packs;
 pub mod access;
 pub mod audit;
 pub mod auth;
+pub mod cudax;
 pub mod egress;
 pub mod environments;
 pub mod gateways;

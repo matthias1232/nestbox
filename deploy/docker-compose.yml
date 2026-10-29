@@ -248,6 +248,9 @@ services:
       NESTBOX_MODEL_IMAGES: ghcr.io/ggml-org/llama.cpp@sha256:8ee4ec7ce58a921313d07390c6699af13aa5ec083f3cdf67e5f4155767047373
       # A single download may not exceed this, whatever the API asks for.
       NESTBOX_MODEL_MAX_BYTES: "34359738368"
+      # CUDA-X components the catalogue may install on this node. Exact
+      # references only; the runner refuses anything else.
+      NESTBOX_CUDAX_IMAGES: "nvidia/cuda:12.9.0-devel-ubuntu24.04,nvcr.io/nvidia/tensorrt:latest,nvcr.io/nvidia/tensorrt-llm/release:latest,nvcr.io/nim/meta/llama-3.1-8b-instruct:latest,nvcr.io/nvidia/tritonserver:latest,vllm/vllm-openai:latest,lmsysorg/sglang:latest,nvcr.io/nvidia/dcgm:latest,nvcr.io/nvidia/nemo:latest,nvcr.io/nvidia/rapidsai/base:latest"
       # The terminal upgrade is refused without this token, and the runner also
       # sits on the sandbox network: an open endpoint there would be a shell into
       # every neighbour. It mounts the node directory, not `secrets/`: the

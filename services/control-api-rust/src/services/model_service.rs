@@ -445,6 +445,7 @@ pub async fn install(
     principal: &Principal,
     key: &str,
     node_name: Option<&str>,
+    force: bool,
 ) -> Result<serde_json::Value, ApiError> {
     require(principal, Permission::ModelInstall)?;
 
@@ -546,23 +547,39 @@ pub async fn install(
     let free = free_budget(&hardware, &installs);
     let report = classify(&model, &hardware, &free);
 
+    // The verdict is advice, not a gate. Without `force` the operator gets the
+    // exact reason and the way forward; with `force` the install proceeds and
+    // the same reason is recorded as a warning on the install and in the audit
+    // trail, so nothing later pretends the node was believed to fit.
+    let mut warnings: Vec<String> = Vec::new();
     if !report.fit.allows_install() {
-        return Err(match report.fit {
-            Fit::InsufficientRam | Fit::InsufficientVram | Fit::NoGpu => ApiError::unprocessable(
-                ErrorCode::NODE_INSUFFICIENT_RESOURCES,
-                report.reason,
-            ),
-            _ => ApiError::conflict(ErrorCode::MODEL_NOT_INSTALLABLE, report.reason),
-        });
+        if force {
+            warnings.push(report.reason.clone());
+        } else {
+            return Err(match report.fit {
+                Fit::InsufficientRam | Fit::InsufficientVram | Fit::NoGpu => ApiError::unprocessable(
+                    ErrorCode::NODE_INSUFFICIENT_RESOURCES,
+                    format!("{} Retry with force to install anyway.", report.reason),
+                ),
+                _ => ApiError::conflict(
+                    ErrorCode::MODEL_NOT_INSTALLABLE,
+                    format!("{} Retry with force to install anyway.", report.reason),
+                ),
+            });
+        }
     }
 
     let (reserved_ram_bytes, reserved_vram_bytes) =
         reservation_for(&model, report.cpu_path);
     if let Err(short) = free.check(reserved_ram_bytes, reserved_vram_bytes) {
-        return Err(ApiError::unprocessable(
-            ErrorCode::NODE_INSUFFICIENT_RESOURCES,
-            short.message(),
-        ));
+        if force {
+            warnings.push(short.message());
+        } else {
+            return Err(ApiError::unprocessable(
+                ErrorCode::NODE_INSUFFICIENT_RESOURCES,
+                format!("{} Retry with force to install anyway.", short.message()),
+            ));
+        }
     }
 
     // The registry row is the image the node will be told to start. Without it
@@ -631,6 +648,8 @@ pub async fn install(
                 "reserved_vram_bytes": reserved_vram_bytes,
                 "provider_profile_id": profile.id,
                 "job_id": job.id,
+                "force": force,
+                "warnings": warnings,
             }),
             request_id: None,
         },
@@ -667,6 +686,8 @@ pub async fn install(
         "reserved_vram_bytes": reserved_vram_bytes,
         "provider_profile_id": profile.id,
         "fit": report.fit,
+        "force": force,
+        "warnings": warnings,
         "artifact": format!("huggingface:{}/{}", artifact.repo, artifact.file),
         "serve_runtime": serve_runtime,
         "note": "Memory is reserved. The node is fetching the artefact and will start the \

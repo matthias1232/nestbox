@@ -8,6 +8,7 @@ pub mod access;
 pub mod agent_config;
 pub mod auth;
 pub mod builder;
+pub mod cudax;
 pub mod egress;
 pub mod environment;
 pub mod gateway;

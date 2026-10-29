@@ -27,6 +27,7 @@ from app import telemetry_shipper
 from app import host as host_load
 from app import backups as root_backups
 from app import openshell_backend as osh
+from app import catalogue as package_catalogue
 from app.images import image_allowed
 from app.workload import get_container, list_workloads, openshell_name, sandbox_name
 
@@ -800,6 +801,11 @@ MODEL_FILE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.gguf$")
 # A download may not be larger than this, whatever the caller asks for: the
 # node's disk is shared with everything else.
 MODEL_DOWNLOAD_CEILING = int(os.getenv("NESTBOX_MODEL_MAX_BYTES", str(32 * 1024**3)))
+# CUDA-X components are pulled by exact, catalogue-provided image reference.
+# The allowlist is what keeps an operator request from becoming an arbitrary
+# registry fetch on the node.
+CUDAX_IMAGES = set(filter(None, os.getenv("NESTBOX_CUDAX_IMAGES", "").split(",")))
+CUDAX_COMPONENT = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 MODEL_CONTAINER_PATH = "/models"
 
 
@@ -908,6 +914,32 @@ class ModelServeRequest(BaseModel):
     cpu_cores: float = Field(gt=0, le=64)
     port: int = Field(ge=1024, le=65535)
 
+
+class CudaxInstallRequest(BaseModel):
+    component: str
+    images: list[str] = []
+
+@app.post("/v1/cudax/install")
+def install_cudax(body: CudaxInstallRequest) -> dict[str, Any]:
+    """Pull the declared images of one CUDA-X component.
+
+    Only references on `NESTBOX_CUDAX_IMAGES` are accepted, and only as an exact
+    string: the control plane sends what the catalogue stored, and the runner
+    refuses anything else instead of turning an operator action into an open
+    registry proxy. An image already present is not pulled again.
+    """
+    if not CUDAX_COMPONENT.match(body.component):
+        raise HTTPException(422, "component key is not a lowercase slug")
+    pulled: list[str] = []
+    for image in body.images[:4]:
+        if image not in CUDAX_IMAGES:
+            raise HTTPException(422, f"{image} is not an approved CUDA-X image")
+        try:
+            client.images.get(image)
+        except NotFound:
+            client.images.pull(image)
+        pulled.append(image)
+    return {"component": body.component, "pulled": pulled}
 
 @app.post("/v1/models/serve")
 def serve_model(body: ModelServeRequest) -> dict[str, Any]:

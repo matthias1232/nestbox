@@ -350,6 +350,33 @@ impl RuntimeAdapter for HttpRunner {
             .await
     }
 
+    async fn install_libraries(
+        &self,
+        component: &str,
+        images: &[String],
+    ) -> Result<Vec<String>, RuntimeError> {
+        #[derive(serde::Serialize)]
+        struct Body<'a> {
+            component: &'a str,
+            images: &'a [String],
+        }
+        let payload = serde_json::to_value(Body { component, images })
+            .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
+        let answer: serde_json::Value = self
+            .send(reqwest::Method::POST, "/v1/cudax/install", Some(&payload))
+            .await?;
+        Ok(answer
+            .get("pulled")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
     async fn serve_model(&self, request: ModelServe) -> Result<ModelServeResult, RuntimeError> {
         let payload = serde_json::to_value(&request)
             .map_err(|error| RuntimeError::Rejected(error.to_string()))?;
