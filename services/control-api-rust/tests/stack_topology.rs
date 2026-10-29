@@ -218,3 +218,35 @@ async fn the_stack_diagram_covers_the_lead_and_its_members_and_what_is_missing()
     assert!(logs.contains("egress-proxy"));
     assert!(stack_topology_service::component_logs(&ctx, &principal, "../etc", 50).await.is_err());
 }
+
+#[tokio::test]
+async fn a_sandbox_from_before_ports_existed_gets_a_way_in_when_its_panel_is_read() {
+    let Some(pool) = connect().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+    let runtime = Arc::new(FakeRuntime::new());
+    let ctx = context(&pool, &runtime);
+    let principal = principal_of(user(&pool).await);
+    let legacy: Uuid = sqlx::query_scalar(
+        "INSERT INTO sandboxes (environment_id, cluster_id, node_id, name, pack_key, image, status)
+         VALUES ($1, '00000000-0000-0000-0000-000000000004', $2, 'legacy-01', 'hermes',
+                 'nestbox-hermes:local', 'running')
+         RETURNING id",
+    )
+    .bind(uuid(ENVIRONMENT))
+    .bind(uuid(LOCAL_NODE))
+    .fetch_one(&pool)
+    .await
+    .expect("legacy sandbox");
+
+    let info = access_service::connect(&ctx, &principal, legacy).await.expect("connect");
+    assert!(info.ports.iter().any(|port| port.kind == "ssh"), "an SSH port was claimed");
+    assert!(info.key.is_some(), "a key pair was made");
+    assert!(runtime.forwards_for("legacy-01").is_some(), "and the runner was told");
+    assert_eq!(info.forwarding, "live");
+
+    // Reading again claims nothing more.
+    let again = access_service::connect(&ctx, &principal, legacy).await.expect("connect");
+    assert_eq!(again.ports.len(), info.ports.len());
+}
