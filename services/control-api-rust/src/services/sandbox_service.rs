@@ -1770,3 +1770,18 @@ pub async fn reconcile_all(ctx: &ServiceContext) -> Result<u64, ApiError> {
     }
     Ok(changed)
 }
+
+/// The ids of the sandboxes this caller may see, for the live streams. `None` when the
+/// database cannot be read, in which case the stream keeps what it knew.
+pub async fn visible_ids(
+    pool: &sqlx::PgPool,
+    principal: &Principal,
+) -> Option<std::collections::HashSet<Uuid>> {
+    let mut scope = TenantScope::begin_for(pool, principal).await.ok()?;
+    let ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM sandboxes")
+        .fetch_all(scope.connection())
+        .await
+        .ok()?;
+    let _ = scope.commit().await;
+    Some(ids.into_iter().collect())
+}
