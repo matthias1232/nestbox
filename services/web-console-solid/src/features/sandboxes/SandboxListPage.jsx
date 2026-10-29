@@ -132,8 +132,11 @@ export default function SandboxListPage(props) {
                         </span>
                       </Show>
                     </td>
-                    <td><StatusBadge status={sandbox.status} /></td>
-                    <td><StatusBadge status={sandbox.health} /></td>
+                    <td class="small">
+                      <StatusBadge status={sandbox.status} />
+                      <Show when={sandbox.health && sandbox.health !== 'healthy'}>{' '}<StatusBadge status={sandbox.health} /></Show>
+                      <span class="muted small" title="Uptime">{' '}{shortUptime(sandbox)}</span>
+                    </td>
                     <td class="mono small" title="The agent this sandbox runs">{sandbox.pack_key}</td>
                     <td class="small" title="Who created it and manages it">{sandbox.owner_name || <span class="muted">shared</span>}</td>
                     <td class="mono small">
@@ -163,7 +166,6 @@ export default function SandboxListPage(props) {
                         {sandbox.runtime_kind === 'openshell' ? 'OpenShell' : sandbox.runtime_kind || '—'}
                       </span>
                     </td>
-                    <td class="narrow mono small">{shortUptime(sandbox)}</td>
                     <td class="actions">
                       <button class="tiny" title="How to reach this sandbox: host, ports, SSH"
                               onClick={() => setConnecting(sandbox)}>Connect</button>
@@ -295,15 +297,13 @@ export default function SandboxListPage(props) {
                   />
                 </th>
                 <th>Name</th>
-                <th>Status</th>
-                <th>Health</th>
+                <th title="Whether it runs, how healthy it is, and for how long">Status</th>
                 <th title="The agent the sandbox runs">Agent</th>
                 <th title="The user who owns it. A user sees only their own sandboxes and the shared ones; an admin sees all.">Owner</th>
                 <th title="Cluster › the gateway that carries it · the node (machine) it runs on">Cluster › gateway · node</th>
                 <th title="The service that watches this sandbox from outside and enforces its policy. One per sandbox, not a sandbox itself.">Supervisor</th>
                 <th title="How the agent in the sandbox is signed in: the gateway key, or your own account">Login</th>
                 <th title="What enforces the sandbox">Runtime</th>
-                <th class="narrow">Uptime</th>
                 <th>Actions</th>
               </tr>
             </thead>

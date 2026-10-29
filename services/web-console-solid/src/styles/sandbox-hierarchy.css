@@ -22,8 +22,8 @@ td .runtime-tag { white-space: nowrap; }
 .login-badge.running { background: #1f3d2b; color: #8ee0a8; border-color: #2f6b47; }
 .login-badge.degraded { background: #3d321f; color: #e0c58e; border-color: #6b5a2f; }
 .login-badge.denied { background: #3d1f1f; color: #e08e8e; border-color: #6b2f2f; }
-.table-scroll td.actions { display: flex; flex-wrap: wrap; gap: .25rem; align-items: center; min-width: 17rem; max-width: 22rem; }
-.table-scroll td.actions { min-width: 0; max-width: none; flex-wrap: nowrap; }
+.table-scroll td.actions { white-space: nowrap; }
+.table-scroll td.actions > * { vertical-align: middle; }
 .more-menu { position: relative; display: inline-block; }
 .more-menu > summary { cursor: pointer; list-style: none; display: inline-block; padding: .15rem .5rem; border: 1px solid var(--border, #444); border-radius: 6px; font-size: .75rem; }
 .more-menu > summary::-webkit-details-marker { display: none; }
