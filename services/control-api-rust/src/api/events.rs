@@ -38,6 +38,7 @@ pub async fn telemetry_stream(
         state.bus().clone(),
         auth.principal.environment_id,
         StreamFilter::Telemetry,
+        Visibility::for_principal(&state, &auth.principal),
     ))
 }
 
@@ -54,13 +55,75 @@ pub async fn state_stream(
         state.bus().clone(),
         auth.principal.environment_id,
         StreamFilter::State,
+        Visibility::for_principal(&state, &auth.principal),
     ))
+}
+
+/// Which sandboxes a stream may talk about.
+///
+/// An admin sees all of them. Anyone else sees events of their own sandboxes and the shared
+/// ones, the same rule as everywhere else (row-level security), decided here from the
+/// database because the bus carries every event of the environment. The set is read when a
+/// stream opens and again whenever an event names a sandbox it does not know, at most every
+/// two seconds, so a sandbox created after the stream opened still shows up.
+struct Visibility {
+    restricted: Option<(sqlx::PgPool, crate::domain::auth::Principal)>,
+    ids: std::collections::HashSet<uuid::Uuid>,
+    loaded: Option<std::time::Instant>,
+}
+
+impl Visibility {
+    fn for_principal(state: &AppState, principal: &crate::domain::auth::Principal) -> Self {
+        let restricted = (principal.role != crate::domain::auth::Role::Admin)
+            .then(|| (state.services.pool.clone(), principal.clone()));
+        Self { restricted, ids: Default::default(), loaded: None }
+    }
+
+    async fn refresh(&mut self) {
+        let Some((pool, principal)) = &self.restricted else { return };
+        if let Ok(mut scope) = crate::store::TenantScope::begin_for(pool, principal).await {
+            if let Ok(rows) = sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM sandboxes")
+                .fetch_all(scope.connection())
+                .await
+            {
+                self.ids = rows.into_iter().collect();
+            }
+            let _ = scope.commit().await;
+        }
+        self.loaded = Some(std::time::Instant::now());
+    }
+
+    async fn allows(&mut self, sandbox_id: Option<uuid::Uuid>) -> bool {
+        if self.restricted.is_none() {
+            return true;
+        }
+        // An event about no sandbox (a gateway, a build) is for admins.
+        let Some(id) = sandbox_id else { return false };
+        if self.loaded.is_none() {
+            self.refresh().await;
+        }
+        if !self.ids.contains(&id)
+            && self.loaded.is_some_and(|at| at.elapsed() > std::time::Duration::from_secs(2))
+        {
+            self.refresh().await;
+        }
+        self.ids.contains(&id)
+    }
+}
+
+fn event_sandbox(event: &LiveEvent) -> Option<uuid::Uuid> {
+    match event {
+        LiveEvent::Telemetry(inner) => inner.sandbox_id(),
+        LiveEvent::SandboxStateChanged { sandbox_id, .. } => Some(*sandbox_id),
+        _ => None,
+    }
 }
 
 fn build_stream(
     bus: std::sync::Arc<dyn crate::events::EventBus>,
     environment_id: uuid::Uuid,
     filter: StreamFilter,
+    visibility: Visibility,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let receiver = bus.subscribe();
 
@@ -68,7 +131,7 @@ fn build_stream(
     // where the last one stopped. A lagged subscriber skips ahead rather than
     // being disconnected, because a browser that missed a burst is better served
     // by the next event than by a reconnect loop.
-    let stream = futures::stream::unfold(receiver, move |mut receiver| async move {
+    let stream = futures::stream::unfold((receiver, visibility), move |(mut receiver, mut visibility)| async move {
         loop {
             match receiver.recv().await {
                 Ok(event) => {
@@ -78,10 +141,13 @@ fn build_stream(
                     if !matches_filter(&event, filter) {
                         continue;
                     }
+                    if !visibility.allows(event_sandbox(&event)).await {
+                        continue;
+                    }
                     let name = event_name(&event);
                     match serde_json::to_string(&event) {
                         Ok(data) => {
-                            return Some((Ok(Event::default().event(name).data(data)), receiver));
+                            return Some((Ok(Event::default().event(name).data(data)), (receiver, visibility)));
                         }
                         Err(_) => continue,
                     }

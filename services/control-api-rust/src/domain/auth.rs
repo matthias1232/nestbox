@@ -105,8 +105,7 @@ impl Permission {
             | Self::ProviderRead
             | Self::JobRead
             | Self::NodeRead
-            | Self::RecipeRead
-            | Self::AuditRead => Role::Viewer,
+            | Self::RecipeRead => Role::Viewer,
 
             Self::SandboxWrite
             | Self::SandboxExec
@@ -119,7 +118,9 @@ impl Permission {
 
             // Providers and their keys are shared by every user of the environment, so an
             // admin sets them; a user picks from what the admin made available.
-            Self::ProviderWrite
+            // The audit trail names every user's actions.
+            Self::AuditRead
+            | Self::ProviderWrite
             | Self::PolicyGlobal
             | Self::GatewayWrite
             | Self::SecretManage
