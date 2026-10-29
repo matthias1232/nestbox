@@ -30,7 +30,19 @@ from pydantic import BaseModel
 from app.images import image_allowed
 
 router = APIRouter()
-client = docker.from_env()
+_CLIENT: docker.DockerClient | None = None
+
+
+def client() -> docker.DockerClient:
+    """The Docker client, created on first use.
+
+    Lazy so the parsing rules can be tested without a socket: importing this
+    module must not need a container runtime.
+    """
+    global _CLIENT
+    if _CLIENT is None:
+        _CLIENT = docker.from_env()
+    return _CLIENT
 
 # Deliberately the same shape a package name has; the trailing `*` for dnf is
 # added inside the fixed script, not by the caller.
@@ -91,7 +103,7 @@ def _run(image: str, script: str, environment: dict[str, str], timeout: int = 18
     including a timeout, so a failed query cannot leave a process behind.
     """
     def create() -> Any:
-        return client.containers.create(
+        return client().containers.create(
             _allowed(image),
             command=["sh", "-c", script],
             environment=environment,
@@ -110,7 +122,7 @@ def _run(image: str, script: str, environment: dict[str, str], timeout: int = 18
         # The first search on a baseline pulls its image once; every later
         # search and every build then finds it locally.
         try:
-            client.images.pull(image)
+            client().images.pull(image)
         except APIError as exc:
             raise HTTPException(422, f"image '{image}' could not be pulled: {exc}") from exc
         try:
