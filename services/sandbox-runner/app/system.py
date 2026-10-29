@@ -239,8 +239,14 @@ def set_limits(service: str, body: ComponentLimits) -> dict[str, Any]:
     if "mem_limit" in update:
         update["memswap_limit"] = update["mem_limit"]
     try:
-        container.update(**update)
+        # The low-level call, not `Container.update`: this docker-py version's
+        # helper does not accept `pids_limit`, and passing it there raised a
+        # TypeError that reached the operator as "Internal Server Error". The
+        # engine's own API does accept every field the form offers.
+        container.client.api.update_container(container.id, **update)
     except DockerException as failure:
+        raise HTTPException(409, f"docker refused the change: {failure}") from failure
+    except TypeError as failure:  # noqa: BLE001 - a bad field must be a clear 409, not a 500
         raise HTTPException(409, f"docker refused the change: {failure}") from failure
     return {"service": service, "applied": "live", "changed": sorted(update)}
 
