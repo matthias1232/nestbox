@@ -18,6 +18,20 @@ RUN apt-get update \
         ca-certificates curl git jq less procps htop ripgrep vim tmux openssh-client python3 \
     && rm -rf /var/lib/apt/lists/*
 
+# Graphify: the local knowledge-graph MCP server an agent can be given.
+#
+# Installed here rather than in the home at run time, so a sandbox starts with the
+# command already on PATH and an offline sandbox still has it. A venv keeps it off
+# the system Python (PEP 668), and the pin is deliberate: the tool reads a graph
+# format, and a silent upgrade would change what the agent sees.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3-venv \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m venv /opt/graphify \
+    && /opt/graphify/bin/pip install --no-cache-dir graphifyy==0.7.5 \
+    && ln -sf /opt/graphify/bin/graphify /usr/local/bin/graphify \
+    && graphify --help >/dev/null
+
 RUN useradd --create-home --shell /bin/bash nestbox
 USER nestbox
 WORKDIR /home/nestbox
