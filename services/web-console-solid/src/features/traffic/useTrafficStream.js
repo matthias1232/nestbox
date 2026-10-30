@@ -82,7 +82,8 @@ function live(event, names) {
     path: null,
     status: null,
     tool: null,
-    channel: event.channel,
+    // A DNS event carries no channel on the wire; its kind is the channel.
+    channel: isDns ? 'dns' : event.channel,
     reason: event.reason || (event.rule_name ? `rule ${event.rule_name}` : null),
     binary: event.binary,
     country: null,
