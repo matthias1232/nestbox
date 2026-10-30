@@ -350,6 +350,18 @@ impl RuntimeAdapter for HttpRunner {
             .await
     }
 
+    async fn model_metrics(
+        &self,
+        model_key: &str,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        self.send::<serde_json::Value>(
+            reqwest::Method::GET,
+            &format!("/v1/models/{model_key}/metrics"),
+            None,
+        )
+        .await
+    }
+
     async fn install_libraries(
         &self,
         component: &str,

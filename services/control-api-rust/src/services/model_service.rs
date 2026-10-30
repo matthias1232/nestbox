@@ -836,6 +836,10 @@ pub struct InstallChange {
     pub reserved_vram_bytes: Option<i64>,
     /// `false` stops the server and frees the memory; `true` starts it again.
     pub enabled: Option<bool>,
+    /// The runtime flags to use from now on. A change to a running model
+    /// restarts it, because the flags are the command the container starts
+    /// with; a change to a stopped one is just saved.
+    pub settings: Option<crate::domain::model_install::ModelTuning>,
 }
 
 /// Edit an installed model: its reserved memory and whether it runs.
@@ -914,6 +918,24 @@ pub async fn update_install(
     let enabled = change.enabled.unwrap_or(install.enabled);
     let figures_changed =
         ram != install.reserved_ram_bytes || vram != install.reserved_vram_bytes;
+    // Tuning is validated here, not in the store: an impossible value is
+    // answered with the field that is wrong, and a merely expensive one is
+    // returned as a warning while the save proceeds.
+    let mut tuning_warnings: Vec<String> = Vec::new();
+    let settings_changed = match change.settings.as_ref() {
+        Some(settings) => {
+            tuning_warnings = settings
+                .validate()
+                .map_err(ApiError::validation)?;
+            settings != &install.settings
+        }
+        None => false,
+    };
+    if let Some(settings) = change.settings.as_ref() {
+        install_store::set_settings(&mut scope, install.id, settings)
+            .await
+            .map_err(ApiError::from)?;
+    }
 
     // Switching off: stop first, then release. A server that could not be
     // stopped keeps its reservation, because freeing memory a container still
@@ -985,7 +1007,14 @@ pub async fn update_install(
         let saved = install_store::set_reservation(&mut scope, install.id, ram, vram)
             .await
             .map_err(ApiError::from)?;
-        update_audit(&mut scope, principal, &saved, &node.name, "model.reserve").await?;
+        update_audit(
+            &mut scope,
+            principal,
+            &saved,
+            &node.name,
+            if settings_changed { "model.tune" } else { "model.reserve" },
+        )
+        .await?;
         scope.commit().await.map_err(ApiError::from)?;
         return Ok(serde_json::json!({
             "model_key": saved.model_key,
@@ -994,6 +1023,8 @@ pub async fn update_install(
             "state": saved.state.as_str(),
             "reserved_ram_bytes": saved.reserved_ram_bytes,
             "reserved_vram_bytes": saved.reserved_vram_bytes,
+            "settings": saved.settings,
+            "warnings": tuning_warnings,
             "note": "Saved. The model is off, so the figure counts against the node once it is switched on.",
         }));
     }
@@ -1001,7 +1032,7 @@ pub async fn update_install(
     // On, either newly or with other figures: the node has to hold them. A
     // model that is running already holds its old figures, so those are added
     // back before the check.
-    if install.enabled && !figures_changed {
+    if install.enabled && !figures_changed && !settings_changed {
         return Ok(serde_json::json!({
             "model_key": install.model_key,
             "node": node.name,
@@ -1009,6 +1040,8 @@ pub async fn update_install(
             "state": install.state.as_str(),
             "reserved_ram_bytes": install.reserved_ram_bytes,
             "reserved_vram_bytes": install.reserved_vram_bytes,
+            "settings": install.settings,
+            "warnings": tuning_warnings,
             "note": "Nothing to change.",
         }));
     }
@@ -1077,7 +1110,13 @@ pub async fn update_install(
         principal,
         &starting,
         &node.name,
-        if install.enabled { "model.reserve" } else { "model.enable" },
+        if settings_changed {
+            "model.tune"
+        } else if install.enabled {
+            "model.reserve"
+        } else {
+            "model.enable"
+        },
     )
     .await?;
     scope.commit().await.map_err(ApiError::from)?;
@@ -1117,6 +1156,8 @@ pub async fn update_install(
         "state": InstallState::Installing.as_str(),
         "reserved_ram_bytes": ram,
         "reserved_vram_bytes": vram,
+        "settings": starting.settings,
+        "warnings": tuning_warnings,
         "job_id": job.id,
         "note": "The server is starting with the new figures; the state moves to installed once it answers.",
     }))
@@ -1150,6 +1191,152 @@ async fn update_audit(
     )
     .await
     .map_err(ApiError::from)
+}
+
+/// The container name the runner gives a model server.
+///
+/// Kept identical to the runner's transform so a log or metrics request names
+/// the container that actually exists.
+fn model_container_name(key: &str) -> String {
+    format!(
+        "model-{}",
+        key.replace(['.', ':', '/'], "-").to_lowercase()
+    )
+}
+
+/// The last `tail` log lines of a served model.
+pub async fn logs(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    key: &str,
+    node_name: Option<&str>,
+    tail: u32,
+) -> Result<serde_json::Value, ApiError> {
+    require(principal, Permission::ModelRead)?;
+    let tail = tail.clamp(1, 2_000);
+    let node = resolve_node_for(ctx, principal, node_name).await?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
+        .await
+        .map_err(ApiError::from)?;
+    let install = install_store::get(&mut scope, key, node.id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| {
+            ApiError::not_found(
+                ErrorCode::MODEL_INSTALL_NOT_FOUND,
+                format!("'{key}' is not installed on node '{}'.", node.name),
+            )
+        })?;
+    scope.commit().await.map_err(ApiError::from)?;
+
+    let container = model_container_name(key);
+    let text = ctx.runtime.logs(&container, tail).await.map_err(|error| {
+        ApiError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            ErrorCode::NODE_RUNTIME_UNAVAILABLE,
+            format!("The logs of '{key}' could not be read: {error}"),
+        )
+    })?;
+    Ok(serde_json::json!({
+        "model_key": install.model_key,
+        "node": node.name,
+        "container": container,
+        "tail": tail,
+        "lines": text.lines().collect::<Vec<_>>(),
+    }))
+}
+
+/// Sample a served model's metrics, keep the sample, and return the series.
+///
+/// The series is what an operator sees after a spike; the sample is written
+/// even when nobody is looking at the page, because a graph that only exists
+/// while the tab is open cannot answer "what happened at 03:00".
+pub async fn metrics(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    key: &str,
+    node_name: Option<&str>,
+    limit: i64,
+) -> Result<serde_json::Value, ApiError> {
+    require(principal, Permission::ModelRead)?;
+    let limit = limit.clamp(1, 1_000);
+    let node = resolve_node_for(ctx, principal, node_name).await?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
+        .await
+        .map_err(ApiError::from)?;
+    let install = install_store::get(&mut scope, key, node.id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| {
+            ApiError::not_found(
+                ErrorCode::MODEL_INSTALL_NOT_FOUND,
+                format!("'{key}' is not installed on node '{}'.", node.name),
+            )
+        })?;
+    let consumers = match install.provider_profile_id {
+        Some(profile_id) => install_store::sandboxes_using_profile(&mut scope, profile_id)
+            .await
+            .map_err(ApiError::from)?,
+        None => Vec::new(),
+    };
+    scope.commit().await.map_err(ApiError::from)?;
+
+    let sampled = ctx.runtime.model_metrics(key).await;
+    let current = match sampled {
+        Ok(value) => {
+            let metrics = value
+                .get("metrics")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let mut scope = TenantScope::begin_for(&ctx.pool, principal)
+                .await
+                .map_err(ApiError::from)?;
+            crate::store::postgres::model_metrics::insert(
+                &mut scope,
+                &install.model_key,
+                node.id,
+                &metrics,
+            )
+            .await
+            .map_err(ApiError::from)?;
+            scope.commit().await.map_err(ApiError::from)?;
+            Some(metrics)
+        }
+        Err(error) => {
+            return Ok(serde_json::json!({
+                "model_key": install.model_key,
+                "node": node.name,
+                "available": false,
+                "reason": error.to_string(),
+                "series": [],
+                "consumers": consumers,
+            }));
+        }
+    };
+
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
+        .await
+        .map_err(ApiError::from)?;
+    let series = crate::store::postgres::model_metrics::list(
+        &mut scope,
+        &install.model_key,
+        limit,
+    )
+    .await
+    .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+
+    Ok(serde_json::json!({
+        "model_key": install.model_key,
+        "node": node.name,
+        "available": true,
+        "current": current,
+        "series": series
+            .into_iter()
+            .map(|(at, metrics)| serde_json::json!({ "at": at, "metrics": metrics }))
+            .collect::<Vec<_>>(),
+        "consumers": consumers,
+    }))
 }
 
 /// The `model_install` job body: fetch, start, probe, record.
@@ -1272,7 +1459,10 @@ pub async fn run_install(
     //    mounts beyond the read-only model directory.
     let threads = node_budget_cores(ctx, environment_id, node.id).await;
     let model_path = format!("/models/{}", artifact.file);
-    let command = image.command_for(&model_path, threads);
+    // The image's own command is the default; the operator's tuning replaces
+    // the flags it controls instead of appending a second copy of them.
+    let mut command = image.command_for(&model_path, threads);
+    install.settings.apply(&mut command, threads);
     let memory_limit = install.reserved_ram_bytes.max(512 * 1024 * 1024);
 
     set_phase(

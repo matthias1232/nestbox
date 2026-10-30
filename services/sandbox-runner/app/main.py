@@ -807,6 +807,10 @@ MODEL_DOWNLOAD_CEILING = int(os.getenv("NESTBOX_MODEL_MAX_BYTES", str(32 * 1024*
 CUDAX_IMAGES = set(filter(None, os.getenv("NESTBOX_CUDAX_IMAGES", "").split(",")))
 CUDAX_COMPONENT = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 MODEL_CONTAINER_PATH = "/models"
+# The port each served model listens on. `serve_model` records it, `stop_model`
+# forgets it; the metrics endpoint uses it to reach the server inside the
+# runtime network, where the control plane cannot go.
+MODEL_PORTS: dict[str, int] = {}
 
 
 def model_key(value: str) -> str:
@@ -1006,6 +1010,7 @@ def serve_model(body: ModelServeRequest) -> dict[str, Any]:
         )
     except DockerException as exc:
         raise HTTPException(400, f"the model server did not start: {exc}") from exc
+    MODEL_PORTS[key] = body.port
     return {"name": name, "container_id": container.id, "status": container.status}
 
 
@@ -1027,9 +1032,73 @@ def inspect_model(key: str) -> dict[str, Any]:
     }
 
 
+def parse_prometheus(text: str) -> dict[str, float]:
+    """Turn a Prometheus exposition body into `{series: value}`.
+
+    Only the latest sample of each series is kept. Histogram buckets are kept
+    with their `le` label, because they are what a latency graph needs; comment
+    and metadata lines are ignored.
+    """
+    metrics: dict[str, float] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        name, _, value = line.rpartition(" ")
+        try:
+            metrics[name] = float(value)
+        except ValueError:
+            continue
+    return metrics
+
+
+@app.get("/v1/models/{key}/metrics")
+def model_metrics(key: str) -> dict[str, Any]:
+    """Read the served model's own metrics.
+
+    llama.cpp exposes them on the port the container listens on when it was
+    started with `--metrics`. The runner is on the same network, so it asks the
+    container directly; a model that is not running, or that was started
+    without metrics, is a 503 with the reason instead of an empty graph.
+    """
+    import urllib.error
+    import urllib.request
+
+    key = model_key(key)
+    name = model_container(key)
+    port = MODEL_PORTS.get(key)
+    if port is None:
+        try:
+            item = client.containers.get(name)
+            item.reload()
+        except NotFound:
+            raise HTTPException(404, f"no model server {name}") from None
+        # The port is the first exposed one; serve_model always publishes one.
+        exposed = item.attrs.get("Config", {}).get("ExposedPorts") or {}
+        for spec in exposed:
+            candidate = spec.split("/")[0]
+            if candidate.isdigit():
+                port = int(candidate)
+                break
+    if port is None:
+        raise HTTPException(503, f"{name} does not report a port to read metrics from")
+    url = f"http://{name}:{port}/metrics"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:  # noqa: S310
+            body = response.read().decode("utf-8", "replace")
+    except (urllib.error.URLError, OSError) as exc:
+        raise HTTPException(
+            503,
+            f"the model server did not answer {url}: {exc}. Start it with --metrics.",
+        ) from exc
+    return {"model_key": key, "container": name, "metrics": parse_prometheus(body)}
+
+
 @app.delete("/v1/models/serve/{key}")
 def stop_model(key: str) -> dict[str, Any]:
-    name = model_container(model_key(key))
+    key = model_key(key)
+    name = model_container(key)
+    MODEL_PORTS.pop(key, None)
     try:
         item = client.containers.get(name)
     except NotFound:

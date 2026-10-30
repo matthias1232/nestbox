@@ -357,6 +357,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/models/{key}/install", post(models::install))
         .route("/api/v1/models/{key}/uninstall", post(models::uninstall))
         .route("/api/v1/models/{key}/install", patch(models::update_install))
+        .route("/api/v1/models/{key}/logs", get(models::logs))
+        .route("/api/v1/models/{key}/metrics", get(models::metrics))
         // Nodes
         .route("/api/v1/nodes", get(nodes::list))
         .route("/api/v1/nodes/{id}", get(nodes::get))
