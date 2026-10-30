@@ -715,16 +715,25 @@ async fn download_asset(
     credential: Option<&str>,
     kind: MediaKind,
 ) -> Result<(Vec<u8>, String), String> {
-    let mut call = client.get(asset_url);
-    if origin(endpoint) == origin(asset_url) {
-        if let Some(credential) = credential {
-            call = call.bearer_auth(credential);
-        }
+    // A presigned link carries its own authorisation in the query string, and an
+    // extra `Authorization` header invalidates that signature — S3/R2 answer 401.
+    // So a URL with a query is never given our credential, and a 401 on a link we
+    // did sign is retried once without it.
+    let signed = asset_url.contains('?');
+    let same_host = host(endpoint) == host(asset_url);
+    let attach = credential.filter(|_| !signed && same_host);
+    let response = get_asset(client, asset_url, attach).await?;
+    let mut status = response.status();
+    let mut response = response;
+    if status == reqwest::StatusCode::UNAUTHORIZED && attach.is_some() {
+        response = get_asset(client, asset_url, None).await?;
+        status = response.status();
     }
-    let response = call.send().await.map_err(|error| format!("asset download failed: {error}"))?;
-    let status = response.status();
     if !status.is_success() {
-        return Err(format!("asset download answered {status}"));
+        return Err(format!(
+            "asset download answered {status} (host {})",
+            host(asset_url)
+        ));
     }
     let mime = response
         .headers()
@@ -739,11 +748,26 @@ async fn download_asset(
     Ok((bytes.to_vec(), mime))
 }
 
-/// `scheme://host[:port]` of a URL, for the credential-origin comparison.
-fn origin(url: &str) -> String {
-    let (scheme, rest) = url.split_once("://").unwrap_or(("", url));
-    let authority = rest.split('/').next().unwrap_or("");
-    format!("{scheme}://{authority}")
+async fn get_asset(
+    client: &reqwest::Client,
+    url: &str,
+    credential: Option<&str>,
+) -> Result<reqwest::Response, String> {
+    let mut call = client.get(url);
+    if let Some(value) = credential {
+        call = call.bearer_auth(value);
+    }
+    call.send().await.map_err(|error| format!("asset download failed: {error}"))
+}
+
+/// The `host[:port]` of a URL, for the credential comparison.
+///
+/// The scheme is ignored: a provider whose endpoint is `http://` inside the
+/// appliance may hand out an `https://` asset URL on the same host, and treating
+/// that as a stranger would drop a credential it actually needs.
+fn host(url: &str) -> String {
+    let rest = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
+    rest.split('/').next().unwrap_or("").to_string()
 }
 
 fn default_mime(kind: MediaKind) -> &'static str {
@@ -866,10 +890,10 @@ mod tests {
     }
 
     #[test]
-    fn the_credential_origin_is_the_scheme_and_host_only() {
-        assert_eq!(origin("https://api.example.com/v1/videos"), "https://api.example.com");
-        assert_eq!(origin("https://api.example.com"), "https://api.example.com");
-        assert_ne!(origin("https://cdn.example.com/a"), origin("https://api.example.com"));
+    fn the_credential_is_compared_by_host_not_scheme() {
+        assert_eq!(host("https://api.example.com/v1/videos"), "api.example.com");
+        assert_eq!(host("http://api.example.com/v1"), "api.example.com");
+        assert_ne!(host("https://cdn.example.com/a"), host("https://api.example.com"));
     }
 
     #[test]
