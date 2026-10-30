@@ -266,6 +266,53 @@ export default function BuilderPage() {
     await loadForBaseline(chosen.baseline_key || baseline());
   }
 
+  // A template is edited as a whole because the server replaces the selection;
+  // sending the fields we are not changing keeps that explicit.
+  async function patchTemplate(template, patch) {
+    setBusy(true);
+    setError(null);
+    try {
+      await templatesApi.update(template.id, {
+        name: template.name,
+        description: template.description,
+        baseline_key: template.baseline_key,
+        tools: template.tools,
+        extra_packages: template.extra_packages,
+        repositories: template.repositories,
+        mcp_server_keys: template.mcp_server_keys,
+        is_default: template.is_default,
+        is_shared: template.is_shared,
+        ...patch,
+      });
+      const answer = await templatesApi.list();
+      setTemplates(answer.items || []);
+      setNotice(`Template "${template.name}" updated.`);
+    } catch (failure) {
+      setError(failure.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeTemplate(template) {
+    if (!window.confirm(`Delete the template "${template.name}"? Recipes that used it keep their copy.`)) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await templatesApi.remove(template.id);
+      const answer = await templatesApi.list();
+      setTemplates(answer.items || []);
+      if (templateChoice() === template.id) setTemplateChoice('');
+      setNotice(`Template "${template.name}" deleted.`);
+    } catch (failure) {
+      setError(failure.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveTemplate() {
     const form = templateForm();
     setBusy(true);
@@ -635,6 +682,31 @@ export default function BuilderPage() {
                 </button>
               </div>
             </Show>
+            <For each={templates()}>
+              {(template) => (
+                <div class="builder-agent">
+                  <span class="small">
+                    {template.is_default ? '★ ' : ''}{template.name}
+                    {template.is_shared ? '' : ' (private)'}
+                  </span>
+                  <span class="muted small">
+                    {template.extra_packages.length} pkgs · {template.repositories.length} repos ·{' '}
+                    {template.mcp_server_keys.length} MCP
+                  </span>
+                  <button class="secondary" disabled={busy() || template.is_default}
+                          onClick={() => patchTemplate(template, { is_default: true })}>
+                    Make default
+                  </button>
+                  <button class="secondary" disabled={busy()}
+                          onClick={() => patchTemplate(template, { is_shared: !template.is_shared })}>
+                    {template.is_shared ? 'Unshare' : 'Share'}
+                  </button>
+                  <button class="secondary" disabled={busy()} onClick={() => removeTemplate(template)}>
+                    Delete
+                  </button>
+                </div>
+              )}
+            </For>
             <label class="builder-field">
               New template name
               <input class="builder-input" value={templateForm().name}
