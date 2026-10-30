@@ -44,6 +44,24 @@ def psql(sql: str) -> None:
     )
 
 
+def wait_for_api(seconds: int = 240) -> None:
+    """Wait until the control plane answers health again.
+
+    The box is shared: a parallel deploy stops and recreates the API while this
+    script runs. Waiting is what keeps that from reading as a feature failure.
+    """
+    start = time.time()
+    while time.time() - start < seconds:
+        try:
+            with urllib.request.urlopen(BASE + "/healthz", timeout=5) as answer:
+                if answer.status == 200:
+                    return
+        except OSError:
+            pass
+        time.sleep(5)
+    raise SystemExit("the control API did not come back within the wait window")
+
+
 def call(path: str, method: str = "GET", body=None, expect=None):
     data = None if body is None else json.dumps(body).encode()
 
@@ -65,7 +83,7 @@ def call(path: str, method: str = "GET", body=None, expect=None):
     try:
         status, payload = attempt()
     except (ConnectionResetError, urllib.error.URLError):
-        time.sleep(10)
+        wait_for_api()
         status, payload = attempt()
     if expect is not None and status not in (expect if isinstance(expect, (set, tuple, list)) else {expect}):
         raise AssertionError(f"{method} {path} -> {status}: {payload[:400]!r}")
@@ -256,6 +274,7 @@ def main() -> int:
         f"SELECT id, 'acceptance', '{digest}', now() + interval '45 minutes' "
         "FROM users WHERE role = 'admin' ORDER BY created_at LIMIT 1;\n"
     )
+    wait_for_api()
     recipes: list[str] = []
     templates: list[str] = []
     images: list[str] = []
