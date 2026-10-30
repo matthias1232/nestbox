@@ -18,6 +18,7 @@ points at the places that implement it.
 | How the live console gets its data | `telemetry.md` |
 | How models are installed and served | `models.md` |
 | What goes into a built image, and why a build is verified | `builder.md` |
+| How an agent renders images, video and music, and who decides the model | `media.md` |
 | How gateways and supervisors relate | `gateways.md` |
 | What the security posture is | `security.md` |
 | What M1 deliberately does not do | `../architecture/scope.md` |
