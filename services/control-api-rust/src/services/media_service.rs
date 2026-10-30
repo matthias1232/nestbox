@@ -28,7 +28,7 @@ use super::access_control::require;
 use super::{secret_service, ServiceContext};
 use crate::domain::auth::{Permission, Principal};
 use crate::domain::media::{
-    effective, refusal, MediaKind, MediaSettings, MediaTarget, SandboxMediaSettings,
+    effective, refusal, MediaKind, MediaSettings, MediaTarget, SandboxMediaSettings, UserMediaGrant,
 };
 use crate::domain::provider::ProviderProfile;
 use crate::error::{ApiError, ErrorCode};
@@ -126,6 +126,52 @@ fn media_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/var/lib/nestbox/media"))
 }
 
+/// One person's effective release, for the admin screen.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct UserMediaView {
+    pub user_id: Uuid,
+    pub display_name: String,
+    pub email: String,
+    /// The explicit row, or the inherited default (no list, may configure).
+    pub grant: UserMediaGrant,
+    /// Whether a row exists. An inherited person follows the environment.
+    pub explicit: bool,
+}
+
+/// Whether a person is restricted by a grant at all. An admin never is: the
+/// appliance's administrator is the one who writes the lists.
+fn grant_for<'a>(principal: &Principal, grant: Option<&'a UserMediaGrant>) -> Option<&'a UserMediaGrant> {
+    match principal.role {
+        crate::domain::auth::Role::Admin => None,
+        _ => grant,
+    }
+}
+
+/// The providers this person may see, and which of them the environment allows.
+///
+/// A non-admin sees only what both gates allow; an admin sees every profile so
+/// the default and the allow-list can be set without a second screen.
+fn visible_provider_views(
+    profiles: &[ProviderProfile],
+    settings: &MediaSettings,
+    grant: Option<&UserMediaGrant>,
+    is_admin: bool,
+) -> Vec<MediaProvider> {
+    profiles
+        .iter()
+        .filter(|profile| is_admin || settings.permits(profile.id, true))
+        .filter(|profile| is_admin || grant.is_none_or(|grant| grant.permits(profile.id)))
+        .map(|profile| MediaProvider {
+            id: profile.id,
+            name: profile.name.clone(),
+            kind: profile.kind.as_str().to_string(),
+            model: profile.model.clone(),
+            allowed: settings.permits(profile.id, true)
+                && grant.is_none_or(|grant| grant.permits(profile.id)),
+        })
+        .collect()
+}
+
 fn provider_views(profiles: &[ProviderProfile], settings: &MediaSettings) -> Vec<MediaProvider> {
     profiles
         .iter()
@@ -145,8 +191,15 @@ pub async fn settings(ctx: &ServiceContext, principal: &Principal) -> Result<Med
     let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
     let settings = store::settings(&mut scope).await.map_err(ApiError::from)?;
     let profiles = provider_store::list(&mut scope).await.map_err(ApiError::from)?;
+    let grant = store::find_user_grant(&mut scope, principal.user_id)
+        .await
+        .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
-    Ok(MediaView { providers: provider_views(&profiles, &settings), settings })
+    let is_admin = principal.role == crate::domain::auth::Role::Admin;
+    Ok(MediaView {
+        providers: visible_provider_views(&profiles, &settings, grant_for(principal, grant.as_ref()), is_admin),
+        settings,
+    })
 }
 
 /// Replace the environment default. Admin only: this is what every sandbox
@@ -209,7 +262,11 @@ pub async fn sandbox(
         .await
         .map_err(ApiError::from)?
         .unwrap_or_default();
+    let grant = store::find_user_grant(&mut scope, principal.user_id)
+        .await
+        .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
+    let is_admin = principal.role == crate::domain::auth::Role::Admin;
     Ok(SandboxMediaView {
         sandbox_id,
         effective: EffectiveMedia {
@@ -223,7 +280,7 @@ pub async fn sandbox(
             music: override_settings.music.is_none(),
         },
         override_settings,
-        providers: provider_views(&profiles, &global),
+        providers: visible_provider_views(&profiles, &global, grant_for(principal, grant.as_ref()), is_admin),
     })
 }
 
@@ -243,6 +300,17 @@ pub async fn set_sandbox(
     let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
     let global = store::settings(&mut scope).await.map_err(ApiError::from)?;
     let profiles = provider_store::list(&mut scope).await.map_err(ApiError::from)?;
+    let grant = store::find_user_grant(&mut scope, principal.user_id)
+        .await
+        .map_err(ApiError::from)?;
+    let grant = grant_for(principal, grant.as_ref());
+    if let Some(grant) = grant {
+        if !grant.can_configure {
+            return Err(ApiError::refused(
+                "You may see these media models but not change what this sandbox uses.",
+            ));
+        }
+    }
     for (kind, target) in [
         (MediaKind::Image, settings.image.as_ref()),
         (MediaKind::Video, settings.video.as_ref()),
@@ -252,6 +320,13 @@ pub async fn set_sandbox(
             let exists = profiles.iter().any(|profile| profile.id == target.provider_id);
             if let Some(reason) = refusal(&global, kind, target, exists) {
                 return Err(ApiError::validation(reason));
+            }
+            if let Some(grant) = grant {
+                if !grant.permits(target.provider_id) {
+                    return Err(ApiError::validation(
+                        "This media provider is not released to you.",
+                    ));
+                }
             }
         }
     }
@@ -438,6 +513,18 @@ pub async fn render(
         .ok_or_else(|| ApiError::validation("The selected media provider no longer exists."))?;
     if let Some(reason) = refusal(&global, kind, &target, true) {
         return Err(ApiError::refused(reason));
+    }
+    // The sandbox owner's release applies to what their agent may render, not
+    // only to what they may choose in the console. A shared sandbox has no
+    // owner, so the environment allow-list is its only bound.
+    if let Some(owner) = store::sandbox_owner(&mut scope, sandbox_id).await.map_err(ApiError::from)? {
+        if let Some(grant) = store::find_user_grant(&mut scope, owner).await.map_err(ApiError::from)? {
+            if !grant.permits(target.provider_id) {
+                return Err(ApiError::refused(
+                    "This media provider is not released to the owner of this sandbox.",
+                ));
+            }
+        }
     }
     let render_id = store::insert_render(
         &mut scope,
@@ -636,4 +723,83 @@ mod tests {
         assert_eq!(extension_for("video/webm", MediaKind::Video), "webm");
         assert_eq!(extension_for("application/octet-stream", MediaKind::Music), "mp3");
     }
+}
+
+// --- per-user release ------------------------------------------------------
+
+/// Every person of this environment with their effective media release.
+///
+/// Admin only: the list names who may use which provider, which is exactly the
+/// decision an admin makes and nobody else needs to read.
+pub async fn user_grants(
+    ctx: &ServiceContext,
+    principal: &Principal,
+) -> Result<Vec<UserMediaView>, ApiError> {
+    require(principal, Permission::MediaConfigure)?;
+    let users = super::user_service::list(ctx, principal).await?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
+    let grants = store::list_user_grants(&mut scope).await.map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    let by_user: std::collections::HashMap<Uuid, UserMediaGrant> = grants.into_iter().collect();
+    Ok(users
+        .into_iter()
+        .map(|user| {
+            let explicit = by_user.get(&user.id).cloned();
+            UserMediaView {
+                user_id: user.id,
+                display_name: user.display_name.clone(),
+                email: user.email.clone(),
+                grant: explicit
+                    .clone()
+                    .unwrap_or(UserMediaGrant { provider_ids: vec![], can_configure: true }),
+                explicit: explicit.is_some(),
+            }
+        })
+        .collect())
+}
+
+/// Release a set of providers to one person, or take the release back.
+///
+/// An empty list with `can_configure` restores inheritance (the row is removed),
+/// which is why this looks like a delete for the common "give them everything"
+/// case. Every named provider must exist in this environment.
+pub async fn set_user_grant(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    user_id: Uuid,
+    grant: UserMediaGrant,
+) -> Result<UserMediaView, ApiError> {
+    require(principal, Permission::MediaConfigure)?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
+    let profiles = provider_store::list(&mut scope).await.map_err(ApiError::from)?;
+    for provider_id in &grant.provider_ids {
+        if !profiles.iter().any(|profile| profile.id == *provider_id) {
+            return Err(ApiError::validation(
+                "The release names a provider that does not exist in this environment.",
+            ));
+        }
+    }
+    store::upsert_user_grant(&mut scope, user_id, &grant, principal.user_id)
+        .await
+        .map_err(ApiError::from)?;
+    crate::store::postgres::audit::record(
+        &mut scope,
+        crate::store::postgres::audit::NewAuditEvent {
+            actor_id: Some(principal.user_id),
+            actor_label: &principal.display_name,
+            kind: "media.grant",
+            subject_type: Some("user"),
+            subject_id: Some(user_id),
+            detail: &json!({ "provider_ids": grant.provider_ids, "can_configure": grant.can_configure }),
+            request_id: None,
+        },
+    )
+    .await
+    .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    user_grants(ctx, principal)
+        .await?
+        .into_iter()
+        .find(|view| view.user_id == user_id)
+        .ok_or_else(|| ApiError::not_found(ErrorCode::NOT_FOUND, "No such user in this environment."))
 }

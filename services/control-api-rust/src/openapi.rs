@@ -251,7 +251,9 @@ pub const OPERATIONS: &[Operation] = &[
     op("GET", "/api/v1/internal/media/info", "Whether the media bridge is available (media token)", "media", "node", false, StreamKind::None),
     op("GET", "/api/v1/internal/media/renders/{id}/asset", "The bytes of one render, for the media bridge (media token)", "media", "node", false, StreamKind::None),
     // Media settings and renders
-    op("GET", "/api/v1/media/settings", "Environment default and allowed media providers", "media", "viewer", false, StreamKind::None),
+    op("GET", "/api/v1/media/settings", "Environment default and the media providers this person may see", "media", "viewer", false, StreamKind::None),
+    op("GET", "/api/v1/media/users", "Every person with their effective media release", "media", "admin", false, StreamKind::None),
+    op("PUT", "/api/v1/media/users/{id}", "Release media providers to one person, or take them back", "media", "admin", true, StreamKind::None),
     op("PUT", "/api/v1/media/settings", "Set the environment media default and allow-list", "media", "admin", true, StreamKind::None),
     op("GET", "/api/v1/sandboxes/{id}/media", "Effective and overridden media models for a sandbox", "media", "viewer", false, StreamKind::None),
     op("PUT", "/api/v1/sandboxes/{id}/media", "Choose a sandbox's own media models from the allowed set", "media", "operator", true, StreamKind::None),

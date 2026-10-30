@@ -9,3 +9,8 @@ export const saveSandbox = (sandboxId, body) =>
   request(`sandboxes/${sandboxId}/media`, { method: 'PUT', body });
 export const renders = (sandboxId, limit = 50) =>
   request(`sandboxes/${sandboxId}/media/renders?limit=${encodeURIComponent(limit)}`);
+
+// Who may see and choose which media provider. Admin only.
+export const users = () => request('media/users');
+export const setUserGrant = (userId, body) =>
+  request(`media/users/${userId}`, { method: 'PUT', body });

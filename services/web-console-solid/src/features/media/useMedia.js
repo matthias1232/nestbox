@@ -17,6 +17,7 @@ export function useMedia() {
   const [view, setView] = createSignal(null);
   const [sandboxView, setSandboxView] = createSignal(null);
   const [renders, setRenders] = createSignal([]);
+  const [users, setUsers] = createSignal([]);
   const [error, setError] = createSignal(null);
   const [notice, setNotice] = createSignal(null);
   const [busy, setBusy] = createSignal(false);
@@ -27,6 +28,31 @@ export function useMedia() {
       setView(await api.settings());
     } catch (failure) {
       setError(failure.message || 'The media settings could not be read.');
+    }
+  }
+
+  /// The admin list of releases. A failure here is not a page error: the
+  /// default above still works, and a viewer is not supposed to read it.
+  async function loadUsers() {
+    try {
+      setUsers(await api.users());
+    } catch {
+      setUsers([]);
+    }
+  }
+
+  async function saveUserGrant(userId, draft) {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api.setUserGrant(userId, draft);
+      await loadUsers();
+      setNotice('Release saved.');
+    } catch (failure) {
+      setError(failure.message || 'The release could not be saved.');
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -76,12 +102,15 @@ export function useMedia() {
   return {
     KINDS,
     view,
+    users,
     sandboxView,
     renders,
     error,
     notice,
     busy,
     load,
+    loadUsers,
+    saveUserGrant,
     loadSandbox,
     save,
     saveSandbox,

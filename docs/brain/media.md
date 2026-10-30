@@ -69,5 +69,5 @@ A server that needs a token gets a **reference** (`${NESTBOX_MEDIA_TOKEN}` or
 * The provider protocol is OpenAI-shaped plus three documented paths, overridable
   per provider via `labels.media_path_image`, `media_path_video`,
   `media_path_music`.
-* Per-user model visibility needs a user-level permission list; today the
-  allow-list is per environment (ADR 0039).
+* A person's release (`user_media_grants`) narrows the environment allow-list and
+  can make the choice read-only; an admin is never restricted (ADR 0040).

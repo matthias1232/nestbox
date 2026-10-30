@@ -78,10 +78,8 @@ model drew this?" unanswerable after the fact.
 
 ## Not decided here
 
-* **Per-user model visibility.** The allow-list is per environment. A user-level
-  list ("this user may see these providers") needs the permission system ADR 0004
-  deliberately left coarse; the settings shape here is ready for it, because a
-  sandbox choice is already validated against a set the server owns.
+* **Per-user model visibility** — decided in ADR 0040 (`user_media_grants`):
+  the environment allow-list is the outer bound, a person's release narrows it.
 * **Async rendering and progress.** A job table would make a long video
   observable while it renders. The render row already carries the states
   (`queued`, `running`, `done`, `error`); nothing yet moves them in the

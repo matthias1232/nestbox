@@ -202,3 +202,42 @@ pub async fn bridge_asset(
     )
         .into_response())
 }
+
+/// Releasing a provider to a person, or taking the release back.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UserGrantBody {
+    /// Empty means "everything the environment allows".
+    #[serde(default)]
+    pub provider_ids: Vec<Uuid>,
+    /// False lets the person see the models without changing a sandbox.
+    #[serde(default = "default_can_configure")]
+    pub can_configure: bool,
+}
+
+fn default_can_configure() -> bool {
+    true
+}
+
+/// Every person with their effective media release. Admin only.
+pub async fn user_grants(
+    State(state): State<AppState>,
+    auth: Auth,
+) -> Result<Json<Vec<media_service::UserMediaView>>, ApiError> {
+    Ok(Json(media_service::user_grants(&state.services, &auth.principal).await?))
+}
+
+/// Set one person's release. Admin only, checked in the service.
+pub async fn set_user_grant(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(user_id): Path<Uuid>,
+    Json(body): Json<UserGrantBody>,
+) -> Result<Json<media_service::UserMediaView>, ApiError> {
+    let grant = crate::domain::media::UserMediaGrant {
+        provider_ids: body.provider_ids,
+        can_configure: body.can_configure,
+    };
+    Ok(Json(
+        media_service::set_user_grant(&state.services, &auth.principal, user_id, grant).await?,
+    ))
+}

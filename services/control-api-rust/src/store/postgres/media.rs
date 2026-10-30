@@ -10,7 +10,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use super::super::TenantScope;
-use crate::domain::media::{MediaKind, MediaSettings, MediaTarget, SandboxMediaSettings};
+use crate::domain::media::{MediaKind, MediaSettings, MediaTarget, SandboxMediaSettings, UserMediaGrant};
 use crate::error::StoreError;
 
 /// One render as the API reports it: the prompt and where the asset is, never
@@ -314,4 +314,103 @@ pub async fn environment_ids(pool: &sqlx::PgPool) -> Result<Vec<Uuid>, StoreErro
         .fetch_all(pool)
         .await?;
     Ok(ids)
+}
+
+// --- per-user grants -------------------------------------------------------
+
+/// What one person may see and choose in this environment, if a row exists.
+pub async fn find_user_grant(
+    scope: &mut TenantScope<'_>,
+    user_id: Uuid,
+) -> Result<Option<UserMediaGrant>, StoreError> {
+    let row = sqlx::query(
+        "SELECT provider_ids, can_configure FROM user_media_grants WHERE user_id = $1 AND environment_id = $2",
+    )
+    .bind(user_id)
+    .bind(scope.environment_id())
+    .fetch_optional(scope.connection())
+    .await?;
+    let Some(row) = row else { return Ok(None) };
+    Ok(Some(UserMediaGrant {
+        provider_ids: row.try_get("provider_ids")?,
+        can_configure: row.try_get("can_configure")?,
+    }))
+}
+
+/// Write (or clear) a person's grant.
+///
+/// A row that grants everything and restricts nothing is deleted instead: an
+/// absent row means "inherit", and storing a no-op row would freeze the person
+/// against a later change of the environment default.
+pub async fn upsert_user_grant(
+    scope: &mut TenantScope<'_>,
+    user_id: Uuid,
+    grant: &UserMediaGrant,
+    updated_by: Uuid,
+) -> Result<(), StoreError> {
+    if grant.provider_ids.is_empty() && grant.can_configure {
+        sqlx::query("DELETE FROM user_media_grants WHERE user_id = $1 AND environment_id = $2")
+            .bind(user_id)
+            .bind(scope.environment_id())
+            .execute(scope.connection())
+            .await?;
+        return Ok(());
+    }
+    sqlx::query(
+        "INSERT INTO user_media_grants
+             (user_id, environment_id, provider_ids, can_configure, updated_by, updated_at)
+         VALUES ($1, $2, $3, $4, $5, now())
+         ON CONFLICT (user_id, environment_id) DO UPDATE
+            SET provider_ids = EXCLUDED.provider_ids,
+                can_configure = EXCLUDED.can_configure,
+                updated_by = EXCLUDED.updated_by,
+                updated_at = now()",
+    )
+    .bind(user_id)
+    .bind(scope.environment_id())
+    .bind(&grant.provider_ids)
+    .bind(grant.can_configure)
+    .bind(updated_by)
+    .execute(scope.connection())
+    .await?;
+    Ok(())
+}
+
+/// Every explicit grant in this environment, for the admin screen.
+pub async fn list_user_grants(
+    scope: &mut TenantScope<'_>,
+) -> Result<Vec<(Uuid, UserMediaGrant)>, StoreError> {
+    let rows = sqlx::query(
+        "SELECT user_id, provider_ids, can_configure FROM user_media_grants
+          WHERE environment_id = $1 ORDER BY user_id",
+    )
+    .bind(scope.environment_id())
+    .fetch_all(scope.connection())
+    .await?;
+    rows.iter()
+        .map(|row| {
+            Ok((
+                row.try_get("user_id")?,
+                UserMediaGrant {
+                    provider_ids: row.try_get("provider_ids")?,
+                    can_configure: row.try_get("can_configure")?,
+                },
+            ))
+        })
+        .collect()
+}
+
+/// The person who owns a sandbox, if it has one.
+///
+/// A grant is per person, so a render has to know whose grant applies. A shared
+/// sandbox (no owner) has none, and the environment allow-list is the only bound.
+pub async fn sandbox_owner(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+) -> Result<Option<Uuid>, StoreError> {
+    let owner = sqlx::query_scalar("SELECT owner_user_id FROM sandboxes WHERE id = $1")
+        .bind(sandbox_id)
+        .fetch_optional(scope.connection())
+        .await?;
+    Ok(owner.flatten())
 }

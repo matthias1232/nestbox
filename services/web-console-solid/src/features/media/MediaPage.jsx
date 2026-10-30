@@ -29,10 +29,12 @@ export default function MediaPage(props) {
   const [selectedSandbox, setSelectedSandbox] = createSignal('');
   const [draft, setDraft] = createSignal({ enabled: true, image: emptyTarget(), video: emptyTarget(), music: emptyTarget(), allowed_provider_ids: [] });
   const [sandboxDraft, setSandboxDraft] = createSignal({ image: emptyTarget(), video: emptyTarget(), music: emptyTarget() });
+  const [userDrafts, setUserDrafts] = createSignal({});
   const isAdmin = () => props.role === 'admin';
 
   onMount(async () => {
     await media.load();
+    if (props.role === 'admin') await media.loadUsers();
     try {
       setSandboxes((await sandboxApi.list({ limit: 200 })).items || []);
     } catch {
@@ -64,6 +66,19 @@ export default function MediaPage(props) {
       video: targetFrom(view.override_settings.video),
       music: targetFrom(view.override_settings.music),
     });
+  });
+
+  createEffect(() => {
+    const list = media.users();
+    if (!list.length) return;
+    const drafts = {};
+    for (const user of list) {
+      drafts[user.user_id] = {
+        provider_ids: [...(user.grant.provider_ids || [])],
+        can_configure: user.grant.can_configure,
+      };
+    }
+    setUserDrafts(drafts);
   });
 
   const providers = () => media.view()?.providers || [];
@@ -190,6 +205,96 @@ export default function MediaPage(props) {
             <p class="muted small">Only an admin can change the environment default and its allow-list.</p>
           </Show>
         </section>
+
+        <Show when={isAdmin()}>
+          <section class="editor">
+            <h3>User releases</h3>
+            <p class="muted small">
+              Which providers a person may see — and whether they may change their own sandbox's
+              choice. No tick means every provider the environment allows; “may choose” unticked
+              lets them see the models but not switch them. Admins are never restricted.
+            </p>
+            <div class="table-scroll">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Person</th>
+                    <th>Providers</th>
+                    <th>May choose</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <For each={media.users()}>
+                    {(user) => (
+                      <tr>
+                        <td>
+                          <div>{user.display_name || user.email}</div>
+                          <div class="muted small">{user.email}{user.explicit ? ' · released' : ' · inherits'}</div>
+                        </td>
+                        <td>
+                          <For each={providers()}>
+                            {(provider) => (
+                              <label class="field rp-check">
+                                <input
+                                  type="checkbox"
+                                  checked={(userDrafts()[user.user_id]?.provider_ids || []).includes(provider.id)}
+                                  onChange={(event) =>
+                                    setUserDrafts({
+                                      ...userDrafts(),
+                                      [user.user_id]: {
+                                        ...userDrafts()[user.user_id],
+                                        provider_ids: event.currentTarget.checked
+                                          ? [...(userDrafts()[user.user_id]?.provider_ids || []), provider.id]
+                                          : (userDrafts()[user.user_id]?.provider_ids || []).filter((id) => id !== provider.id),
+                                      },
+                                    })
+                                  }
+                                />
+                                {provider.name}
+                              </label>
+                            )}
+                          </For>
+                        </td>
+                        <td>
+                          <label class="field rp-check">
+                            <input
+                              type="checkbox"
+                              checked={userDrafts()[user.user_id]?.can_configure ?? true}
+                              onChange={(event) =>
+                                setUserDrafts({
+                                  ...userDrafts(),
+                                  [user.user_id]: {
+                                    ...userDrafts()[user.user_id],
+                                    can_configure: event.currentTarget.checked,
+                                  },
+                                })
+                              }
+                            />
+                          </label>
+                        </td>
+                        <td>
+                          <button
+                            class="tiny"
+                            disabled={media.busy()}
+                            onClick={() =>
+                              media.saveUserGrant(user.user_id, {
+                                provider_ids: userDrafts()[user.user_id]?.provider_ids || [],
+                                can_configure: userDrafts()[user.user_id]?.can_configure ?? true,
+                              })
+                            }
+                          >
+                            Save
+                          </button>
+                        </td>
+                      </tr>
+                    )}
+                  </For>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </Show>
 
         <section class="editor">
           <h3>Sandbox choice</h3>

@@ -139,6 +139,29 @@ impl SandboxMediaSettings {
     }
 }
 
+/// What one person may see and choose.
+///
+/// `None` (no row) is not the same as an empty list: no row means "inherit the
+/// environment", an empty list means "everything the environment allows". Both
+/// resolve to the same set today, and keeping them apart is what lets a later
+/// change of the default reach the people who never made a choice.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct UserMediaGrant {
+    pub provider_ids: Vec<Uuid>,
+    pub can_configure: bool,
+}
+
+impl UserMediaGrant {
+    /// Whether this person may see and use a provider.
+    ///
+    /// The environment allow-list is applied by the caller first: a grant can
+    /// only narrow. `None` inherits, so an untouched person is never blocked by
+    /// a list they never wrote.
+    pub fn permits(&self, provider_id: Uuid) -> bool {
+        self.provider_ids.is_empty() || self.provider_ids.contains(&provider_id)
+    }
+}
+
 /// The target that would answer this kind for this sandbox.
 ///
 /// Sandbox first, environment second. That order is the product promise: the
@@ -224,6 +247,20 @@ mod tests {
         assert!(MediaTarget::new(Uuid::nil(), "  ").is_err());
         assert!(MediaTarget::new(Uuid::nil(), &"x".repeat(201)).is_err());
         assert_eq!(MediaTarget::new(Uuid::nil(), " flux-1.1 ").unwrap().model, "flux-1.1");
+    }
+
+    #[test]
+    fn a_grant_with_no_list_permits_what_the_environment_permits() {
+        let grant = UserMediaGrant::default();
+        assert!(grant.permits(Uuid::nil()));
+    }
+
+    #[test]
+    fn a_grant_with_a_list_is_a_real_restriction() {
+        let allowed = Uuid::nil();
+        let grant = UserMediaGrant { provider_ids: vec![allowed], can_configure: true };
+        assert!(grant.permits(allowed));
+        assert!(!grant.permits(Uuid::max()));
     }
 
     #[test]

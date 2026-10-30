@@ -196,6 +196,8 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/media/settings",
             get(media::get_settings).put(media::put_settings),
         )
+        .route("/api/v1/media/users", get(media::user_grants))
+        .route("/api/v1/media/users/{id}", put(media::set_user_grant))
         .route(
             "/api/v1/sandboxes/{id}/media",
             get(media::sandbox_settings).put(media::put_sandbox_settings),

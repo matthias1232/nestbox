@@ -47,6 +47,7 @@ supersedes the old one and note the supersession in both files.
 | [0037](0037-keys-typed-into-the-console-are-stored-encrypted.md) | Keys typed into the console are stored encrypted, write-only | Accepted |
 | [0038](0038-a-user-owns-their-sandboxes.md) | A user owns their sandboxes; an admin sees and sets everything shared | Accepted |
 | [0039](0039-media-rendering-is-a-governed-capability.md) | Media rendering is a governed capability, not a provider key in the sandbox | Accepted |
+| [0040](0040-a-media-release-is-per-person.md) | A media release is per person, not only per environment | Accepted |
 
 ## Writing a new ADR
 
