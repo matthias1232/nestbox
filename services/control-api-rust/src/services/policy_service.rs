@@ -333,6 +333,34 @@ pub async fn delete_rule(
 }
 
 /// Draft a rule from a live event, without enforcing it (ADR 0011).
+/// The rule an approval should create, derived from the event that produced it.
+///
+/// A blocked request is the case where the useful answer is an allow: the
+/// operator saw a red line and wants that destination through. An allowed
+/// request that is being reviewed becomes a deny. Hardcoding either way makes
+/// "approve" mean the opposite of what the console shows, which is exactly the
+/// complaint that nothing could be released from the traffic view.
+fn draft_action_for(event: &serde_json::Value) -> &'static str {
+    match event.get("decision").and_then(|value| value.as_str()).unwrap_or("") {
+        "deny" | "blocked" | "default_deny" => "allow",
+        _ => "deny",
+    }
+}
+
+/// A rule protocol from its wire name, defaulting to `rest`.
+fn protocol_from(value: Option<&str>) -> crate::domain::policy::RuleProtocol {
+    use crate::domain::policy::RuleProtocol;
+    match value.unwrap_or("rest") {
+        "http" => RuleProtocol::Http,
+        "websocket" => RuleProtocol::Websocket,
+        "graphql" => RuleProtocol::Graphql,
+        "mcp" => RuleProtocol::Mcp,
+        "jsonrpc" => RuleProtocol::Jsonrpc,
+        "tcp" => RuleProtocol::Tcp,
+        _ => RuleProtocol::Rest,
+    }
+}
+
 pub async fn draft_from_event(
     ctx: &ServiceContext,
     principal: &Principal,
@@ -343,7 +371,7 @@ pub async fn draft_from_event(
     require(principal, Permission::PolicyWrite)?;
 
     let draft = serde_json::json!({
-        "action": "deny",
+        "action": draft_action_for(event),
         "host": event.get("destination").and_then(|v| v.as_str()).unwrap_or_default(),
         "port": event.get("port"),
         "protocol": event.get("protocol").and_then(|v| v.as_str()).unwrap_or("rest"),
@@ -438,29 +466,50 @@ pub async fn decide_draft(
 
     if approve {
         let draft = &decided.draft;
+        // The draft carries the decision the operator saw in the console: an
+        // approval of a blocked request has to allow it, and the protocol has to
+        // survive, or a released CONNECT would be stored as a `rest` rule and
+        // never match. The matchers are written in step with the flat fields so
+        // the compiled OpenShell policy and the egress decider agree.
+        let host = draft
+            .get("host")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let port = draft
+            .get("port")
+            .and_then(|v| v.as_i64())
+            .and_then(|p| i32::try_from(p).ok());
+        let protocol = protocol_from(draft.get("protocol").and_then(|v| v.as_str()));
+        let action = match draft.get("action").and_then(|v| v.as_str()) {
+            Some("allow") => crate::domain::policy::RuleAction::Allow,
+            _ => crate::domain::policy::RuleAction::Deny,
+        };
+        let mut matchers = Vec::new();
+        if !host.is_empty() {
+            matchers.push(crate::domain::policy::Matcher {
+                kind: crate::domain::policy::MatcherKind::Host,
+                value: Some(host.clone()),
+            });
+        }
+        if let Some(port) = port {
+            matchers.push(crate::domain::policy::Matcher {
+                kind: crate::domain::policy::MatcherKind::Port,
+                value: Some(port.to_string()),
+            });
+        }
         let rule = NetworkRule {
             id: Uuid::nil(),
             environment_id: principal.environment_id,
             policy_id: None,
             sandbox_id: decided.target_id,
-            name: draft
-                .get("host")
-                .and_then(|v| v.as_str())
-                .unwrap_or("from-event")
-                .to_string(),
-            action: crate::domain::policy::RuleAction::Deny,
-            host: draft
-                .get("host")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string(),
-            port: draft
-                .get("port")
-                .and_then(|v| v.as_i64())
-                .and_then(|p| i32::try_from(p).ok()),
-            protocol: crate::domain::policy::RuleProtocol::Rest,
+            name: if host.is_empty() { "from-event".to_string() } else { host.clone() },
+            action,
+            host,
+            port,
+            protocol,
             methods: Vec::new(),
-            matchers: Vec::new(),
+            matchers,
             binaries: Vec::new(),
             enforcement: crate::domain::policy::Enforcement::Enforced,
             priority: 100,
@@ -1368,6 +1417,35 @@ pub async fn deployment(
 ///
 /// Empty on the Docker runtime, where the sandbox reaches `egress-proxy:3128`
 /// on its own network and the policy is enforced by the proxy alone.
+#[cfg(test)]
+mod draft_tests {
+    use super::*;
+
+    #[test]
+    fn a_blocked_event_proposes_an_allow() {
+        let event = serde_json::json!({ "decision": "deny", "destination": "api.example.test" });
+        assert_eq!(draft_action_for(&event), "allow");
+    }
+
+    #[test]
+    fn a_default_deny_proposes_an_allow() {
+        let event = serde_json::json!({ "decision": "default_deny" });
+        assert_eq!(draft_action_for(&event), "allow");
+    }
+
+    #[test]
+    fn an_allowed_event_is_tightened_with_a_deny() {
+        let event = serde_json::json!({ "decision": "allow" });
+        assert_eq!(draft_action_for(&event), "deny");
+    }
+
+    #[test]
+    fn a_connect_keeps_its_protocol() {
+        assert_eq!(protocol_from(Some("tcp")), crate::domain::policy::RuleProtocol::Tcp);
+        assert_eq!(protocol_from(None), crate::domain::policy::RuleProtocol::Rest);
+    }
+}
+
 fn openshell_proxy_rules(sandbox_id: Uuid, environment_id: Uuid) -> Vec<NetworkRule> {
     if !crate::services::sandbox_service::openshell_runtime() {
         return Vec::new();
