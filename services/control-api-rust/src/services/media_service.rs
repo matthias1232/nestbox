@@ -738,7 +738,17 @@ async fn download_asset(
             status = response.status();
         }
     }
+    // Last resort: an appliance reaches its provider on an internal address while
+    // the provider hands out a public name on the same instance. If the public
+    // name refuses us (a WAF, a DNS split), the same path on the endpoint we
+    // already talk to is the same asset.
     if !status.is_success() {
+        if let Some(mirror) = via_endpoint(asset_url, endpoint) {
+            let retry = get_asset(client, &mirror, credential.filter(|_| !is_presigned(&mirror))).await?;
+            if retry.status().is_success() {
+                return read_asset(retry, kind).await;
+            }
+        }
         return Err(format!(
             "asset download answered {status} (host {})",
             host(asset_url)
@@ -750,11 +760,45 @@ async fn download_asset(
         .and_then(|value| value.to_str().ok())
         .map(|value| value.split(';').next().unwrap_or(value).to_string())
         .unwrap_or_else(|| default_mime(kind).to_string());
+    read_asset_with_mime(response, mime).await
+}
+
+/// The body of a successful download, with the mime type the provider sent.
+async fn read_asset(response: reqwest::Response, kind: MediaKind) -> Result<(Vec<u8>, String), String> {
+    let mime = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.split(';').next().unwrap_or(value).to_string())
+        .unwrap_or_else(|| default_mime(kind).to_string());
+    read_asset_with_mime(response, mime).await
+}
+
+async fn read_asset_with_mime(
+    response: reqwest::Response,
+    mime: String,
+) -> Result<(Vec<u8>, String), String> {
     let bytes = response.bytes().await.map_err(|error| format!("asset download failed: {error}"))?;
     if bytes.is_empty() {
         return Err("the provider returned an empty asset".into());
     }
     Ok((bytes.to_vec(), mime))
+}
+
+/// The same asset path on the endpoint this appliance already talks to.
+///
+/// Only the origin is replaced; the path and query stay, so a signed link keeps
+/// its signature. `None` when the origin is already the endpoint's.
+fn via_endpoint(asset_url: &str, endpoint: &str) -> Option<String> {
+    let target = host(asset_url);
+    let base = host(endpoint);
+    if target == base {
+        return None;
+    }
+    let rest = asset_url.split_once("://").map(|(_, rest)| rest)?;
+    let path = rest.find('/').map(|index| &rest[index..]).unwrap_or("/");
+    let scheme = endpoint.split_once("://").map(|(scheme, _)| scheme).unwrap_or("http");
+    Some(format!("{scheme}://{base}{path}"))
 }
 
 async fn get_asset(
@@ -926,6 +970,15 @@ mod tests {
         assert!(is_presigned("https://x/a.mp4?token=abc"));
         assert!(!is_presigned("https://x/a.mp4?id=7"));
         assert!(!is_presigned("https://x/a.mp4"));
+    }
+
+    #[test]
+    fn a_public_asset_link_can_be_mirrored_on_the_internal_endpoint() {
+        assert_eq!(
+            via_endpoint("https://llm.example.com/files/a.mp4?sig=1", "http://10.0.0.5:20128/v1"),
+            Some("http://10.0.0.5:20128/files/a.mp4?sig=1".to_string())
+        );
+        assert_eq!(via_endpoint("http://10.0.0.5:20128/files/a.mp4", "http://10.0.0.5:20128/v1"), None);
     }
 
     #[test]
