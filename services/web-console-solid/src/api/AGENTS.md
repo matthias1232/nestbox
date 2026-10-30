@@ -31,6 +31,7 @@ component never contains a URL.
 | `packs.js` | the agent-pack catalog, optionally narrowed to a baseline |
 | `policies.js` | policies, rules, drafts, traffic windows |
 | `telemetry.js` | history, facets, the SSE stream |
+| `traffic.js` | the environment-wide traffic list, with counts |
 | `cluster.js` | gateways, settings, sync, supervisors, topology |
 | `providers.js` | profiles, probe; locators only, never a value |
 | `models.js` | catalog with filters, hardware, facets, requirements, installs, install, uninstall |

@@ -45,7 +45,7 @@ the codebase where SQL appears.
 | `recipes.rs` | Recipes, the build outcome, applying a template, and the link from a sandbox to its recipe |
 | `image_templates.rs` | Saved builder selections, their sharing rule and the one default per environment |
 | `audit.rs` | Append-only audit writes |
-| `traffic.rs` | Traffic rows, window counts, map and live edges, one body read, MCP calls, effective rules, the two hashes behind "deployed" |
+| `traffic.rs` | Traffic rows for one sandbox and for a whole environment, window counts, map and live edges, one body read, MCP calls, effective rules, the two hashes behind "deployed" |
 | `geography.rs` | `host_geography`: the cached country and AS per destination host (global table, pool not scope) |
 | `terminal_sessions.rs` | Terminal sessions in `sandbox_sessions`: open, count for the limits, close. Never content (ADR 0023) |
 
@@ -58,9 +58,12 @@ time. Three consequences, all deliberate:
 1. **A malformed value is a `NULL`, not a failed page.** Every numeric field is
    guarded by a regex in SQL before its cast, so one bad line cannot blank a
    list of two hundred.
-2. **Two spellings are accepted for a destination** (`host` from the access log,
-   `destination` from the older telemetry type). A row written by either ingest
-   path appears; a reader that knew only one would show a gap where there is none.
+2. **Three spellings are accepted for a destination** (`host` from the access log,
+   `destination` from the older telemetry type, `hostname` from a DNS event,
+   which has no connection to name). A row written by any ingest path appears; a
+   reader that knew only one would show a gap where there is none. DNS rows are
+   read as evidence too (`kind IN ('network','dns')`), because a name lookup is
+   traffic and the operator asking "what did this sandbox reach" means both.
 3. **A row without a decision is not traffic.** `decide` answers in three words,
    and the first column of the table is that answer; inventing one would make the
    table an opinion.

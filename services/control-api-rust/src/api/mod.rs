@@ -153,6 +153,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/sandboxes/{id}/sessions", get(access::sessions))
         // Admin Center: traffic, map, effective policies, MCP calls
+        .route("/api/v1/traffic", get(traffic::environment))
         .route("/api/v1/sandboxes/{id}/traffic", get(traffic::traffic))
         .route(
             "/api/v1/sandboxes/{id}/traffic/{event_id}/body",

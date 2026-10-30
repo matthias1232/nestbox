@@ -51,15 +51,23 @@ pub const MAX_LIMIT: i64 = 200;
 /// The largest number of edges one map query may return.
 pub const MAX_EDGES: i64 = 500;
 
+/// The destination of a row, whichever ingest path wrote it.
+///
+/// Three spellings exist and all three are accepted: `host` from the proxy's
+/// access log, `destination` from the older telemetry type, and `hostname` from
+/// a DNS event, which has no connection to name. A reader that knew only one
+/// would show a gap where there is none.
+const HOST_EXPR: &str = r#"COALESCE(NULLIF(e.detail->>'host', ''), NULLIF(e.detail->>'destination', ''), NULLIF(e.detail->>'hostname', ''))"#;
+
 /// The columns of one traffic row, as read from the event detail.
 ///
-/// Named once so the row list, the summary, and both aggregate queries cannot
-/// drift apart in what they consider a request.
-const COLUMNS: &str = r#"
+/// Built from one expression per field so the row list, the summary, and both
+/// aggregate queries cannot drift apart in what they consider a request.
+const COLUMNS_SQL: &str = r#"
         e.id,
         e.sandbox_id,
         e.ts,
-        COALESCE(NULLIF(e.detail->>'host', ''), NULLIF(e.detail->>'destination', '')) AS host,
+        __HOST__ AS host,
         CASE WHEN COALESCE(e.detail->>'port', '') ~ '^[0-9]{1,5}$'
              THEN (e.detail->>'port')::integer ELSE 0 END AS port,
         COALESCE(NULLIF(e.detail->>'protocol', ''), 'tcp') AS protocol,
@@ -97,27 +105,51 @@ const COLUMNS: &str = r#"
         g.asn AS asn
 "#;
 
+/// The column list with the destination expression substituted.
+///
+/// The SQL is a plain constant and the substitution is a `replace`, not a
+/// `format!`: the regex guards contain `{1,5}`, which a format string reads as a
+/// placeholder and refuses.
+fn columns() -> String {
+    COLUMNS_SQL.replace("__HOST__", HOST_EXPR)
+}
+
 /// The predicate every traffic read shares.
 ///
-/// A row is traffic evidence when it is a network event for this tenant, inside
-/// the window, with a decision the vocabulary knows and a destination to show.
-/// Rows without a decision are not shown as traffic: they would need a decision
-/// invented for them, and the console's first column is the decision.
-const EVIDENCE: &str = r#"
-        e.kind = 'network'
+/// A row is traffic evidence when it is a connection *or* a name lookup for this
+/// tenant, inside the window, with a decision the vocabulary knows and a
+/// destination to show. Rows without a decision are not shown as traffic: they
+/// would need a decision invented for them, and the console's first column is
+/// the decision.
+fn evidence() -> String {
+    format!(
+        r#"
+        e.kind IN ('network', 'dns')
         AND e.ts >= $3
         AND e.ts <= $4
         AND COALESCE(e.detail->>'decision', '') IN ('allow', 'deny', 'audit')
-        AND COALESCE(NULLIF(e.detail->>'host', ''), NULLIF(e.detail->>'destination', '')) IS NOT NULL
-"#;
+        AND {HOST_EXPR} IS NOT NULL
+"#
+    )
+}
 
-/// The row predicate a filter adds. `$5` is the filter word.
-const FILTER: &str = r#"(
-        $5::text = 'all'
-        OR ($5::text = 'blocked' AND decision = 'deny')
-        OR ($5::text = 'allowed' AND decision IN ('allow', 'audit'))
-        OR ($5::text = 'mcp' AND protocol = 'mcp')
+/// The row predicate a filter adds, with the parameter slot left as a token.
+///
+/// The scoped queries bind the filter word at `$5` and the environment-wide ones
+/// at `$4`, because the environment query has no sandbox parameter. One source
+/// with a substituted slot is what keeps the four filter words from drifting
+/// apart between the two.
+const FILTER_SQL: &str = r#"(
+        __F__::text = 'all'
+        OR (__F__::text = 'blocked' AND decision = 'deny')
+        OR (__F__::text = 'allowed' AND decision IN ('allow', 'audit'))
+        OR (__F__::text = 'mcp' AND protocol = 'mcp')
     )"#;
+
+/// The filter predicate bound at one parameter slot.
+fn filter_at(slot: &str) -> String {
+    FILTER_SQL.replace("__F__", slot)
+}
 
 /// One sandbox's window: the CTE every scoped query is built on.
 ///
@@ -125,14 +157,16 @@ const FILTER: &str = r#"(
 fn base_scoped() -> String {
     format!(
         "WITH base AS (
-    SELECT {COLUMNS}
+    SELECT {columns}
       FROM telemetry_events e
       LEFT JOIN host_geography g
-             ON g.host = COALESCE(NULLIF(e.detail->>'host', ''), NULLIF(e.detail->>'destination', ''))
+             ON g.host = {HOST_EXPR}
      WHERE e.environment_id = $1
        AND e.sandbox_id = $2
-       AND {EVIDENCE}
-)"
+       AND {evidence}
+)",
+        columns = columns(),
+        evidence = evidence()
     )
 }
 
@@ -144,19 +178,20 @@ fn base_scoped() -> String {
 fn base_environment() -> String {
     format!(
         "WITH base AS (
-    SELECT {COLUMNS}, s.name AS sandbox_name, s.node_id AS node_id
+    SELECT {columns}, s.name AS sandbox_name, s.node_id AS node_id
       FROM telemetry_events e
       LEFT JOIN host_geography g
-             ON g.host = COALESCE(NULLIF(e.detail->>'host', ''), NULLIF(e.detail->>'destination', ''))
+             ON g.host = {HOST_EXPR}
       JOIN sandboxes s ON s.id = e.sandbox_id AND s.environment_id = e.environment_id
      WHERE e.environment_id = $1
        AND e.ts >= $2
        AND e.ts <= $3
        AND e.sandbox_id IS NOT NULL
-       AND e.kind = 'network'
+       AND e.kind IN ('network', 'dns')
        AND COALESCE(e.detail->>'decision', '') IN ('allow', 'deny', 'audit')
-       AND COALESCE(NULLIF(e.detail->>'host', ''), NULLIF(e.detail->>'destination', '')) IS NOT NULL
-)"
+       AND {HOST_EXPR} IS NOT NULL
+)",
+        columns = columns()
     )
 }
 
@@ -319,6 +354,7 @@ fn row_to_event(row: &sqlx::postgres::PgRow) -> Result<Option<TrafficEvent>, Sto
     Ok(Some(TrafficEvent {
         id: row.try_get("id")?,
         sandbox_id: row.try_get("sandbox_id")?,
+        sandbox_name: row.try_get("sandbox_name").unwrap_or(None),
         node_id: None,
         ts: row.try_get("ts")?,
         host: row.try_get("host")?,
@@ -385,12 +421,13 @@ pub async fn rows(
                 window_id, user_agent, mcp_session_id, mcp_method, mcp_tool, inspected,
                 channel, sni, listener, app_protocol, program, reason_text, country, asn
            FROM base
-          WHERE {FILTER}
+          WHERE {filter}
             AND ($6::text IS NULL OR host ILIKE '%' || $6 || '%')
             AND ($7::timestamptz IS NULL OR (ts, id) < ($7::timestamptz, $8::uuid))
           ORDER BY ts DESC, id DESC
           LIMIT $9",
-        base = base_scoped()
+        base = base_scoped(),
+        filter = filter_at("$5")
     );
 
     let (after_ts, after_id) = match query.after {
@@ -418,6 +455,158 @@ pub async fn rows(
         }
     }
     Ok(out)
+}
+
+/// One page request for the environment-wide traffic list.
+///
+/// The same window and filters as the per-sandbox list, plus an optional sandbox
+/// so one tab can be narrowed without a second endpoint. Every row carries the
+/// sandbox's name: the environment view is the one place an operator cannot tell
+/// two sandboxes apart from the id alone.
+#[derive(Debug, Clone, Copy)]
+pub struct EnvironmentRowQuery<'a> {
+    pub since: DateTime<Utc>,
+    pub until: DateTime<Utc>,
+    pub filter: Filter,
+    /// A case-insensitive fragment of the destination host.
+    pub host: Option<&'a str>,
+    /// Restrict to one sandbox, still tenant-scoped.
+    pub sandbox_id: Option<Uuid>,
+    /// The last row of the previous page: its timestamp and its id.
+    pub after: Option<(DateTime<Utc>, Uuid)>,
+    pub limit: i64,
+}
+
+/// Read one page of traffic across every sandbox of the environment.
+///
+/// Parameters are numbered from one because `base_environment` has no sandbox
+/// parameter: `$4` is the filter word, `$5` the optional sandbox.
+pub async fn rows_environment(
+    scope: &mut TenantScope<'_>,
+    query: EnvironmentRowQuery<'_>,
+) -> Result<Vec<TrafficEvent>, StoreError> {
+    let sql = format!(
+        "{base}
+         SELECT id, sandbox_id, sandbox_name, ts, host, port, protocol, method, path, status,
+                duration_ms, bytes_in, bytes_out, decision, reason, rule_id,
+                window_id, user_agent, mcp_session_id, mcp_method, mcp_tool, inspected,
+                channel, sni, listener, app_protocol, program, reason_text, country, asn
+           FROM base
+          WHERE {filter}
+            AND ($5::uuid IS NULL OR sandbox_id = $5::uuid)
+            AND ($6::text IS NULL OR host ILIKE '%' || $6 || '%')
+            AND ($7::timestamptz IS NULL OR (ts, id) < ($7::timestamptz, $8::uuid))
+          ORDER BY ts DESC, id DESC
+          LIMIT $9",
+        base = base_environment(),
+        filter = filter_at("$4")
+    );
+
+    let (after_ts, after_id) = match query.after {
+        Some((ts, id)) => (Some(ts), Some(id)),
+        None => (None, None),
+    };
+
+    let rows = sqlx::query(&sql)
+        .bind(scope.environment_id())
+        .bind(query.since)
+        .bind(query.until)
+        .bind(query.filter.as_str())
+        .bind(query.sandbox_id)
+        .bind(query.host)
+        .bind(after_ts)
+        .bind(after_id)
+        .bind(query.limit.clamp(1, MAX_LIMIT))
+        .fetch_all(scope.connection())
+        .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        if let Some(event) = row_to_event(&row)? {
+            out.push(event);
+        }
+    }
+    Ok(out)
+}
+
+/// Count one window across every sandbox of the environment.
+///
+/// The header of the live console, computed by the database for the same reason
+/// the per-sandbox summary is: a browser counting a five-minute window at ten
+/// thousand events a minute stops responding.
+pub async fn summary_environment(
+    scope: &mut TenantScope<'_>,
+    query: EnvironmentRowQuery<'_>,
+) -> Result<Summary, StoreError> {
+    let sql = format!(
+        "{base}
+         SELECT COUNT(*) AS requests,
+                COUNT(*) FILTER (WHERE decision = 'allow') AS allowed,
+                COUNT(*) FILTER (WHERE decision = 'deny') AS denied,
+                COUNT(*) FILTER (WHERE decision = 'audit') AS audit,
+                COALESCE(SUM(bytes_in), 0)::bigint AS bytes_in,
+                COALESCE(SUM(bytes_out), 0)::bigint AS bytes_out,
+                COUNT(DISTINCT (host, port, protocol)) AS destinations,
+                COUNT(*) FILTER (WHERE protocol = 'mcp') AS mcp_requests,
+                COUNT(*) FILTER (WHERE {filter}
+                                   AND ($5::uuid IS NULL OR sandbox_id = $5::uuid)
+                                   AND ($6::text IS NULL OR host ILIKE '%' || $6 || '%')) AS matching
+           FROM base",
+        base = base_environment(),
+        filter = filter_at("$4")
+    );
+
+    let row = sqlx::query(&sql)
+        .bind(scope.environment_id())
+        .bind(query.since)
+        .bind(query.until)
+        .bind(query.filter.as_str())
+        .bind(query.sandbox_id)
+        .bind(query.host)
+        .fetch_one(scope.connection())
+        .await?;
+
+    let mut summary = Summary {
+        requests: row.try_get("requests")?,
+        allowed: row.try_get("allowed")?,
+        denied: row.try_get("denied")?,
+        audit: row.try_get("audit")?,
+        bytes_in: row.try_get("bytes_in")?,
+        bytes_out: row.try_get("bytes_out")?,
+        destinations: row.try_get("destinations")?,
+        mcp_requests: row.try_get("mcp_requests")?,
+        matching: row.try_get("matching")?,
+        protocols: Vec::new(),
+    };
+
+    let facet_sql = format!(
+        "{base}
+         SELECT protocol, COUNT(*) AS n
+           FROM base
+          WHERE ($5::uuid IS NULL OR sandbox_id = $5::uuid)
+            AND ($6::text IS NULL OR host ILIKE '%' || $6 || '%')
+          GROUP BY protocol
+          ORDER BY n DESC, protocol
+          LIMIT 12",
+        base = base_environment()
+    );
+
+    let facets = sqlx::query(&facet_sql)
+        .bind(scope.environment_id())
+        .bind(query.since)
+        .bind(query.until)
+        .bind(query.sandbox_id)
+        .bind(query.host)
+        .fetch_all(scope.connection())
+        .await?;
+
+    for facet in facets {
+        summary
+            .protocols
+            .push((facet.try_get("protocol")?, facet.try_get("n")?));
+    }
+
+    Ok(summary)
 }
 
 /// Mark the rows of one page that have a stored body.
@@ -470,10 +659,11 @@ pub async fn summary(
                 COALESCE(SUM(bytes_out), 0)::bigint AS bytes_out,
                 COUNT(DISTINCT (host, port, protocol)) AS destinations,
                 COUNT(*) FILTER (WHERE protocol = 'mcp') AS mcp_requests,
-                COUNT(*) FILTER (WHERE {FILTER}
+                COUNT(*) FILTER (WHERE {filter}
                                    AND ($6::text IS NULL OR host ILIKE '%' || $6 || '%')) AS matching
            FROM base",
-        base = base_scoped()
+        base = base_scoped(),
+        filter = filter_at("$5")
     );
 
     let row = sqlx::query(&sql)
@@ -960,6 +1150,37 @@ mod tests {
         let sql = base_scoped();
         assert!(sql.contains("e.environment_id = $1"));
         assert!(sql.contains("e.sandbox_id = $2"));
+    }
+
+    #[test]
+    fn a_name_lookup_is_evidence_and_names_its_host() {
+        // The regression this test exists for: DNS decisions used to be written
+        // as `network` events with a protocol word, so the DNS facet was always
+        // empty and a DNS destination had no host to show.
+        let sql = base_scoped();
+        assert!(sql.contains("e.kind IN ('network', 'dns')"));
+        assert!(sql.contains("hostname"), "a DNS row must contribute its host");
+        assert!(
+            !sql.contains("__HOST__"),
+            "the destination expression must be substituted, not left as a token"
+        );
+    }
+
+    #[test]
+    fn the_environment_query_names_its_sandbox() {
+        let sql = base_environment();
+        assert!(sql.contains("s.name AS sandbox_name"));
+        assert!(sql.contains("e.kind IN ('network', 'dns')"));
+    }
+
+    #[test]
+    fn the_filter_word_is_bound_at_the_slot_the_query_uses() {
+        // The scoped queries bind the filter at $5 and the environment ones at
+        // $4, because the environment query has no sandbox parameter. One source
+        // with a substituted slot keeps the four words from drifting apart.
+        assert!(filter_at("$5").contains("$5::text = 'all'"));
+        assert!(filter_at("$4").contains("$4::text = 'blocked'"));
+        assert!(!filter_at("$4").contains("__F__"));
     }
 
     #[test]

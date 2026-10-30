@@ -231,6 +231,7 @@ pub const OPERATIONS: &[Operation] = &[
     op("DELETE", "/api/v1/sandboxes/{id}/ports/{forward_id}", "Withdraw a published port", "sandboxes", "operator", true, StreamKind::None),
     op("GET", "/api/v1/sandboxes/{id}/sessions", "Terminal and SSH sessions, without content", "sandboxes", "viewer", false, StreamKind::None),
     // Admin Center: traffic, map, effective policies, MCP calls
+    op("GET", "/api/v1/traffic", "Traffic across every sandbox of the environment, with counts", "telemetry", "viewer", false, StreamKind::None),
     op("GET", "/api/v1/sandboxes/{id}/traffic", "Egress traffic rows for a window", "telemetry", "viewer", false, StreamKind::None),
     op("GET", "/api/v1/sandboxes/{id}/traffic/{event_id}/body", "The redacted request and response body", "telemetry", "viewer", false, StreamKind::None),
     op("GET", "/api/v1/sandboxes/{id}/map", "Aggregated egress edges for the live map", "telemetry", "viewer", false, StreamKind::None),

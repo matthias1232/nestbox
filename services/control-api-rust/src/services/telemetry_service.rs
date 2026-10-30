@@ -1286,12 +1286,65 @@ pub async fn pull_openshell_events(ctx: &ServiceContext) -> Result<u64, ApiError
             .flatten()
             .collect::<Vec<_>>()
             .join("; ");
+            let request_id = format!(
+                "osh:{}:{}:{}:{}:{}",
+                sandbox_id,
+                (seconds * 1000.0) as i64,
+                host,
+                port.unwrap_or(0),
+                decision
+            );
+
+            // A name lookup is its own event kind, not a network row carrying a
+            // protocol word. The console's DNS facet, "which names did this
+            // sandbox ask for", and the live `dns` stream all filter on the kind;
+            // a row that says `network` can never answer any of them, and until
+            // this branch existed every DNS decision arrived as network/tcp.
+            if dns {
+                let id = event_id(environment_id, Some(*sandbox_id), Some(&request_id), ts, now);
+                let resolved = ts.unwrap_or(now);
+                let live = TelemetryEvent::Dns(DnsEvent {
+                    id,
+                    environment_id,
+                    sandbox_id: Some(*sandbox_id),
+                    ts: resolved,
+                    hostname: host.to_string(),
+                    resolver: Some("openshell".to_string()),
+                    decision: parse_decision(Some(decision)),
+                    binary: event.get("binary").and_then(|v| v.as_str()).map(str::to_string),
+                    correlation_id: Some(request_id),
+                });
+                let mut detail = serde_json::to_value(&live).unwrap_or(serde_json::Value::Null);
+                if let serde_json::Value::Object(map) = &mut detail {
+                    // The reason is the enforcement's own words and is what an
+                    // operator acts on; it has no place in the wire shape, so it
+                    // rides in the stored detail only.
+                    map.insert("reason".into(), serde_json::json!(reason));
+                    // The traffic list reads protocol and channel out of the
+                    // detail; a DNS event carries neither on the wire, and a row
+                    // without them would be badged as a plain TCP connection.
+                    map.insert("protocol".into(), serde_json::json!("dns"));
+                    map.insert("channel".into(), serde_json::json!("dns"));
+                }
+                prepared.push(PreparedEvent {
+                    id,
+                    ts: resolved,
+                    sandbox_id: Some(*sandbox_id),
+                    kind: EventKind::Dns,
+                    detail,
+                    body: None,
+                    call: None,
+                    live,
+                });
+                continue;
+            }
+
             let entry = ProxyTrafficEntry {
                 ts,
                 sandbox_id: Some(*sandbox_id),
                 host: host.to_string(),
                 port,
-                protocol: Some(if dns { "dns" } else { "tcp" }.to_string()),
+                protocol: Some("tcp".to_string()),
                 method: None,
                 path: None,
                 status: None,
@@ -1304,14 +1357,7 @@ pub async fn pull_openshell_events(ctx: &ServiceContext) -> Result<u64, ApiError
                 sni: None,
                 app_protocol: None,
                 user_agent: None,
-                request_id: Some(format!(
-                    "osh:{}:{}:{}:{}:{}",
-                    sandbox_id,
-                    (seconds * 1000.0) as i64,
-                    host,
-                    port.unwrap_or(0),
-                    decision
-                )),
+                request_id: Some(request_id),
                 decision: Some(decision.to_string()),
                 reason: if reason.is_empty() { None } else { Some(reason) },
                 rule_id: None,

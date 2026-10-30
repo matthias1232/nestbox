@@ -328,6 +328,11 @@ fn glob(pattern: &str, text: &str) -> bool {
 pub struct TrafficEvent {
     pub id: Uuid,
     pub sandbox_id: Option<Uuid>,
+    /// The sandbox's name, so the environment-wide table can say which sandbox a
+    /// row belongs to without a second request per row. Absent on a read that
+    /// did not join `sandboxes`.
+    #[serde(default)]
+    pub sandbox_name: Option<String>,
     pub node_id: Option<Uuid>,
     pub ts: DateTime<Utc>,
     pub host: String,
@@ -393,6 +398,10 @@ pub enum TrafficChannel {
     Inbound,
     /// The caller arrived over a tunnel interface (WireGuard, `tun0`).
     Vpn,
+    /// A name lookup. It never opened a connection, so it is not one of the
+    /// connection channels above; the console badges it separately because it is
+    /// a different kind of event, not a different way of connecting.
+    Dns,
 }
 
 impl TrafficChannel {
@@ -403,6 +412,7 @@ impl TrafficChannel {
             Self::Inspected => "inspected",
             Self::Inbound => "inbound",
             Self::Vpn => "vpn",
+            Self::Dns => "dns",
         }
     }
 
@@ -414,6 +424,7 @@ impl TrafficChannel {
             Self::Inspected => "Inspected",
             Self::Inbound => "Inbound",
             Self::Vpn => "VPN",
+            Self::Dns => "DNS",
         }
     }
 
@@ -424,18 +435,20 @@ impl TrafficChannel {
             "inspected" => Self::Inspected,
             "inbound" => Self::Inbound,
             "vpn" => Self::Vpn,
+            "dns" => Self::Dns,
             _ => return None,
         })
     }
 
     /// All channels, in the order the legend shows them.
-    pub fn all() -> [Self; 5] {
+    pub fn all() -> [Self; 6] {
         [
             Self::Proxy,
             Self::Tunnel,
             Self::Inspected,
             Self::Inbound,
             Self::Vpn,
+            Self::Dns,
         ]
     }
 }

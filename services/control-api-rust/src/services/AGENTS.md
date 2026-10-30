@@ -68,7 +68,7 @@ shape it:
 | `agent_service.rs` | Agents inside a sandbox: which packs may join, homes and their persistence, the supervisor command |
 | `policy_service.rs` | Validation, diff, scope rules, global override, and the egress decider (`check`: windows, rules, one evidence row; `authenticate_node`; `deployment`) |
 | `telemetry_service.rs` | Ingest (one event, and the proxy's access-log batch with bodies and MCP calls), live publish, history queries |
-| `traffic_service.rs` | Traffic rows with window counts, the map, one body, MCP calls, effective rules with the deployment comparison, live edges for the cluster graph (`feat/live-traffic`) |
+| `traffic_service.rs` | Traffic rows with window counts, per sandbox and for the whole environment (the Live traffic page), the map, one body, MCP calls, effective rules with the deployment comparison, live edges for the cluster graph (`feat/live-traffic`) |
 | `geography_service.rs` | RDAP lookup per destination host, cached; runs after a traffic read and never blocks it |
 | `model_service.rs` | Hardware probing through a node's runner (CPU, RAM, GPU, unified pool), fit against a node's free budget, facets, catalog filters, installs and their reservations, editing an install (reserved RAM, on/off; off frees the memory) |
 | `node_service.rs` | The nodes list, one node with its budget, a node's sandboxes, name-or-id resolution, display rename |

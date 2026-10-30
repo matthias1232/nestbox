@@ -430,3 +430,15 @@ svg.spark {
 }
 .field-help p { margin: 0 0 4px; }
 .field-help p:last-child { margin-bottom: 0; }
+
+/* Live traffic ------------------------------------------------------- */
+
+/* The sandbox a row belongs to. It is the first thing an operator reads in the
+   environment-wide table, so it is not muted like the metadata beside it. */
+.origin { font-weight: 600; }
+
+td .block { display: block; }
+
+.facets .search { flex: 1 1 220px; min-width: 180px; }
+
+table.traffic td { vertical-align: top; padding-top: 4px; padding-bottom: 4px; }

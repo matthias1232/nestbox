@@ -59,6 +59,51 @@ impl TrafficQuery {
     }
 }
 
+/// The environment-wide live list: every sandbox at once.
+///
+/// One endpoint rather than a loop over the sandboxes, because "what is
+/// happening now" is a question about the environment and a browser-side merge
+/// would be both slower and a second definition of the order.
+#[derive(Debug, Deserialize)]
+pub struct EnvironmentTrafficQuery {
+    /// `5m`, `15m`, `1h`, `24h`. Defaults to `5m`, capped at `24h`.
+    pub window: Option<String>,
+    /// `all`, `blocked`, `allowed`, `mcp`. Defaults to `all`.
+    pub filter: Option<String>,
+    /// A fragment of the destination host, case-insensitive.
+    pub host: Option<String>,
+    /// Restrict to one sandbox, still tenant-scoped.
+    pub sandbox: Option<Uuid>,
+    /// Opaque cursor from the previous page.
+    pub cursor: Option<String>,
+    pub limit: Option<u32>,
+}
+
+impl EnvironmentTrafficQuery {
+    fn request(&self) -> traffic_service::EnvironmentTrafficRequest {
+        traffic_service::EnvironmentTrafficRequest {
+            window: self.window.clone(),
+            filter: self.filter.clone(),
+            host: self.host.clone(),
+            sandbox_id: self.sandbox,
+            cursor: self.cursor.clone(),
+            limit: self.limit,
+        }
+    }
+}
+
+/// Traffic across every sandbox of the caller's environment.
+pub async fn environment(
+    State(state): State<AppState>,
+    auth: Auth,
+    Query(query): Query<EnvironmentTrafficQuery>,
+) -> Result<Json<traffic_service::EnvironmentTrafficPage>, ApiError> {
+    let page =
+        traffic_service::environment_traffic(&state.services, &auth.principal, query.request())
+            .await?;
+    Ok(Json(page))
+}
+
 /// Egress traffic rows for one sandbox, with the window's counts.
 pub async fn traffic(
     State(state): State<AppState>,
