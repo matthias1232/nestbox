@@ -8,6 +8,7 @@
 import { For, Show, onMount } from 'solid-js';
 import Empty from '../../components/Empty.jsx';
 import PersistentDetail from './PersistentDetail.jsx';
+import MountsMatrix from './MountsMatrix.jsx';
 import { usePersistent, usageLabel } from './usePersistent.js';
 import '../../styles/recipes-persist.css';
 
@@ -130,6 +131,10 @@ export default function PersistentPage() {
             </table>
           </div>
         </Show>
+      </Show>
+
+      <Show when={!state.loading() && state.items().length > 0}>
+        <MountsMatrix roots={state.items()} />
       </Show>
 
       <form class="editor rp-create" onSubmit={state.create}>

@@ -205,3 +205,16 @@
 .rp-mount-form .rp-check { padding-bottom: var(--space-2); }
 @media (max-width: 820px) { .rp-mount-form { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 560px) { .rp-mount-form { grid-template-columns: 1fr; } }
+
+/* Folders × sandboxes: a wide grid whose first column stays readable while the
+   sandboxes scroll sideways. */
+.rp-matrix { margin: 1.5rem 0; }
+.rp-matrix-table th, .rp-matrix-table td { white-space: nowrap; }
+.rp-matrix-table .rp-sticky {
+  position: sticky;
+  left: 0;
+  background: var(--surface, #14181f);
+  z-index: 1;
+  min-width: 12rem;
+}
+.rp-cell-on { background: rgba(60, 120, 200, 0.12); }
