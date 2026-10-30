@@ -1652,7 +1652,9 @@ old = json.load(open(sys.argv[1]))
 new = json.load(open(sys.argv[2]))
 for key, value in new.items():
     if key == "mcpServers":
-        old.setdefault(key, {}).update(value)
+        # The list in the new file is authoritative: a server that was detached
+        # must disappear, and merging would leave it behind forever.
+        old[key] = value
     elif key not in old:
         old[key] = value
 json.dump(old, open(sys.argv[1], "w"), indent=2)
