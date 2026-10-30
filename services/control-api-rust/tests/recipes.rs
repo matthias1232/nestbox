@@ -30,6 +30,7 @@ use nestbox_control_api::error::{ApiError, ErrorCode};
 use nestbox_control_api::runtime::fake::FakeRuntime;
 use nestbox_control_api::services::ServiceContext;
 use nestbox_control_api::services::builder_service::{self, RecipeInput};
+use nestbox_control_api::services::mcp_service;
 use nestbox_control_api::services::gateway_service;
 use nestbox_control_api::store::postgres::recipes as recipe_store;
 use nestbox_control_api::store::TenantScope;
@@ -750,4 +751,76 @@ async fn a_viewer_cannot_write_a_recipe() {
         .await
         .expect_err("a viewer cannot create a recipe");
     assert_eq!(error.status, axum::http::StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn an_mcp_assignment_is_attached_when_the_recipe_becomes_a_sandbox() {
+    let Some(pool) = pool().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+    let pool = &pool;
+    let environment = environment_id(pool).await;
+    let runtime = Arc::new(FakeRuntime::new());
+    let ctx = context(pool, &runtime);
+    let who = principal(environment);
+
+    let node: Uuid = sqlx::query_scalar("SELECT id FROM nodes WHERE is_local")
+        .fetch_one(pool)
+        .await
+        .expect("the local node is seeded");
+    sqlx::query(
+        "INSERT INTO hardware_profiles
+             (environment_id, node_id, hostname, gpus, total_vram_bytes, cpu_cores, system_ram_bytes)
+         VALUES ($1, $2, 'test-node', '[]'::jsonb, 0, 4, $3)",
+    )
+    .bind(environment)
+    .bind(node)
+    .bind(8i64 * 1024 * 1024 * 1024)
+    .execute(pool)
+    .await
+    .expect("a measurement");
+
+    let name = unique("mcp-assigned");
+    let mut input = shell_recipe(&name);
+    input.mcp_server_keys = vec!["nestbox-hub".into()];
+    let recipe = builder_service::create(&ctx, &who, input)
+        .await
+        .expect("a recipe may name a registry server");
+
+    // An unknown key is an operator typo, refused when the recipe is saved.
+    let mut unknown = shell_recipe(&unique("mcp-unknown"));
+    unknown.mcp_server_keys = vec!["not-a-server".into()];
+    let error = builder_service::create(&ctx, &who, unknown)
+        .await
+        .expect_err("an unknown MCP server is refused");
+    assert_eq!(error.code, ErrorCode::RECIPE_INVALID);
+
+    // Mark it built so instantiation is about the assignment, not the build.
+    let hash = "b".repeat(64);
+    let tag = builder_service::image_tag(&name, &hash);
+    let mut scope = TenantScope::begin(pool, environment).await.expect("scope");
+    recipe_store::set_build(
+        &mut scope,
+        recipe.id,
+        nestbox_control_api::domain::builder::RecipeState::Built,
+        Some(tag.as_str()),
+        Some(hash.as_str()),
+        None,
+        None,
+    )
+    .await
+    .expect("state recorded");
+    scope.commit().await.expect("commit");
+
+    let sandbox = builder_service::instantiate(&ctx, &who, recipe.id, &unique("mcp-sandbox"))
+        .await
+        .expect("the sandbox starts");
+    let attached = mcp_service::sandbox_servers(&ctx, &who, sandbox.id)
+        .await
+        .expect("the attachments are readable");
+    assert!(
+        attached.iter().any(|server| server.server_key == "nestbox-hub"),
+        "the recipe's MCP server is attached without an extra step"
+    );
 }
