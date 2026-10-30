@@ -39,9 +39,12 @@ repositories and MCP servers.
    installed, so a tool from a private registry is available without a manual
    step in the sandbox.
 3. After a successful `docker build`, the runner reads the image's own package
-   database (`dpkg-query`, `rpm -qa`, `apk info -v`) and compares it with the
+   database (`dpkg-query`, `rpm -qa`, `apk info`) and compares it with the
    packages the recipe asked for. A missing package fails the build with the
-   list; the image is not presented as usable.
+   list; the image is not presented as usable. The check clears the image's
+   entrypoint and runs without a network: a recipe image's entrypoint starts the
+   supervisor, which would ignore the probe and run until the timeout, and a
+   package database is local, so the check must not depend on a mirror.
 4. MCP assignments are validated when the recipe is saved and attached when a
    sandbox is created from it, so an agent starts with the servers it needs.
 5. `image_templates` (migration 0047) saves a selection — tools, packages,
@@ -61,6 +64,12 @@ does not keep.
   new egress path for sandboxes.
 - A first search on a fresh baseline can take as long as `apt-get update`; the
   cache makes the second one immediate, and the UI says it is asking the index.
+- Alpine's `apk search -v` prints `name-version - description` and `apk info -v`
+  prints `name-version`; both parsers split at the first `-<digit>`, because the
+  name itself contains hyphens (`py3-pip`).
+- `apt-get update` inside a container with every capability dropped needs
+  `APT::Sandbox::User=root`, because the default chowns its lists to `_apt` and
+  `CAP_CHOWN` is gone. The capability stays dropped.
 - "Built" now means "built and verified". A package that is installed under a
   different name than requested (for example a virtual package) is reported as
   missing; the fix is the real package name, which the catalogue now shows.
