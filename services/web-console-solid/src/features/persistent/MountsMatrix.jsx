@@ -22,9 +22,10 @@ export default function MountsMatrix(props) {
     }
   });
 
-  // A root knows its mounts; the grid needs the reverse lookup once.
+  // A root carries `mounted_in` (sandbox id, name, path, read-only); the grid
+  // needs the reverse lookup once per cell.
   const mountsOf = (root, sandbox) =>
-    (root.mounts || []).find((mount) => mount.sandbox_id === sandbox.id);
+    (root.mounted_in || []).find((mount) => mount.sandbox_id === sandbox.id);
 
   const visibleSandboxes = createMemo(() =>
     showAll() ? sandboxes() : sandboxes().filter((sandbox) => props.roots.some((root) => mountsOf(root, sandbox))),
