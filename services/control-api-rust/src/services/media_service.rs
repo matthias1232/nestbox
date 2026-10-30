@@ -719,15 +719,24 @@ async fn download_asset(
     // extra `Authorization` header invalidates that signature — S3/R2 answer 401.
     // So a URL with a query is never given our credential, and a 401 on a link we
     // did sign is retried once without it.
-    let signed = asset_url.contains('?');
+    let signed = is_presigned(asset_url);
     let same_host = host(endpoint) == host(asset_url);
-    let attach = credential.filter(|_| !signed && same_host);
-    let response = get_asset(client, asset_url, attach).await?;
+    // Unsigned: the credential goes along even when the host differs, because a
+    // provider may hand out its asset on a public name while the profile uses an
+    // internal address. The provider already holds that key, so returning it to a
+    // host the provider named adds no exposure the provider did not have.
+    let attach = credential.filter(|_| !signed);
+    let mut response = get_asset(client, asset_url, attach).await?;
     let mut status = response.status();
-    let mut response = response;
-    if status == reqwest::StatusCode::UNAUTHORIZED && attach.is_some() {
-        response = get_asset(client, asset_url, None).await?;
-        status = response.status();
+    // Both directions are tried once: a presigned link rejects a header it did
+    // not sign for, and an unsigned link on the provider's own host rejects a
+    // request without one. Guessing wrong costs one round trip, not the render.
+    if matches!(status, reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN) {
+        let alternative = if attach.is_some() { None } else { credential.filter(|_| same_host) };
+        if alternative != attach {
+            response = get_asset(client, asset_url, alternative).await?;
+            status = response.status();
+        }
     }
     if !status.is_success() {
         return Err(format!(
@@ -758,6 +767,28 @@ async fn get_asset(
         call = call.bearer_auth(value);
     }
     call.send().await.map_err(|error| format!("asset download failed: {error}"))
+}
+
+/// Whether the URL carries its own authorisation in the query string.
+///
+/// Only these markers mean "signed": a plain `?id=7` is not a signature, and
+/// treating it as one was what made a provider's own artifact link look like a
+/// deliberate stranger.
+fn is_presigned(url: &str) -> bool {
+    const MARKERS: &[&str] = &[
+        "X-Amz-Signature",
+        "X-Goog-Signature",
+        "Signature=",
+        "sig=",
+        "Policy=",
+        "token=",
+        "se=",
+        "sp=",
+    ];
+    match url.split_once('?') {
+        Some((_, query)) => MARKERS.iter().any(|marker| query.contains(marker)),
+        None => false,
+    }
 }
 
 /// The `host[:port]` of a URL, for the credential comparison.
@@ -887,6 +918,14 @@ mod tests {
         assert_eq!(asset_url(&json!({"url": "https://x/a.mp4"})).as_deref(), Some("https://x/a.mp4"));
         assert_eq!(asset_url(&json!({"data": [{"url": "https://x/b.mp4"}]})).as_deref(), Some("https://x/b.mp4"));
         assert!(asset_url(&json!({"id": "job-1", "status": "queued"})).is_none());
+    }
+
+    #[test]
+    fn only_a_real_signature_makes_a_link_presigned() {
+        assert!(is_presigned("https://x/a.mp4?X-Amz-Signature=abc"));
+        assert!(is_presigned("https://x/a.mp4?token=abc"));
+        assert!(!is_presigned("https://x/a.mp4?id=7"));
+        assert!(!is_presigned("https://x/a.mp4"));
     }
 
     #[test]
