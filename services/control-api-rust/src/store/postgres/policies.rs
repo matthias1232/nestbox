@@ -850,6 +850,55 @@ pub async fn decide_draft(
     })
 }
 
+/// One traffic window as the console lists it.
+///
+/// The console needs the sandbox's name and the mode/channel words, not the row
+/// shape: a master switch without a label is a switch nobody can read.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WindowRow {
+    pub id: Uuid,
+    pub sandbox_id: Option<Uuid>,
+    pub sandbox_name: Option<String>,
+    pub scope: String,
+    pub mode: String,
+    pub channel: String,
+    pub reason: String,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// The windows in force now, newest expiry last.
+pub async fn list_windows(scope: &mut TenantScope<'_>) -> Result<Vec<WindowRow>, StoreError> {
+    let rows = sqlx::query(
+        "SELECT w.id, w.sandbox_id, s.name AS sandbox_name, w.scope, w.mode, w.channel,
+                w.reason, w.expires_at
+           FROM traffic_windows w
+           LEFT JOIN sandboxes s ON s.id = w.sandbox_id AND s.environment_id = w.environment_id
+          WHERE w.environment_id = $1
+            AND w.revoked_at IS NULL
+            AND w.expires_at > now()
+          ORDER BY w.expires_at ASC
+          LIMIT 100",
+    )
+    .bind(scope.environment_id())
+    .fetch_all(scope.connection())
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(WindowRow {
+            id: row.try_get("id")?,
+            sandbox_id: row.try_get("sandbox_id")?,
+            sandbox_name: row.try_get("sandbox_name")?,
+            scope: row.try_get("scope")?,
+            mode: row.try_get("mode")?,
+            channel: row.try_get("channel")?,
+            reason: row.try_get("reason")?,
+            expires_at: row.try_get("expires_at")?,
+        });
+    }
+    Ok(out)
+}
+
 /// Open a temporary traffic window.
 pub async fn open_window(
     scope: &mut TenantScope<'_>,
@@ -857,12 +906,14 @@ pub async fn open_window(
     scope_kind: &str,
     reason: &str,
     minutes: i32,
+    mode: &str,
+    channel: &str,
     created_by: Option<Uuid>,
 ) -> Result<(Uuid, chrono::DateTime<chrono::Utc>), StoreError> {
     let row = sqlx::query(
         "INSERT INTO traffic_windows
-            (environment_id, sandbox_id, scope, reason, expires_at, created_by)
-         VALUES ($1, $2, $3, $4, now() + make_interval(mins => $5), $6)
+            (environment_id, sandbox_id, scope, reason, expires_at, mode, channel, created_by)
+         VALUES ($1, $2, $3, $4, now() + make_interval(mins => $5), $6, $7, $8)
          RETURNING id, expires_at",
     )
     .bind(scope.environment_id())
@@ -870,6 +921,8 @@ pub async fn open_window(
     .bind(scope_kind)
     .bind(reason)
     .bind(minutes)
+    .bind(mode)
+    .bind(channel)
     .bind(created_by)
     .fetch_one(scope.connection())
     .await?;

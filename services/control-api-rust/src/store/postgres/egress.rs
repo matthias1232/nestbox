@@ -31,7 +31,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use super::super::TenantScope;
-use crate::domain::egress::OpenWindow;
+use crate::domain::egress::{OpenWindow, WindowChannel, WindowMode};
 use crate::error::StoreError;
 
 /// Which environment a sandbox belongs to, and which node runs it.
@@ -136,7 +136,7 @@ pub async fn open_windows(
     sandbox_id: Option<Uuid>,
 ) -> Result<Vec<OpenWindow>, StoreError> {
     let rows = sqlx::query(
-        "SELECT id, sandbox_id, expires_at, reason
+        "SELECT id, sandbox_id, expires_at, reason, mode, channel
            FROM traffic_windows
           WHERE environment_id = $1
             AND revoked_at IS NULL
@@ -151,11 +151,17 @@ pub async fn open_windows(
 
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
+        let mode: String = row.try_get("mode")?;
+        let channel: String = row.try_get("channel")?;
         out.push(OpenWindow {
             id: row.try_get("id")?,
             sandbox_id: row.try_get("sandbox_id")?,
             expires_at: row.try_get("expires_at")?,
             reason: row.try_get("reason")?,
+            // A word this build does not know is the conservative default: a
+            // bypass would be a wider permission than the row asked for.
+            mode: WindowMode::parse(&mode).unwrap_or_default(),
+            channel: WindowChannel::parse(&channel).unwrap_or_default(),
         });
     }
     Ok(out)

@@ -10,7 +10,8 @@ use uuid::Uuid;
 use super::{require, ServiceContext};
 use crate::domain::auth::{Permission, Principal};
 use crate::domain::egress::{
-    decide, CheckRequest, CheckResponse, CompiledPolicy, Decision, DecisionReason,
+    decide, CheckRequest, CheckResponse, CompiledPolicy, Decision, DecisionReason, WindowChannel,
+    WindowMode,
 };
 use crate::domain::policy::{
     apply_outcome, rules_from_document, validate_document, ApplyOutcome, DnsRule, EgressMode,
@@ -525,18 +526,37 @@ pub async fn decide_draft(
     Ok(serde_json::json!({ "id": decided.id, "status": decided.status }))
 }
 
-/// Open a temporary traffic window.
+/// Open a temporary traffic window: the master switch, and observation mode.
+///
+/// A window is scoped to one channel so a DNS window does not open the web, and
+/// carries a mode so observation (allow and record the block) is a different
+/// thing from a bypass (allow quietly). The OpenShell channel is refused: its
+/// supervisor carries the sandbox's API and MCP forwarding, and a sandbox with it
+/// switched off cannot reach its tools at all.
 pub async fn open_window(
     ctx: &ServiceContext,
     principal: &Principal,
     sandbox_id: Option<Uuid>,
     minutes: i32,
+    mode: &str,
+    channel: &str,
     reason: &str,
 ) -> Result<serde_json::Value, ApiError> {
     require(principal, Permission::PolicyWrite)?;
     if !(1..=1440).contains(&minutes) {
         return Err(ApiError::validation(
             "The window must last between 1 and 1440 minutes.",
+        ));
+    }
+    let mode = WindowMode::parse(mode).ok_or_else(|| {
+        ApiError::validation("A window mode is bypass or audit.")
+    })?;
+    let channel = WindowChannel::parse(channel).ok_or_else(|| {
+        ApiError::validation("A window channel is all, proxy, dns, mcp, gateway or openshell.")
+    })?;
+    if !channel.switchable() {
+        return Err(ApiError::validation(
+            "The OpenShell supervisor cannot be switched off: it carries the sandbox's API and MCP forwarding.",
         ));
     }
     if reason.trim().is_empty() {
@@ -554,6 +574,8 @@ pub async fn open_window(
         if sandbox_id.is_some() { "sandbox" } else { "environment" },
         reason,
         minutes,
+        mode.as_str(),
+        channel.as_str(),
         Some(principal.user_id),
     )
     .await
@@ -564,8 +586,27 @@ pub async fn open_window(
         "id": id,
         "expires_at": expires_at,
         "minutes": minutes,
+        "mode": mode.as_str(),
+        "channel": channel.as_str(),
         "reason": reason,
     }))
+}
+
+/// The traffic windows in force, for the master-switch panel.
+///
+/// One read, so a switch shows the same state the decider is applying: the two
+/// come from the same table and the same window.
+pub async fn windows(
+    ctx: &ServiceContext,
+    principal: &Principal,
+) -> Result<Vec<store::WindowRow>, ApiError> {
+    require(principal, Permission::PolicyRead)?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
+        .await
+        .map_err(ApiError::from)?;
+    let rows = store::list_windows(&mut scope).await.map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(rows)
 }
 
 /// Close a window early.

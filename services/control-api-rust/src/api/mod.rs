@@ -109,6 +109,10 @@ pub fn router(state: AppState) -> Router {
             get(sandboxes_terminal::terminal),
         )
         .route(
+            "/api/v1/sandboxes/{id}/terminal-tabs",
+            get(sandboxes_terminal::tabs).put(sandboxes_terminal::save_tabs),
+        )
+        .route(
             "/api/v1/sandboxes/{id}/settings",
             get(sandboxes_settings::get).put(sandboxes_settings::update),
         )
@@ -154,6 +158,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/sandboxes/{id}/sessions", get(access::sessions))
         // Admin Center: traffic, map, effective policies, MCP calls
         .route("/api/v1/traffic", get(traffic::environment))
+        .route("/api/v1/traffic/decisions", get(traffic::decisions))
         .route("/api/v1/sandboxes/{id}/traffic", get(traffic::traffic))
         .route(
             "/api/v1/sandboxes/{id}/traffic/{event_id}/body",
@@ -294,7 +299,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/rule-drafts/{id}/approve", post(policies::approve_draft))
         .route("/api/v1/rule-drafts/{id}/reject", post(policies::reject_draft))
-        .route("/api/v1/traffic-windows", post(policies::open_window))
+        .route(
+            "/api/v1/traffic-windows",
+            get(policies::windows).post(policies::open_window),
+        )
         .route(
             "/api/v1/traffic-windows/{id}",
             delete(policies::close_window),

@@ -54,10 +54,18 @@ export function decideDraft(id, approve, reason) {
   return request(`rule-drafts/${id}/${action}`, { method: 'POST', body: { reason } });
 }
 
-export function openWindow(sandboxId, minutes, reason) {
+// The windows in force: mode, channel and expiry, for the master switches.
+export function windows() {
+  return request('traffic-windows');
+}
+
+// `mode` is `bypass` (allow quietly) or `audit` (allow and record the block).
+// `channel` is `all`, `proxy`, `dns`, `mcp` or `gateway`; `openshell` is refused
+// by the server because its supervisor carries the sandbox's tooling.
+export function openWindow(sandboxId, minutes, reason, mode = 'bypass', channel = 'all') {
   return request('traffic-windows', {
     method: 'POST',
-    body: { sandbox_id: sandboxId, minutes, reason },
+    body: { sandbox_id: sandboxId, minutes, reason, mode, channel },
   });
 }
 

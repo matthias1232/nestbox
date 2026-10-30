@@ -64,7 +64,7 @@ on it.
 | `DashboardTab.jsx` | Metrics, top processes, last blocks, MCP servers (`feat/admin-console-shell`) |
 | `TrafficTab.jsx` | Live table, filters, "allow this", temporary window (`feat/console-traffic`) |
 | `McpTab.jsx` | Servers, tools, calls, visibility per transport (`feat/console-mcp`) |
-| `TerminalTab.jsx` | xterm.js over the terminal WebSocket (`feat/console-terminal`) |
+| `TerminalTab.jsx` | xterm.js over the terminal WebSocket; the tab list is read from and written to the server, so a reload reopens the same shells (`feat/console-terminal`) |
 | `AccessTab.jsx` | Ports, SSH key, remote snippets (`feat/console-access`) |
 | `PoliciesTab.jsx` | Effective rules, deployed state (`feat/console-map-policies`) |
 | `ProcessesTab.jsx`, `InventoryTab.jsx`, `LogsTab.jsx` | `docker top`, snapshot, log tail (`feat/console-inventory`) |

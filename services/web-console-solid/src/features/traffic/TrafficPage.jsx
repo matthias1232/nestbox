@@ -8,17 +8,32 @@
 import { For, Show, createMemo, onMount, createSignal } from 'solid-js';
 import TrafficTable from '../../components/TrafficTable.jsx';
 import { DECISIONS, KINDS, WINDOWS, useTrafficStream } from './useTrafficStream.js';
+import { useWindows } from './useWindows.js';
+import { useDecisions } from './useDecisions.js';
+import MasterSwitches from './MasterSwitches.jsx';
+import DecisionsPanel from './DecisionsPanel.jsx';
 import * as policies from '../../api/policies.js';
 
 export default function TrafficPage() {
   const traffic = useTrafficStream();
+  const windows = useWindows();
+  const decisions = useDecisions();
+  const [view, setView] = createSignal('live');
   const [draft, setDraft] = createSignal(null);
   const [draftError, setDraftError] = createSignal(null);
 
   onMount(() => {
     traffic.load();
     traffic.start();
+    windows.load();
+    decisions.load();
   });
+
+  /** Switching to the decisions view reads the window it is about. */
+  function openView(next) {
+    setView(next);
+    if (next === 'decisions') decisions.load();
+  }
 
   /** The sandbox filter, with names resolved once from the same request. */
   const sandboxOptions = createMemo(() =>
@@ -79,6 +94,31 @@ export default function TrafficPage() {
       <Show when={draftError()}>
         <p class="error">{draftError()}</p>
       </Show>
+
+      <div class="facets" role="tablist">
+        <button
+          class={view() === 'live' ? 'chip active' : 'chip'}
+          aria-pressed={view() === 'live'}
+          onClick={() => openView('live')}
+        >
+          Live traffic
+        </button>
+        <button
+          class={view() === 'decisions' ? 'chip active' : 'chip'}
+          aria-pressed={view() === 'decisions'}
+          onClick={() => openView('decisions')}
+        >
+          Decisions
+        </button>
+      </div>
+
+      <MasterSwitches switches={windows} />
+
+      <Show when={view() === 'decisions'}>
+        <DecisionsPanel decisions={decisions} />
+      </Show>
+
+      <Show when={view() === 'live'}>
 
       <Show when={summary()}>
         <p class="muted small">
@@ -151,6 +191,8 @@ export default function TrafficPage() {
         }
       >
         <TrafficTable events={traffic.visible()} onDraft={draftRule} />
+      </Show>
+
       </Show>
 
       <Show when={draft()}>

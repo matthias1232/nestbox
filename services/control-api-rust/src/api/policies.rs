@@ -454,12 +454,35 @@ pub async fn reject_draft(
     ))
 }
 
+/// The traffic windows in force, with their mode, channel and expiry.
+pub async fn windows(
+    State(state): State<AppState>,
+    auth: Auth,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let windows = policy_service::windows(&state.services, &auth.principal).await?;
+    Ok(Json(serde_json::json!({ "items": windows })))
+}
+
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct WindowRequest {
     pub sandbox_id: Option<Uuid>,
     #[serde(default = "default_minutes")]
     pub minutes: i32,
+    /// `bypass` allows and forgets; `audit` allows and records the block.
+    #[serde(default = "default_mode")]
+    pub mode: String,
+    /// `all`, `proxy`, `dns`, `mcp`, `gateway`. `openshell` is refused.
+    #[serde(default = "default_channel")]
+    pub channel: String,
     pub reason: String,
+}
+
+fn default_mode() -> String {
+    "bypass".to_string()
+}
+
+fn default_channel() -> String {
+    "all".to_string()
 }
 
 fn default_minutes() -> i32 {
@@ -477,6 +500,8 @@ pub async fn open_window(
         &auth.principal,
         body.sandbox_id,
         body.minutes,
+        &body.mode,
+        &body.channel,
         body.reason.trim(),
     )
     .await?;

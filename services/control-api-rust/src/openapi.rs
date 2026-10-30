@@ -126,6 +126,7 @@ pub const OPERATIONS: &[Operation] = &[
     op("POST", "/api/v1/rule-drafts", "Draft a rule from an event", "policies", "operator", true, StreamKind::None),
     op("POST", "/api/v1/rule-drafts/{id}/approve", "Approve a draft and enforce it", "policies", "operator", true, StreamKind::None),
     op("POST", "/api/v1/rule-drafts/{id}/reject", "Reject a draft", "policies", "operator", true, StreamKind::None),
+    op("GET", "/api/v1/traffic-windows", "The traffic windows in force, with mode and channel", "policies", "viewer", false, StreamKind::None),
     op("POST", "/api/v1/traffic-windows", "Open a temporary traffic window", "policies", "operator", true, StreamKind::None),
     op("DELETE", "/api/v1/traffic-windows/{id}", "Close a traffic window early", "policies", "operator", true, StreamKind::None),
     op("GET", "/api/v1/telemetry/events", "Recent telemetry events", "telemetry", "viewer", false, StreamKind::None),
@@ -223,6 +224,8 @@ pub const OPERATIONS: &[Operation] = &[
     op("POST", "/api/v1/internal/metrics/ingest", "Record a batch of resource samples (node token)", "sandboxes", "node", false, StreamKind::None),
     // Admin Center: terminal, SSH, ports, sessions
     op("GET", "/api/v1/sandboxes/{id}/terminal", "Attach an interactive terminal over WebSocket", "sandboxes", "operator", false, StreamKind::Ws),
+    op("GET", "/api/v1/sandboxes/{id}/terminal-tabs", "The terminal tabs this user keeps in the sandbox, with their shell state", "sandboxes", "operator", false, StreamKind::None),
+    op("PUT", "/api/v1/sandboxes/{id}/terminal-tabs", "Replace the terminal tab set", "sandboxes", "operator", true, StreamKind::None),
     op("GET", "/api/v1/sandboxes/{id}/ssh-key", "The SSH key record, never the private key", "sandboxes", "viewer", false, StreamKind::None),
     op("GET", "/api/v1/sandboxes/{id}/ssh-key/download", "Download the private key, once", "sandboxes", "operator", false, StreamKind::None),
     op("POST", "/api/v1/sandboxes/{id}/ssh-key/rotate", "Replace the SSH key pair", "sandboxes", "operator", true, StreamKind::None),
@@ -232,6 +235,7 @@ pub const OPERATIONS: &[Operation] = &[
     op("GET", "/api/v1/sandboxes/{id}/sessions", "Terminal and SSH sessions, without content", "sandboxes", "viewer", false, StreamKind::None),
     // Admin Center: traffic, map, effective policies, MCP calls
     op("GET", "/api/v1/traffic", "Traffic across every sandbox of the environment, with counts", "telemetry", "viewer", false, StreamKind::None),
+    op("GET", "/api/v1/traffic/decisions", "Denied destinations, grouped, for the decisions view", "telemetry", "viewer", false, StreamKind::None),
     op("GET", "/api/v1/sandboxes/{id}/traffic", "Egress traffic rows for a window", "telemetry", "viewer", false, StreamKind::None),
     op("GET", "/api/v1/sandboxes/{id}/traffic/{event_id}/body", "The redacted request and response body", "telemetry", "viewer", false, StreamKind::None),
     op("GET", "/api/v1/sandboxes/{id}/map", "Aggregated egress edges for the live map", "telemetry", "viewer", false, StreamKind::None),

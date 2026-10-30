@@ -35,6 +35,7 @@ use uuid::Uuid;
 use super::super::TenantScope;
 use crate::domain::egress::{
     agent_hint, Decision, DecisionReason, OpenWindow, TrafficChannel, TrafficEdge, TrafficEvent,
+    WindowChannel, WindowMode,
 };
 use crate::domain::mcp::McpToolCall;
 use crate::domain::policy::{Enforcement, NetworkRule, RuleAction, RuleProtocol};
@@ -718,6 +719,82 @@ pub async fn summary(
     Ok(summary)
 }
 
+/// One destination that was denied, grouped, as the decisions view lists it.
+///
+/// Grouped rather than one row per request: an operator decides about a
+/// destination, not about the four hundred attempts it made. The counts and the
+/// two timestamps are what make the decision reviewable.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DeniedTarget {
+    pub sandbox_id: Option<Uuid>,
+    pub sandbox_name: Option<String>,
+    pub host: String,
+    pub port: i32,
+    pub protocol: String,
+    pub channel: String,
+    pub denials: i64,
+    pub first_seen: DateTime<Utc>,
+    pub last_seen: DateTime<Utc>,
+    /// The enforcement's own words for the most recent refusal.
+    pub reason: Option<String>,
+}
+
+/// The destinations that were denied in one window, worst first.
+///
+/// This is the read behind the decisions view: only what was stopped, grouped by
+/// the thing a person can allow, so the list is short enough to act on. The
+/// informational view is the plain traffic list; this one exists because "what
+/// must I decide" is a different question from "what happened".
+pub async fn denied_targets(
+    scope: &mut TenantScope<'_>,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+    sandbox_id: Option<Uuid>,
+    limit: i64,
+) -> Result<Vec<DeniedTarget>, StoreError> {
+    let sql = format!(
+        "{base}
+         SELECT sandbox_id, sandbox_name, host, port, protocol, channel,
+                COUNT(*) AS denials,
+                MIN(ts) AS first_seen,
+                MAX(ts) AS last_seen,
+                (array_agg(reason_text ORDER BY ts DESC))[1] AS reason
+           FROM base
+          WHERE decision = 'deny'
+            AND ($4::uuid IS NULL OR sandbox_id = $4::uuid)
+          GROUP BY sandbox_id, sandbox_name, host, port, protocol, channel
+          ORDER BY denials DESC, last_seen DESC
+          LIMIT $5",
+        base = base_environment()
+    );
+
+    let rows = sqlx::query(&sql)
+        .bind(scope.environment_id())
+        .bind(since)
+        .bind(until)
+        .bind(sandbox_id)
+        .bind(limit.clamp(1, MAX_EDGES))
+        .fetch_all(scope.connection())
+        .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(DeniedTarget {
+            sandbox_id: row.try_get("sandbox_id")?,
+            sandbox_name: row.try_get("sandbox_name")?,
+            host: row.try_get("host")?,
+            port: row.try_get("port")?,
+            protocol: row.try_get("protocol")?,
+            channel: row.try_get("channel")?,
+            denials: row.try_get("denials")?,
+            first_seen: row.try_get("first_seen")?,
+            last_seen: row.try_get("last_seen")?,
+            reason: row.try_get("reason")?,
+        });
+    }
+    Ok(out)
+}
+
 /// Aggregate one sandbox's destinations into map edges.
 ///
 /// Grouped in SQL rather than shipped as rows: a five-minute window at ten
@@ -1027,7 +1104,7 @@ pub async fn open_windows(
     sandbox_id: Uuid,
 ) -> Result<Vec<OpenWindow>, StoreError> {
     let rows = sqlx::query(
-        "SELECT id, sandbox_id, expires_at, reason
+        "SELECT id, sandbox_id, expires_at, reason, mode, channel
            FROM traffic_windows
           WHERE environment_id = $1
             AND (sandbox_id = $2 OR sandbox_id IS NULL)
@@ -1043,11 +1120,15 @@ pub async fn open_windows(
 
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
+        let mode: String = row.try_get("mode")?;
+        let channel: String = row.try_get("channel")?;
         out.push(OpenWindow {
             id: row.try_get("id")?,
             sandbox_id: row.try_get("sandbox_id")?,
             expires_at: row.try_get("expires_at")?,
             reason: row.try_get("reason")?,
+            mode: WindowMode::parse(&mode).unwrap_or_default(),
+            channel: WindowChannel::parse(&channel).unwrap_or_default(),
         });
     }
     Ok(out)
