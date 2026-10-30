@@ -48,7 +48,7 @@ use crate::store::postgres::{
 /// Bump this when the Dockerfile template changes in a way that must produce a
 /// new image for an unchanged recipe. Without it a code deploy would keep
 /// reusing the previous template's image because no recipe field moved.
-const GENERATOR_VERSION: u32 = 4;
+const GENERATOR_VERSION: u32 = 5;
 
 /// The supervisor program shipped inside every image the builder produces.
 ///
@@ -1480,6 +1480,17 @@ pub fn render(plan: &ImagePlan, tag: &str) -> Result<BuildRequest, String> {
     })
 }
 
+/// Encode a multi-line payload for a one-line Dockerfile instruction.
+///
+/// A signing key spans many lines, and a Dockerfile instruction ends at the
+/// newline; pasting it verbatim turns the rest of the key into "unknown
+/// instruction". Base64 keeps the instruction one line and the payload exact,
+/// and every base image this builder supports has `base64 -d`.
+fn dockerfile_payload(text: &str) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(text.as_bytes())
+}
+
 /// Generate the Dockerfile for a plan.
 ///
 /// Pure and deterministic: the same plan produces the same file, which is what
@@ -1512,13 +1523,13 @@ pub fn dockerfile(plan: &ImagePlan) -> Result<String, String> {
                 };
                 if let Some(key) = &repository.signing_key {
                     out.push_str(&format!(
-                        "RUN mkdir -p /etc/apt/keyrings && printf %s {} > /etc/apt/keyrings/nestbox-{name}.asc\n",
-                        shell_quote(key)
+                        "RUN mkdir -p /etc/apt/keyrings && echo {} | base64 -d > /etc/apt/keyrings/nestbox-{name}.asc\n",
+                        dockerfile_payload(key)
                     ));
                 }
                 out.push_str(&format!(
-                    "RUN printf %s {} > /etc/apt/sources.list.d/nestbox-{name}.list\n",
-                    shell_quote(&line)
+                    "RUN echo {} | base64 -d > /etc/apt/sources.list.d/nestbox-{name}.list\n",
+                    dockerfile_payload(&line)
                 ));
             }
             PackageManager::Dnf => {
@@ -1526,28 +1537,28 @@ pub fn dockerfile(plan: &ImagePlan) -> Result<String, String> {
                 if let Some(key) = &repository.signing_key {
                     block.push_str(&format!("gpgcheck=1\ngpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-nestbox-{name}\n"));
                     out.push_str(&format!(
-                        "RUN mkdir -p /etc/pki/rpm-gpg && printf %s {} > /etc/pki/rpm-gpg/RPM-GPG-KEY-nestbox-{name}\n",
-                        shell_quote(key)
+                        "RUN mkdir -p /etc/pki/rpm-gpg && echo {} | base64 -d > /etc/pki/rpm-gpg/RPM-GPG-KEY-nestbox-{name}\n",
+                        dockerfile_payload(key)
                     ));
                 } else {
                     block.push_str("gpgcheck=0\n");
                 }
                 out.push_str(&format!(
-                    "RUN printf %s {} > /etc/yum.repos.d/nestbox-{name}.repo\n",
-                    shell_quote(&block)
+                    "RUN echo {} | base64 -d > /etc/yum.repos.d/nestbox-{name}.repo\n",
+                    dockerfile_payload(&block)
                 ));
             }
             PackageManager::Apk => {
                 // Alpine keeps every repository in one file; the line is the
                 // repository URL and its optional tag, nothing else.
                 out.push_str(&format!(
-                    "RUN printf %s {} >> /etc/apk/repositories\n",
-                    shell_quote(&format!("{url}\n"))
+                    "RUN echo {} | base64 -d >> /etc/apk/repositories\n",
+                    dockerfile_payload(&format!("{url}\n"))
                 ));
                 if let Some(key) = &repository.signing_key {
                     out.push_str(&format!(
-                        "RUN printf %s {} > /etc/apk/keys/nestbox-{name}.rsa.pub\n",
-                        shell_quote(key)
+                        "RUN echo {} | base64 -d > /etc/apk/keys/nestbox-{name}.rsa.pub\n",
+                        dockerfile_payload(key)
                     ));
                 }
             }
@@ -2353,7 +2364,10 @@ mod tests {
         let list = text.find("/etc/apt/sources.list.d/nestbox-artgate.list").expect("repo written");
         let install = text.find("apt-get install").expect("install step");
         assert!(keyring < install && list < install, "the repository exists before the install");
-        assert!(text.contains("signed-by=/etc/apt/keyrings/nestbox-artgate.asc"));
+        let encoded = dockerfile_payload(
+            "deb [signed-by=/etc/apt/keyrings/nestbox-artgate.asc] https://packages.example.test/apt stable main\n",
+        );
+        assert!(text.contains(&encoded), "the source line is carried as one line");
     }
 
     #[test]
