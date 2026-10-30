@@ -259,6 +259,8 @@ pub const OPERATIONS: &[Operation] = &[
     op("PUT", "/api/v1/sandboxes/{id}/media", "Choose a sandbox's own media models from the allowed set", "media", "operator", true, StreamKind::None),
     op("GET", "/api/v1/sandboxes/{id}/media/renders", "Recent media renders for a sandbox", "media", "viewer", false, StreamKind::None),
     op("GET", "/api/v1/media/renders/{id}/asset/{name}", "One rendered image, video or track", "media", "viewer", false, StreamKind::None),
+    op("DELETE", "/api/v1/media/renders/{id}", "Delete one render and its asset", "media", "admin", true, StreamKind::None),
+    op("POST", "/api/v1/media/purge", "Delete renders older than the given number of days", "media", "admin", true, StreamKind::None),
 ];
 
 const fn op(

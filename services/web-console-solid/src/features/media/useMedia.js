@@ -41,6 +41,36 @@ export function useMedia() {
     }
   }
 
+  /// Remove one render, then reload the list so the screen shows what is left.
+  async function removeRender(sandboxId, renderId) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.removeRender(renderId);
+      setRenders(await api.renders(sandboxId));
+      setNotice('Render deleted.');
+    } catch (failure) {
+      setError(failure.message || 'The render could not be deleted.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function purge(sandboxId, days) {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const answer = await api.purge(days);
+      setRenders(await api.renders(sandboxId));
+      setNotice(`${answer.renders} renders older than ${answer.older_than_days} days removed.`);
+    } catch (failure) {
+      setError(failure.message || 'The purge failed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveUserGrant(userId, draft) {
     setBusy(true);
     setError(null);
@@ -111,6 +141,8 @@ export function useMedia() {
     load,
     loadUsers,
     saveUserGrant,
+    removeRender,
+    purge,
     loadSandbox,
     save,
     saveSandbox,

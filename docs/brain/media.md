@@ -65,7 +65,9 @@ A server that needs a token gets a **reference** (`${NESTBOX_MEDIA_TOKEN}` or
 ## Honest limits
 
 * Rendering is synchronous with a three-minute client timeout; there is no queue.
-* Assets are not garbage-collected yet.
+* Assets are removed with their row by `POST /media/purge` (admin) or one at a
+  time by `DELETE /media/renders/{id}`; scheduling the purge is a deployment
+  decision.
 * The provider protocol is OpenAI-shaped plus three documented paths, overridable
   per provider via `labels.media_path_image`, `media_path_video`,
   `media_path_music`.
