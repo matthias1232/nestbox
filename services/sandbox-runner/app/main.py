@@ -1097,17 +1097,21 @@ def model_metrics(key: str) -> dict[str, Any]:
 
     key = model_key(key)
     name = model_container(key)
-    port = MODEL_PORTS.get(key)
-    if port is None:
-        try:
-            item = client.containers.get(name)
-            item.reload()
-        except NotFound:
-            raise HTTPException(404, f"no model server {name}") from None
-        port = container_port(item)
+    try:
+        item = client.containers.get(name)
+        item.reload()
+    except NotFound:
+        raise HTTPException(404, f"no model server {name}") from None
+    port = MODEL_PORTS.get(key) or container_port(item)
     if port is None:
         raise HTTPException(503, f"{name} does not report a port to read metrics from")
-    url = f"http://{name}:{port}/metrics"
+    # The runner reaches model containers through the runtime network, not by
+    # name: it is not attached to that network itself, so Docker's DNS does not
+    # answer for it. The container's address on that network does.
+    networks = (item.attrs.get("NetworkSettings") or {}).get("Networks") or {}
+    address = (networks.get(NETWORK) or {}).get("IPAddress") or ""
+    host = address or name
+    url = f"http://{host}:{port}/metrics"
     try:
         with urllib.request.urlopen(url, timeout=5) as response:  # noqa: S310
             body = response.read().decode("utf-8", "replace")
