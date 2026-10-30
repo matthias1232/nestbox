@@ -30,6 +30,7 @@ export default function MediaPage(props) {
   const [draft, setDraft] = createSignal({ enabled: true, image: emptyTarget(), video: emptyTarget(), music: emptyTarget(), allowed_provider_ids: [] });
   const [sandboxDraft, setSandboxDraft] = createSignal({ image: emptyTarget(), video: emptyTarget(), music: emptyTarget() });
   const [userDrafts, setUserDrafts] = createSignal({});
+  const [purgeDays, setPurgeDays] = createSignal(30);
   const isAdmin = () => props.role === 'admin';
 
   onMount(async () => {
@@ -364,6 +365,25 @@ export default function MediaPage(props) {
             </button>
 
             <h4>Recent renders</h4>
+            <Show when={isAdmin()}>
+              <div class="form-grid">
+                <label class="field">
+                  Purge renders older than (days)
+                  <input
+                    class="input"
+                    type="number"
+                    min="1"
+                    max="3650"
+                    value={purgeDays()}
+                    onInput={(event) => setPurgeDays(Number(event.currentTarget.value))}
+                  />
+                </label>
+                <button class="tiny danger" disabled={media.busy()} onClick={() => media.purge(selectedSandbox(), purgeDays())}>
+                  Purge
+                </button>
+              </div>
+              <p class="muted small">Removes the render rows and their files. The audit entry records how many went.</p>
+            </Show>
             <Show when={media.renders().length} fallback={<p class="muted small">This sandbox has not rendered anything yet.</p>}>
               <div class="table-scroll">
                 <table class="table">
@@ -375,6 +395,7 @@ export default function MediaPage(props) {
                       <th>Status</th>
                       <th>Prompt</th>
                       <th>Asset</th>
+                      <th></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -389,6 +410,17 @@ export default function MediaPage(props) {
                           <td>
                             <Show when={render.asset_url} fallback={<span class="muted small">{render.error || '—'}</span>}>
                               <a href={render.asset_url} target="_blank" rel="noreferrer">open</a>
+                            </Show>
+                          </td>
+                          <td>
+                            <Show when={isAdmin()}>
+                              <button
+                                class="tiny danger"
+                                disabled={media.busy()}
+                                onClick={() => media.removeRender(selectedSandbox(), render.id)}
+                              >
+                                delete
+                              </button>
                             </Show>
                           </td>
                         </tr>

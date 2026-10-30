@@ -69,8 +69,10 @@ model drew this?" unanswerable after the fact.
 * A render is synchronous from the agent's point of view and bounded by a
   three-minute client timeout. A provider that takes longer fails the render with
   its reason; there is no queue yet.
-* Assets are not garbage-collected. A retention job is the obvious follow-up, and
-  it belongs next to the render row, not next to the file.
+* Assets are removed with their render row: `POST /media/purge` deletes rows and
+  files older than a number of days and audits the count, and
+  `DELETE /media/renders/{id}` removes one. A deployment schedules the purge; the
+  appliance does not run it on a timer of its own yet.
 * The provider protocol is OpenAI-shaped plus three documented paths
   (`/images/generations`, `/videos/generations`, `/audio/music`), overridable per
   provider with `labels.media_path_image` and friends. A provider that speaks a

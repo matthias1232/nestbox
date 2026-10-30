@@ -160,6 +160,8 @@ pub const OPERATIONS: &[Operation] = &[
     op("POST", "/api/v1/models/{key}/install", "Install or update a model on a node", "models", "operator", true, StreamKind::None),
     op("POST", "/api/v1/models/{key}/uninstall", "Remove a model from a node", "models", "operator", true, StreamKind::None),
     op("PATCH", "/api/v1/models/{key}/install", "Edit an installed model: reserved memory, on or off", "models", "operator", true, StreamKind::None),
+    op("GET", "/api/v1/models/{key}/logs", "The served model's recent log lines", "models", "viewer", false, StreamKind::None),
+    op("GET", "/api/v1/models/{key}/metrics", "Sample the served model and return its stored series", "models", "viewer", false, StreamKind::None),
     op("GET", "/api/v1/models/installs", "Model installs per node with reservations", "models", "viewer", false, StreamKind::None),
     op("POST", "/api/v1/models/sync", "Refresh the catalog from Hugging Face, Ollama, and NVIDIA", "models", "operator", true, StreamKind::None),
     op("GET", "/api/v1/cuda-x/components", "CUDA-X component catalog", "models", "viewer", false, StreamKind::None),
@@ -259,6 +261,8 @@ pub const OPERATIONS: &[Operation] = &[
     op("PUT", "/api/v1/sandboxes/{id}/media", "Choose a sandbox's own media models from the allowed set", "media", "operator", true, StreamKind::None),
     op("GET", "/api/v1/sandboxes/{id}/media/renders", "Recent media renders for a sandbox", "media", "viewer", false, StreamKind::None),
     op("GET", "/api/v1/media/renders/{id}/asset/{name}", "One rendered image, video or track", "media", "viewer", false, StreamKind::None),
+    op("DELETE", "/api/v1/media/renders/{id}", "Delete one render and its asset", "media", "admin", true, StreamKind::None),
+    op("POST", "/api/v1/media/purge", "Delete renders older than the given number of days", "media", "admin", true, StreamKind::None),
 ];
 
 const fn op(

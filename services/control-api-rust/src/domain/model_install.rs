@@ -78,6 +78,240 @@ impl InstallState {
     }
 }
 
+/// The runtime flags an operator tuned for one installed model.
+///
+/// Every field is optional: an absent field means "leave the image's own
+/// default". The set is deliberately the llama.cpp server surface the product
+/// actually exposes (context, GPU layers, batching, KV cache, threads, memory
+/// behaviour, sampling seed), not an escape hatch for arbitrary arguments: the
+/// value is turned into an argument vector here, and the runner never builds a
+/// shell string from it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(default)]
+pub struct ModelTuning {
+    /// `--ctx-size`: the context window the server allocates.
+    pub context_size: Option<i64>,
+    /// `--n-gpu-layers`: how many layers go to the GPU (`-1` = all).
+    pub gpu_layers: Option<i32>,
+    /// `--parallel`: how many requests the server serves at once.
+    pub parallel: Option<i32>,
+    /// `--batch-size` and `--ubatch-size`: prompt processing chunks.
+    pub batch_size: Option<i32>,
+    pub ubatch_size: Option<i32>,
+    /// `--threads` / `--threads-batch`; absent uses the node's cores.
+    pub threads: Option<i32>,
+    pub threads_batch: Option<i32>,
+    /// `-fa on|off`.
+    pub flash_attention: Option<bool>,
+    /// `--cache-type-k` / `--cache-type-v` (`f16`, `bf16`, `q8_0`, `q4_0`, ...).
+    pub cache_type_k: Option<String>,
+    pub cache_type_v: Option<String>,
+    /// `--no-mmap` when false.
+    pub mmap: Option<bool>,
+    /// `--mlock`.
+    pub mlock: Option<bool>,
+    /// `--no-kv-offload` when false.
+    pub kv_offload: Option<bool>,
+    /// `--tensor-split`: per-GPU proportions, comma separated.
+    pub tensor_split: Option<String>,
+    /// `--main-gpu`.
+    pub main_gpu: Option<i32>,
+    /// `--seed`.
+    pub seed: Option<i64>,
+    /// `--metrics`: on unless explicitly switched off, because the model's
+    /// graphs and token counts depend on it.
+    pub metrics: Option<bool>,
+    /// `--jinja`: use the model's chat template.
+    pub jinja: Option<bool>,
+}
+
+/// Cache types llama.cpp accepts for the KV cache.
+const CACHE_TYPES: &[&str] = &["f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"];
+
+impl ModelTuning {
+    /// Reject values that cannot work, and warn about values that can but are
+    /// expensive. Warnings do not block: the same rule as an install.
+    pub fn validate(&self) -> Result<Vec<String>, String> {
+        let mut warnings = Vec::new();
+        if let Some(context) = self.context_size {
+            if context < 128 {
+                return Err("context_size must be at least 128".to_string());
+            }
+            if context > 1_048_576 {
+                return Err("context_size above 1048576 is not supported".to_string());
+            }
+            if context > 131_072 {
+                warnings.push(format!(
+                    "A context of {context} tokens needs a large KV cache; watch the node's memory."
+                ));
+            }
+        }
+        if let Some(layers) = self.gpu_layers {
+            if !(-1..=999).contains(&layers) {
+                return Err("gpu_layers must be between -1 and 999".to_string());
+            }
+        }
+        if let Some(parallel) = self.parallel {
+            if !(1..=256).contains(&parallel) {
+                return Err("parallel must be between 1 and 256".to_string());
+            }
+        }
+        for (name, value, low, high) in [
+            ("batch_size", self.batch_size, 32, 16_384),
+            ("ubatch_size", self.ubatch_size, 32, 16_384),
+            ("threads", self.threads, 1, 1024),
+            ("threads_batch", self.threads_batch, 1, 1024),
+        ] {
+            if let Some(value) = value {
+                if !(low..=high).contains(&value) {
+                    return Err(format!("{name} must be between {low} and {high}"));
+                }
+            }
+        }
+        if let (Some(batch), Some(ubatch)) = (self.batch_size, self.ubatch_size) {
+            if ubatch > batch {
+                return Err("ubatch_size cannot be larger than batch_size".to_string());
+            }
+        }
+        for (name, value) in [
+            ("cache_type_k", self.cache_type_k.as_deref()),
+            ("cache_type_v", self.cache_type_v.as_deref()),
+        ] {
+            if let Some(value) = value {
+                if !CACHE_TYPES.contains(&value) {
+                    return Err(format!(
+                        "{name} must be one of {}",
+                        CACHE_TYPES.join(", ")
+                    ));
+                }
+            }
+        }
+        if let Some(split) = self.tensor_split.as_deref() {
+            if split.split(',').any(|part| part.trim().parse::<f32>().is_err()) {
+                return Err("tensor_split must be comma separated numbers".to_string());
+            }
+        }
+        if let (Some(context), Some(parallel)) = (self.context_size, self.parallel) {
+            if context.saturating_mul(i64::from(parallel)) > 4_194_304 {
+                warnings.push(
+                    "context_size × parallel is very large; the KV cache may not fit the node."
+                        .to_string(),
+                );
+            }
+        }
+        Ok(warnings)
+    }
+
+    /// Rewrite the image's command with the tuned flags.
+    ///
+    /// Controlled flags are removed first, so a value replaces the image default
+    /// instead of being appended after it and depending on llama.cpp's handling
+    /// of repeated flags.
+    pub fn apply(&self, command: &mut Vec<String>, threads: i64) {
+        for flag in [
+            "--ctx-size",
+            "--n-gpu-layers",
+            "--parallel",
+            "--batch-size",
+            "--ubatch-size",
+            "--threads",
+            "--threads-batch",
+            "-fa",
+            "--flash-attn",
+            "--cache-type-k",
+            "--cache-type-v",
+            "--no-mmap",
+            "--mlock",
+            "--no-kv-offload",
+            "--tensor-split",
+            "--main-gpu",
+            "--seed",
+            "--metrics",
+            "--jinja",
+        ] {
+            strip_flag(command, flag);
+        }
+        if let Some(value) = self.context_size {
+            push_flag(command, "--ctx-size", value.to_string());
+        }
+        if let Some(value) = self.gpu_layers {
+            push_flag(command, "--n-gpu-layers", value.to_string());
+        }
+        if let Some(value) = self.parallel {
+            push_flag(command, "--parallel", value.to_string());
+        }
+        if let Some(value) = self.batch_size {
+            push_flag(command, "--batch-size", value.to_string());
+        }
+        if let Some(value) = self.ubatch_size {
+            push_flag(command, "--ubatch-size", value.to_string());
+        }
+        if let Some(value) = self.threads {
+            push_flag(command, "--threads", value.to_string());
+        } else {
+            push_flag(command, "--threads", threads.max(1).to_string());
+        }
+        if let Some(value) = self.threads_batch {
+            push_flag(command, "--threads-batch", value.to_string());
+        }
+        if let Some(value) = self.flash_attention {
+            push_flag(command, "-fa", if value { "on".into() } else { "off".into() });
+        }
+        if let Some(value) = self.cache_type_k.as_deref() {
+            push_flag(command, "--cache-type-k", value.to_string());
+        }
+        if let Some(value) = self.cache_type_v.as_deref() {
+            push_flag(command, "--cache-type-v", value.to_string());
+        }
+        if self.mmap == Some(false) {
+            command.push("--no-mmap".to_string());
+        }
+        if self.mlock == Some(true) {
+            command.push("--mlock".to_string());
+        }
+        if self.kv_offload == Some(false) {
+            command.push("--no-kv-offload".to_string());
+        }
+        if let Some(value) = self.tensor_split.as_deref() {
+            push_flag(command, "--tensor-split", value.to_string());
+        }
+        if let Some(value) = self.main_gpu {
+            push_flag(command, "--main-gpu", value.to_string());
+        }
+        if let Some(value) = self.seed {
+            push_flag(command, "--seed", value.to_string());
+        }
+        if self.metrics != Some(false) {
+            command.push("--metrics".to_string());
+        }
+        if self.jinja == Some(true) {
+            command.push("--jinja".to_string());
+        }
+    }
+}
+
+/// Append `--flag value`.
+fn push_flag(command: &mut Vec<String>, flag: &str, value: String) {
+    command.push(flag.to_string());
+    command.push(value);
+}
+
+/// Remove a flag and its value, if the command has it.
+fn strip_flag(command: &mut Vec<String>, flag: &str) {
+    let mut index = 0;
+    while index < command.len() {
+        if command[index] == flag {
+            let takes_value = command
+                .get(index + 1)
+                .is_some_and(|next| !next.starts_with('-') || next.parse::<f64>().is_ok());
+            let count = if takes_value { 2 } else { 1 };
+            command.drain(index..(index + count).min(command.len()));
+        } else {
+            index += 1;
+        }
+    }
+}
+
 /// A model install as stored and returned.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ModelInstall {
@@ -94,6 +328,9 @@ pub struct ModelInstall {
     pub enabled: bool,
     pub provider_profile_id: Option<Uuid>,
     pub job_id: Option<Uuid>,
+    /// The operator's runtime flags; empty means the image defaults.
+    #[serde(default)]
+    pub settings: ModelTuning,
     pub error: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -406,6 +643,7 @@ mod tests {
             enabled: true,
             provider_profile_id: None,
             job_id: None,
+            settings: ModelTuning::default(),
             error: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -626,5 +864,93 @@ mod serving_tests {
         };
         let command = image.command_for("/models/m.gguf", 0);
         assert_eq!(command, vec!["-m", "/models/m.gguf", "--threads", "1"]);
+    }
+}
+
+#[cfg(test)]
+mod tuning_tests {
+    use super::ModelTuning;
+
+    fn command() -> Vec<String> {
+        vec![
+            "llama-server".to_string(),
+            "-m".to_string(),
+            "/models/x.gguf".to_string(),
+            "--ctx-size".to_string(),
+            "4096".to_string(),
+            "--threads".to_string(),
+            "8".to_string(),
+        ]
+    }
+
+    #[test]
+    fn tuning_replaces_the_flags_it_controls() {
+        let tuning = ModelTuning {
+            context_size: Some(32768),
+            threads: Some(4),
+            flash_attention: Some(true),
+            cache_type_k: Some("q8_0".to_string()),
+            metrics: Some(true),
+            ..Default::default()
+        };
+        let mut args = command();
+        tuning.apply(&mut args, 8);
+        let joined = args.join(" ");
+        assert_eq!(joined.matches("--ctx-size").count(), 1, "{joined}");
+        assert!(joined.contains("--ctx-size 32768"));
+        assert_eq!(joined.matches("--threads").count(), 1, "{joined}");
+        assert!(joined.contains("--threads 4"));
+        assert!(joined.contains("-fa on"));
+        assert!(joined.contains("--cache-type-k q8_0"));
+        assert!(joined.contains("--metrics"));
+    }
+
+    #[test]
+    fn metrics_are_on_unless_explicitly_off() {
+        let mut args = command();
+        ModelTuning::default().apply(&mut args, 8);
+        assert!(args.join(" ").contains("--metrics"));
+        let mut args = command();
+        ModelTuning {
+            metrics: Some(false),
+            ..Default::default()
+        }
+        .apply(&mut args, 8);
+        assert!(!args.join(" ").contains("--metrics"));
+    }
+
+    #[test]
+    fn impossible_values_are_errors_and_expensive_ones_are_warnings() {
+        let err = ModelTuning {
+            context_size: Some(16),
+            ..Default::default()
+        }
+        .validate()
+        .expect_err("context below 128 must be refused");
+        assert!(err.contains("context_size"));
+
+        let warnings = ModelTuning {
+            context_size: Some(262_144),
+            parallel: Some(32),
+            ..Default::default()
+        }
+        .validate()
+        .expect("a large context is a warning, not an error");
+        assert!(!warnings.is_empty());
+
+        assert!(ModelTuning {
+            cache_type_k: Some("q2_k".to_string()),
+            ..Default::default()
+        }
+        .validate()
+        .is_err());
+
+        assert!(ModelTuning {
+            batch_size: Some(128),
+            ubatch_size: Some(256),
+            ..Default::default()
+        }
+        .validate()
+        .is_err());
     }
 }

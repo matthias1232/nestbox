@@ -414,3 +414,38 @@ pub async fn sandbox_owner(
         .await?;
     Ok(owner.flatten())
 }
+
+/// Delete one render and return its asset name, so the caller can remove the
+/// file. The row goes first: an orphaned file is invisible, an orphaned row with
+/// no file is a broken link the console would show.
+pub async fn delete_render(
+    scope: &mut TenantScope<'_>,
+    id: Uuid,
+) -> Result<Option<String>, StoreError> {
+    let asset: Option<Option<String>> = sqlx::query_scalar(
+        "DELETE FROM media_renders WHERE id = $1 AND environment_id = $2 RETURNING asset_name",
+    )
+    .bind(id)
+    .bind(scope.environment_id())
+    .fetch_optional(scope.connection())
+    .await?;
+    Ok(asset.flatten())
+}
+
+/// Delete every render older than `before` in this environment, returning the
+/// asset names that are now unreferenced.
+pub async fn delete_renders_before(
+    scope: &mut TenantScope<'_>,
+    before: DateTime<Utc>,
+) -> Result<Vec<String>, StoreError> {
+    let rows = sqlx::query_scalar::<_, Option<String>>(
+        "DELETE FROM media_renders
+          WHERE environment_id = $1 AND created_at < $2
+          RETURNING asset_name",
+    )
+    .bind(scope.environment_id())
+    .bind(before)
+    .fetch_all(scope.connection())
+    .await?;
+    Ok(rows.into_iter().flatten().collect())
+}

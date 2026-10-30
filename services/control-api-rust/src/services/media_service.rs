@@ -725,6 +725,72 @@ mod tests {
     }
 }
 
+/// Delete one render and its asset. Admin only: a render is evidence of what an
+/// agent asked for, so removing it is an administrative act.
+pub async fn delete_render(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    render_id: Uuid,
+) -> Result<(), ApiError> {
+    require(principal, Permission::MediaConfigure)?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
+    let asset = store::delete_render(&mut scope, render_id).await.map_err(ApiError::from)?;
+    let Some(asset) = asset else {
+        return Err(ApiError::not_found(ErrorCode::NOT_FOUND, "No such render."));
+    };
+    scope.commit().await.map_err(ApiError::from)?;
+    remove_asset(principal.environment_id, Some(&asset)).await;
+    Ok(())
+}
+
+/// Delete renders older than `days` and their assets.
+///
+/// A row is the record; the file is the payload. Both go, in that order, so a
+/// failure cannot leave a row pointing at a file that is gone.
+pub async fn purge(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    days: i64,
+) -> Result<serde_json::Value, ApiError> {
+    require(principal, Permission::MediaConfigure)?;
+    if !(1..=3650).contains(&days) {
+        return Err(ApiError::validation("days must be between 1 and 3650."));
+    }
+    let cutoff = Utc::now() - chrono::Duration::days(days);
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
+    let assets = store::delete_renders_before(&mut scope, cutoff).await.map_err(ApiError::from)?;
+    crate::store::postgres::audit::record(
+        &mut scope,
+        crate::store::postgres::audit::NewAuditEvent {
+            actor_id: Some(principal.user_id),
+            actor_label: &principal.display_name,
+            kind: "media.purge",
+            subject_type: Some("environment"),
+            subject_id: Some(principal.environment_id),
+            detail: &json!({ "days": days, "renders": assets.len() }),
+            request_id: None,
+        },
+    )
+    .await
+    .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    let mut removed = 0;
+    for asset in &assets {
+        if remove_asset(principal.environment_id, Some(asset)).await {
+            removed += 1;
+        }
+    }
+    Ok(json!({ "renders": assets.len(), "assets_removed": removed, "older_than_days": days }))
+}
+
+/// Remove one asset file. A missing file is not an error: the row is the truth,
+/// and a purge that failed halfway must be able to finish.
+async fn remove_asset(environment_id: Uuid, asset: Option<&str>) -> bool {
+    let Some(asset) = asset else { return false };
+    let path = media_dir().join(environment_id.to_string()).join(asset);
+    tokio::fs::remove_file(path).await.is_ok()
+}
+
 // --- per-user release ------------------------------------------------------
 
 /// Every person of this environment with their effective media release.

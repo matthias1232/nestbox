@@ -78,3 +78,18 @@ export function sync() {
 export function updateInstall(key, change) {
   return request(`models/${key}/install`, { method: 'PATCH', body: change });
 }
+
+/** The last log lines a served model wrote. */
+export function logs(key, node, tail = 200) {
+  return request(`models/${key}/logs${query({ node, tail })}`);
+}
+
+/**
+ * Sample the served model now and return its stored series.
+ *
+ * The answer carries `available`, the `current` sample, the `series`, and the
+ * `consumers` (sandboxes whose provider profile points at this model).
+ */
+export function metrics(key, node, limit = 120) {
+  return request(`models/${key}/metrics${query({ node, limit })}`);
+}

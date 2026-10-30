@@ -358,3 +358,37 @@ ul.plain { list-style: none; padding: 0; margin: 0; display: flex; flex-directio
 /* Reserved-RAM slider on the models page. */
 .ram-slider { display: grid; gap: 0.25rem; min-width: 16rem; }
 .ram-slider input[type="range"] { width: 100%; }
+
+/* One installed model's runtime: tuning form, log tail and metric graphs. */
+.runtime-panel { padding: var(--space-3) 0; display: grid; gap: var(--space-3); }
+.runtime-panel .toolbar { flex-wrap: wrap; }
+.runtime-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-3);
+}
+.runtime-grid .field input[type="range"] { width: 100%; }
+.runtime-row > td { background: var(--bg-raised); }
+.runtime-row details > summary { cursor: pointer; }
+pre.log-view {
+  max-height: 280px;
+  overflow: auto;
+  margin: 0;
+  padding: var(--space-3);
+  background: var(--bg-sunken, rgba(0, 0, 0, 0.18));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: 6px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--space-3); }
+.charts figure { margin: 0; display: grid; gap: 4px; }
+svg.spark {
+  width: 100%;
+  height: 72px;
+  background: var(--bg-sunken, rgba(0, 0, 0, 0.18));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: 6px;
+}

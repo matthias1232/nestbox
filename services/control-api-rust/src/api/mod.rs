@@ -203,6 +203,8 @@ pub fn router(state: AppState) -> Router {
             get(media::sandbox_settings).put(media::put_sandbox_settings),
         )
         .route("/api/v1/sandboxes/{id}/media/renders", get(media::renders))
+        .route("/api/v1/media/purge", post(media::purge))
+        .route("/api/v1/media/renders/{id}", delete(media::delete_render))
         .route("/api/v1/media/renders/{id}/asset/{name}", get(media::asset))
         // Internal: node-token endpoints for the proxy and the runner.
         //
@@ -355,6 +357,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/models/{key}/install", post(models::install))
         .route("/api/v1/models/{key}/uninstall", post(models::uninstall))
         .route("/api/v1/models/{key}/install", patch(models::update_install))
+        .route("/api/v1/models/{key}/logs", get(models::logs))
+        .route("/api/v1/models/{key}/metrics", get(models::metrics))
         // Nodes
         .route("/api/v1/nodes", get(nodes::list))
         .route("/api/v1/nodes/{id}", get(nodes::get))

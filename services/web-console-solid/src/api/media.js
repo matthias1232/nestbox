@@ -14,3 +14,7 @@ export const renders = (sandboxId, limit = 50) =>
 export const users = () => request('media/users');
 export const setUserGrant = (userId, body) =>
   request(`media/users/${userId}`, { method: 'PUT', body });
+
+// Admin: remove evidence and the file it points at.
+export const removeRender = (renderId) => request(`media/renders/${renderId}`, { method: 'DELETE' });
+export const purge = (days) => request('media/purge', { method: 'POST', body: { days } });

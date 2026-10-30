@@ -241,3 +241,33 @@ pub async fn set_user_grant(
         media_service::set_user_grant(&state.services, &auth.principal, user_id, grant).await?,
     ))
 }
+
+/// Delete one render and its asset. Admin only.
+pub async fn delete_render(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    media_service::delete_render(&state.services, &auth.principal, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// How many days of renders to keep when purging.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct PurgeBody {
+    #[serde(default = "default_days")]
+    pub days: i64,
+}
+
+fn default_days() -> i64 {
+    30
+}
+
+/// Delete renders older than `days`, rows and assets. Admin only.
+pub async fn purge(
+    State(state): State<AppState>,
+    auth: Auth,
+    Json(body): Json<PurgeBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(media_service::purge(&state.services, &auth.principal, body.days).await?))
+}
