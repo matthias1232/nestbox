@@ -70,6 +70,10 @@ does not keep.
 - `apt-get update` inside a container with every capability dropped needs
   `APT::Sandbox::User=root`, because the default chowns its lists to `_apt` and
   `CAP_CHOWN` is gone. The capability stays dropped.
+- A signing key spans many lines, and a Dockerfile instruction ends at the
+  newline; pasting one verbatim turns the rest into "unknown instruction". The
+  generator carries the keyring and the source file as base64 on one `RUN` line
+  and decodes it in the image, which every supported base image can do.
 - "Built" now means "built and verified". A package that is installed under a
   different name than requested (for example a virtual package) is reported as
   missing; the fix is the real package name, which the catalogue now shows.
