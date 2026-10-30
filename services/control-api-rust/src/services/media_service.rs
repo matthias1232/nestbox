@@ -642,8 +642,8 @@ async fn call_provider(
         .build()
         .map_err(|error| format!("media client: {error}"))?;
     let mut call = client.post(&url).json(&body);
-    if let Some(credential) = credential {
-        call = call.bearer_auth(credential);
+    if let Some(value) = credential.as_deref() {
+        call = call.bearer_auth(value);
     }
     let response = call.send().await.map_err(|error| format!("provider request failed: {error}"))?;
     let status = response.status();
@@ -659,7 +659,147 @@ async fn call_provider(
             .unwrap_or("the provider refused the request");
         return Err(format!("provider answered {status}: {message}"));
     }
-    decode_asset(&payload, kind)
+    // Some providers inline the bytes, some return a URL, some return a job that
+    // finishes later. All three are the same answer to the agent, so the shapes
+    // are tried in that order and the first one that yields bytes wins.
+    if let Ok(inline) = decode_asset(&payload, kind) {
+        return Ok(inline);
+    }
+    if let Some(asset_url) = asset_url(&payload) {
+        return download_asset(&client, &profile.endpoint, &asset_url, credential.as_deref(), kind).await;
+    }
+    if let Some(job) = payload.get("id").and_then(Value::as_str) {
+        return poll_job(&client, &url, job, credential.as_deref(), kind).await;
+    }
+    let keys: Vec<&str> = payload
+        .as_object()
+        .map(|object| object.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    Err(format!(
+        "the provider answered without an asset (expected bytes, a URL or a job; got: {})",
+        keys.join(", ")
+    ))
+}
+
+/// The first asset URL in the shapes providers use, if there is one.
+fn asset_url(payload: &Value) -> Option<String> {
+    const PATHS: &[&str] = &[
+        "/url",
+        "/video_url",
+        "/audio_url",
+        "/data/0/url",
+        "/data/url",
+        "/output/0/url",
+        "/result/url",
+        "/video/url",
+        "/audio/url",
+    ];
+    PATHS.iter().find_map(|path| {
+        payload
+            .pointer(path)
+            .and_then(Value::as_str)
+            .filter(|value| value.starts_with("http"))
+            .map(str::to_string)
+    })
+}
+
+/// Fetch an asset URL.
+///
+/// The credential is attached only when the URL is on the provider's own origin:
+/// a signed CDN link does not need it, and sending a provider key to a third
+/// host would be a leak the user never approved.
+async fn download_asset(
+    client: &reqwest::Client,
+    endpoint: &str,
+    asset_url: &str,
+    credential: Option<&str>,
+    kind: MediaKind,
+) -> Result<(Vec<u8>, String), String> {
+    let mut call = client.get(asset_url);
+    if origin(endpoint) == origin(asset_url) {
+        if let Some(credential) = credential {
+            call = call.bearer_auth(credential);
+        }
+    }
+    let response = call.send().await.map_err(|error| format!("asset download failed: {error}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("asset download answered {status}"));
+    }
+    let mime = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.split(';').next().unwrap_or(value).to_string())
+        .unwrap_or_else(|| default_mime(kind).to_string());
+    let bytes = response.bytes().await.map_err(|error| format!("asset download failed: {error}"))?;
+    if bytes.is_empty() {
+        return Err("the provider returned an empty asset".into());
+    }
+    Ok((bytes.to_vec(), mime))
+}
+
+/// `scheme://host[:port]` of a URL, for the credential-origin comparison.
+fn origin(url: &str) -> String {
+    let (scheme, rest) = url.split_once("://").unwrap_or(("", url));
+    let authority = rest.split('/').next().unwrap_or("");
+    format!("{scheme}://{authority}")
+}
+
+fn default_mime(kind: MediaKind) -> &'static str {
+    match kind {
+        MediaKind::Image => "image/png",
+        MediaKind::Video => "video/mp4",
+        MediaKind::Music => "audio/mpeg",
+    }
+}
+
+/// Wait for an asynchronous render the provider accepted by id.
+///
+/// Bounded on purpose: a provider that never finishes becomes an error the row
+/// records, not a request that holds a connection forever.
+async fn poll_job(
+    client: &reqwest::Client,
+    submit_url: &str,
+    job: &str,
+    credential: Option<&str>,
+    kind: MediaKind,
+) -> Result<(Vec<u8>, String), String> {
+    let poll_url = format!("{}/{job}", submit_url.trim_end_matches('/'));
+    for _ in 0..60 {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        let mut call = client.get(&poll_url);
+        if let Some(value) = credential {
+            call = call.bearer_auth(value);
+        }
+        let response = match call.send().await {
+            Ok(response) => response,
+            Err(error) => return Err(format!("polling the render failed: {error}")),
+        };
+        let payload: Value = response.json().await.unwrap_or(Value::Null);
+        let state = payload
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if matches!(state.as_str(), "failed" | "error" | "cancelled") {
+            let reason = payload
+                .get("error")
+                .map(Value::to_string)
+                .unwrap_or_else(|| "the provider reported a failure".into());
+            return Err(format!("the render failed: {reason}"));
+        }
+        if let Ok(inline) = decode_asset(&payload, kind) {
+            return Ok(inline);
+        }
+        if let Some(asset_url) = asset_url(&payload) {
+            return download_asset(client, submit_url, &asset_url, credential, kind).await;
+        }
+        if matches!(state.as_str(), "completed" | "succeeded" | "done" | "ready") {
+            return Err("the provider finished without an asset".into());
+        }
+    }
+    Err("the provider did not finish the render within five minutes".into())
 }
 
 /// Pull the bytes out of the several shapes media APIs use.
@@ -716,6 +856,20 @@ mod tests {
     fn an_answer_without_an_asset_is_an_error_not_an_empty_file() {
         let error = decode_asset(&json!({ "data": [] }), MediaKind::Video).unwrap_err();
         assert!(error.contains("without an asset"));
+    }
+
+    #[test]
+    fn an_asset_url_is_found_in_the_shapes_providers_use() {
+        assert_eq!(asset_url(&json!({"url": "https://x/a.mp4"})).as_deref(), Some("https://x/a.mp4"));
+        assert_eq!(asset_url(&json!({"data": [{"url": "https://x/b.mp4"}]})).as_deref(), Some("https://x/b.mp4"));
+        assert!(asset_url(&json!({"id": "job-1", "status": "queued"})).is_none());
+    }
+
+    #[test]
+    fn the_credential_origin_is_the_scheme_and_host_only() {
+        assert_eq!(origin("https://api.example.com/v1/videos"), "https://api.example.com");
+        assert_eq!(origin("https://api.example.com"), "https://api.example.com");
+        assert_ne!(origin("https://cdn.example.com/a"), origin("https://api.example.com"));
     }
 
     #[test]
