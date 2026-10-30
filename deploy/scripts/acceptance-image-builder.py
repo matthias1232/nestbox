@@ -78,11 +78,16 @@ def call(path: str, method: str = "GET", body=None, expect=None):
         except urllib.error.HTTPError as error:
             return error.code, error.read()
 
-    # A deploy of the control plane closes every connection; one retry keeps a
-    # parallel session's restart from looking like a feature failure.
+    # A deploy of the control plane closes every connection and leaves nginx
+    # answering 502 for a moment; one retry keeps a parallel session's restart
+    # from looking like a feature failure. A 503 from the API itself is a real
+    # answer and is not retried.
     try:
         status, payload = attempt()
     except (ConnectionResetError, urllib.error.URLError):
+        wait_for_api()
+        status, payload = attempt()
+    if status in {502, 504}:
         wait_for_api()
         status, payload = attempt()
     if expect is not None and status not in (expect if isinstance(expect, (set, tuple, list)) else {expect}):
