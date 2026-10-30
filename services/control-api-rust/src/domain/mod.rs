@@ -27,6 +27,7 @@ pub mod pack_access;
 pub mod pagination;
 pub mod persist;
 pub mod policy;
+pub mod privacy;
 pub mod provider;
 pub mod runtime;
 pub mod sandbox;

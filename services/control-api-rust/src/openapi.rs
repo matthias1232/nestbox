@@ -253,6 +253,12 @@ pub const OPERATIONS: &[Operation] = &[
     op("GET", "/api/v1/internal/media/info", "Whether the media bridge is available (media token)", "media", "node", false, StreamKind::None),
     op("GET", "/api/v1/internal/media/renders/{id}/asset", "The bytes of one render, for the media bridge (media token)", "media", "node", false, StreamKind::None),
     // Media settings and renders
+    op("GET", "/api/v1/privacy/settings", "Content privacy settings for the environment or one sandbox", "privacy", "viewer", false, StreamKind::None),
+    op("PUT", "/api/v1/privacy/settings", "Replace the content privacy policy", "privacy", "operator", true, StreamKind::None),
+    op("DELETE", "/api/v1/privacy/settings/{sandbox_id}", "Drop a sandbox override so it inherits the environment default", "privacy", "operator", true, StreamKind::None),
+    op("POST", "/api/v1/privacy/inspect", "Run the policy over one piece of text and report what would be sent", "privacy", "operator", true, StreamKind::None),
+    op("GET", "/api/v1/privacy/incidents", "Recent content privacy incidents for one sandbox", "privacy", "viewer", false, StreamKind::None),
+    op("POST", "/api/v1/privacy/purge", "Delete incidents older than a number of days", "privacy", "admin", true, StreamKind::None),
     op("GET", "/api/v1/media/settings", "Environment default and the media providers this person may see", "media", "viewer", false, StreamKind::None),
     op("GET", "/api/v1/media/users", "Every person with their effective media release", "media", "admin", false, StreamKind::None),
     op("PUT", "/api/v1/media/users/{id}", "Release media providers to one person, or take them back", "media", "admin", true, StreamKind::None),

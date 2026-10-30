@@ -21,6 +21,7 @@ pub mod packs;
 pub mod backups;
 pub mod persistent_roots;
 pub mod policies;
+pub mod privacy;
 pub mod principal;
 pub mod providers;
 pub mod secrets;
@@ -190,6 +191,15 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/sandboxes/{id}/mcp/servers/{key}/discover",
             post(mcp::discover),
         )
+        // Content privacy (DLP): policy, a filter test, incidents, purge.
+        .route(
+            "/api/v1/privacy/settings",
+            get(privacy::get_settings).put(privacy::put_settings),
+        )
+        .route("/api/v1/privacy/settings/{sandbox_id}", axum::routing::delete(privacy::clear_settings))
+        .route("/api/v1/privacy/inspect", post(privacy::inspect))
+        .route("/api/v1/privacy/incidents", get(privacy::get_incidents))
+        .route("/api/v1/privacy/purge", post(privacy::purge))
         // Media rendering: the environment default, a sandbox's own choice,
         // the renders and their assets.
         .route(
