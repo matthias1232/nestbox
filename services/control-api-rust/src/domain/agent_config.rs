@@ -130,6 +130,22 @@ fn claude_code(environment: &BTreeMap<String, String>, servers: &[McpServerConfi
     ]
 }
 
+/// The URL an agent calls for this server.
+///
+/// The media server names the sandbox in the path, not only in a header: an
+/// egress proxy may drop an unknown header, and a header-only design then fails
+/// with "this connection does not name a sandbox" while everything else works.
+/// A detached or unspecified sandbox keeps the plain endpoint.
+fn endpoint_with_sandbox(server: &McpServerConfig) -> String {
+    let base = server.endpoint.clone().unwrap_or_default();
+    match (server.key.as_str(), server.sandbox.as_deref()) {
+        ("nestbox-media", Some(sandbox)) if !sandbox.is_empty() => {
+            format!("{}/{}", base.trim_end_matches('/'), sandbox)
+        }
+        _ => base,
+    }
+}
+
 /// `~/.claude.json`: skip the wizard and register the Nestbox MCP hub when there is one.
 /// The token is a `${NESTBOX_MCP_TOKEN}` reference, expanded by Claude Code from the
 /// environment, never written to the file.
@@ -165,7 +181,7 @@ fn claude_state(environment: &BTreeMap<String, String>, servers: &[McpServerConf
                 }
                 json!({
                     "type": "http",
-                    "url": server.endpoint.clone().unwrap_or_default(),
+                    "url": endpoint_with_sandbox(server),
                     "headers": headers,
                 })
             }
@@ -234,7 +250,7 @@ fn opencode(environment: &BTreeMap<String, String>, servers: &[McpServerConfig])
                 }
                 json!({
                     "type": "remote",
-                    "url": server.endpoint.clone().unwrap_or_default(),
+                    "url": endpoint_with_sandbox(server),
                     "enabled": true,
                     "headers": headers,
                 })
@@ -369,7 +385,7 @@ mod tests {
         let files = files_for_with_servers("opencode", &env(), &servers());
         let parsed: serde_json::Value = serde_json::from_str(&files[0].content).expect("valid json");
         let media = &parsed["mcp"]["nestbox-media"];
-        assert_eq!(media["url"], "http://media-mcp:8080/mcp");
+        assert_eq!(media["url"], "http://media-mcp:8080/mcp/nest");
         assert_eq!(media["headers"]["Authorization"], "Bearer {env:NESTBOX_MEDIA_TOKEN}");
         assert_eq!(media["headers"]["X-Nestbox-Sandbox"], "nest");
         assert!(!files[0].content.contains("tok-secret"));

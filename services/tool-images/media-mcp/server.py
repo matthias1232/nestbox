@@ -285,11 +285,30 @@ class Handler(BaseHTTPRequestHandler):
         if body:
             self.wfile.write(body)
 
+    def _sandbox_from_path(self) -> str:
+        """The sandbox named in `/mcp/<sandbox>`, if the path carries one.
+
+        The path is used because an egress proxy may drop a custom header: a
+        request through it arrives without `X-Nestbox-Sandbox`, and a server that
+        only read the header would refuse every call while logging nothing wrong.
+        The header stays as a fallback for a direct call.
+        """
+        path = self.path.split("?", 1)[0].rstrip("/")
+        if path.startswith("/mcp/"):
+            name = path[len("/mcp/"):]
+            if name and "/" not in name:
+                return name
+        return ""
+
+    def _is_mcp(self) -> bool:
+        path = self.path.split("?", 1)[0].rstrip("/")
+        return path == "/mcp" or path.startswith("/mcp/")
+
     def do_GET(self) -> None:  # noqa: N802 - stdlib naming
         if self.path == "/healthz":
             self._reply(200, {"status": "ok", "tools": len(TOOLS), "bridge": bool(BRIDGE_TOKEN)})
             return
-        if self.path == "/mcp":
+        if self._is_mcp():
             self.send_response(405)
             self.send_header("Allow", "POST, DELETE")
             self.send_header("Content-Length", "0")
@@ -298,7 +317,7 @@ class Handler(BaseHTTPRequestHandler):
         self._reply(404, {"error": "not found"})
 
     def do_DELETE(self) -> None:  # noqa: N802 - stdlib naming
-        if self.path != "/mcp":
+        if not self._is_mcp():
             self._reply(404, {"error": "not found"})
             return
         if not self._authorised():
@@ -309,7 +328,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib naming
-        if self.path != "/mcp":
+        if not self._is_mcp():
             self._reply(404, {"error": "not found"})
             return
         if not self._authorised():
@@ -331,7 +350,7 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(request, dict):
             self._reply(400, error(None, -32600, "expected one JSON-RPC request"))
             return
-        answer, session_id = handle_rpc(request, self._sandbox())
+        answer, session_id = handle_rpc(request, self._sandbox_from_path() or self._sandbox())
         if answer is None:
             self.send_response(202)
             self.send_header("Content-Length", "0")
