@@ -94,3 +94,28 @@ def test_a_missing_token_refuses_every_connection(monkeypatch) -> None:
     handler = server.Handler.__new__(server.Handler)
     handler.headers = {"authorization": "Bearer anything"}
     assert handler._authorised() is False
+
+
+def test_the_sandbox_can_come_from_the_path_when_a_proxy_drops_the_header() -> None:
+    handler = server.Handler.__new__(server.Handler)
+    handler.path = "/mcp/claude-01"
+    assert handler._sandbox_from_path() == "claude-01"
+    handler.path = "/mcp"
+    assert handler._sandbox_from_path() == ""
+    handler.path = "/mcp/claude-01?x=1"
+    assert handler._sandbox_from_path() == "claude-01"
+
+
+def test_a_render_can_be_served_from_the_path_alone(monkeypatch) -> None:
+    seen: dict = {}
+
+    def fake_control(path, payload=None):
+        if payload is not None:
+            seen.update(payload)
+            return 200, json.dumps({"id": "r9", "status": "done", "model": "m"}).encode(), ""
+        return 200, b"img", "image/png"
+
+    monkeypatch.setattr(server, "control", fake_control)
+    answer = rpc("tools/call", {"name": "render_image", "arguments": {"prompt": "x"}}, sandbox="from-path")
+    assert answer["result"]["isError"] is False
+    assert seen["sandbox"] == "from-path"
