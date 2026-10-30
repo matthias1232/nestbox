@@ -832,6 +832,33 @@ def model_directory(key: str) -> str:
     return directory
 
 
+def container_port(item) -> int | None:
+    """The port a served model listens on, recovered from its own command.
+
+    `MODEL_PORTS` only knows what this process started; after a runner restart
+    the container is still running, and the port is in its `--port` argument.
+    The image's exposed ports are the last resort.
+    """
+    args = item.attrs.get("Config", {}).get("Cmd") or []
+    for index, argument in enumerate(args):
+        if argument == "--port" and index + 1 < len(args):
+            try:
+                return int(args[index + 1])
+            except (TypeError, ValueError):
+                pass
+        if isinstance(argument, str) and argument.startswith("--port="):
+            try:
+                return int(argument.split("=", 1)[1])
+            except (TypeError, ValueError):
+                pass
+    exposed = item.attrs.get("Config", {}).get("ExposedPorts") or {}
+    for spec in exposed:
+        candidate = spec.split("/")[0]
+        if candidate.isdigit():
+            return int(candidate)
+    return None
+
+
 def model_container(key: str) -> str:
     # The same transform the control plane uses for the provider endpoint, so
     # `model-<host>` in the profile is the container that actually runs.
@@ -1077,22 +1104,25 @@ def model_metrics(key: str) -> dict[str, Any]:
             item.reload()
         except NotFound:
             raise HTTPException(404, f"no model server {name}") from None
-        exposed = item.attrs.get("Config", {}).get("ExposedPorts") or {}
-        for spec in exposed:
-            candidate = spec.split("/")[0]
-            if candidate.isdigit():
-                port = int(candidate)
-                break
+        port = container_port(item)
     if port is None:
         raise HTTPException(503, f"{name} does not report a port to read metrics from")
     url = f"http://{name}:{port}/metrics"
     try:
         with urllib.request.urlopen(url, timeout=5) as response:  # noqa: S310
             body = response.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise HTTPException(
+                503,
+                f"{name} answers {url} with 404: it was started without --metrics. "
+                "Save a tuning change (or restart the model) to start it with metrics on.",
+            ) from exc
+        raise HTTPException(503, f"the model server answered {url} with {exc.code}") from exc
     except (urllib.error.URLError, OSError) as exc:
         raise HTTPException(
             503,
-            f"the model server did not answer {url}: {exc}. Start it with --metrics.",
+            f"the model server did not answer {url}: {exc}",
         ) from exc
     return {"model_key": key, "container": name, "metrics": parse_prometheus(body)}
 
