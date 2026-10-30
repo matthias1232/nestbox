@@ -1,4 +1,4 @@
--- 0047_user_media_grants — which media models a person may see and choose.
+-- 0052_user_media_grants — which media models a person may see and choose.
 --
 -- The environment allow-list answers "what may this appliance offer?". It cannot
 -- answer "what may this person use?": two operators in one environment may need
