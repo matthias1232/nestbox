@@ -15,6 +15,7 @@ pub mod mcp;
 pub mod media;
 pub mod metrics;
 pub mod model_installs;
+pub mod model_metrics;
 pub mod models;
 pub mod nodes;
 pub mod persistent_roots;

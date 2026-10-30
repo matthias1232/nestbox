@@ -254,6 +254,63 @@ pub struct UpdateInstallRequest {
     pub reserved_vram_bytes: Option<i64>,
     /// Switch the model on or off.
     pub enabled: Option<bool>,
+    /// Runtime flags: context, GPU layers, batching, KV cache, threads, ...
+    /// A change to a running model restarts it with the new command.
+    pub settings: Option<crate::domain::model_install::ModelTuning>,
+}
+
+/// Query of the log view.
+#[derive(Debug, Deserialize)]
+pub struct LogsQuery {
+    pub node: Option<String>,
+    /// How many trailing lines; the server clamps to 1..2000.
+    pub tail: Option<u32>,
+}
+
+/// The last lines a served model wrote.
+pub async fn logs(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(key): Path<String>,
+    Query(query): Query<LogsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(
+        model_service::logs(
+            &state.services,
+            &auth.principal,
+            &key,
+            query.node.as_deref(),
+            query.tail.unwrap_or(200),
+        )
+        .await?,
+    ))
+}
+
+/// Query of the metrics view.
+#[derive(Debug, Deserialize)]
+pub struct MetricsQuery {
+    pub node: Option<String>,
+    /// How many samples of the series; the server clamps to 1..1000.
+    pub limit: Option<i64>,
+}
+
+/// Sample the served model now and return the stored series.
+pub async fn metrics(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(key): Path<String>,
+    Query(query): Query<MetricsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(
+        model_service::metrics(
+            &state.services,
+            &auth.principal,
+            &key,
+            query.node.as_deref(),
+            query.limit.unwrap_or(120),
+        )
+        .await?,
+    ))
 }
 
 /// Edit an installed model: reserved memory and the on/off switch.
@@ -273,6 +330,7 @@ pub async fn update_install(
                 reserved_ram_bytes: body.reserved_ram_bytes,
                 reserved_vram_bytes: body.reserved_vram_bytes,
                 enabled: body.enabled,
+                settings: body.settings,
             },
         )
         .await?,

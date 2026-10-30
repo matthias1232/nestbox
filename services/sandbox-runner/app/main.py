@@ -27,6 +27,7 @@ from app import telemetry_shipper
 from app import host as host_load
 from app import backups as root_backups
 from app import catalogue as package_catalogue
+from app.model_metrics import parse_prometheus
 from app import openshell_backend as osh
 from app.images import image_allowed
 from app.workload import get_container, list_workloads, openshell_name, sandbox_name
@@ -807,6 +808,10 @@ MODEL_DOWNLOAD_CEILING = int(os.getenv("NESTBOX_MODEL_MAX_BYTES", str(32 * 1024*
 CUDAX_IMAGES = set(filter(None, os.getenv("NESTBOX_CUDAX_IMAGES", "").split(",")))
 CUDAX_COMPONENT = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 MODEL_CONTAINER_PATH = "/models"
+# The port each served model listens on. `serve_model` records it, `stop_model`
+# forgets it; the metrics endpoint uses it to reach the server inside the
+# runtime network, where the control plane cannot go.
+MODEL_PORTS: dict[str, int] = {}
 
 
 def model_key(value: str) -> str:
@@ -1006,6 +1011,7 @@ def serve_model(body: ModelServeRequest) -> dict[str, Any]:
         )
     except DockerException as exc:
         raise HTTPException(400, f"the model server did not start: {exc}") from exc
+    MODEL_PORTS[key] = body.port
     return {"name": name, "container_id": container.id, "status": container.status}
 
 
@@ -1029,7 +1035,9 @@ def inspect_model(key: str) -> dict[str, Any]:
 
 @app.delete("/v1/models/serve/{key}")
 def stop_model(key: str) -> dict[str, Any]:
-    name = model_container(model_key(key))
+    key = model_key(key)
+    name = model_container(key)
+    MODEL_PORTS.pop(key, None)
     try:
         item = client.containers.get(name)
     except NotFound:

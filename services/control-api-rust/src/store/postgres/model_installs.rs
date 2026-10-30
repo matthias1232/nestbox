@@ -8,8 +8,8 @@ use crate::domain::model_install::{InstallState, ModelInstall};
 use crate::error::StoreError;
 
 const INSTALL_COLUMNS: &str = "id, environment_id, model_key, node_id, state, installed_version, \
-     reserved_ram_bytes, reserved_vram_bytes, enabled, provider_profile_id, job_id, error, \
-     created_at, updated_at";
+     reserved_ram_bytes, reserved_vram_bytes, enabled, provider_profile_id, job_id, settings, \
+     error, created_at, updated_at";
 
 fn row_to_install(row: &sqlx::postgres::PgRow) -> Result<ModelInstall, StoreError> {
     let state_raw: String = row.try_get("state")?;
@@ -25,6 +25,10 @@ fn row_to_install(row: &sqlx::postgres::PgRow) -> Result<ModelInstall, StoreErro
         enabled: row.try_get("enabled")?,
         provider_profile_id: row.try_get("provider_profile_id")?,
         job_id: row.try_get("job_id")?,
+        settings: {
+            let value: serde_json::Value = row.try_get("settings")?;
+            serde_json::from_value(value).unwrap_or_default()
+        },
         error: row.try_get("error")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
@@ -113,6 +117,29 @@ pub async fn insert(
         .bind(new.reserved_ram_bytes)
         .bind(new.reserved_vram_bytes)
         .bind(new.job_id)
+        .fetch_one(scope.connection())
+        .await?;
+    row_to_install(&row)
+}
+
+/// Replace the runtime flags of an install.
+///
+/// The service validates them first; the store only persists the JSON. The
+/// returned row is what the caller shows, so a save and a read never disagree.
+pub async fn set_settings(
+    scope: &mut TenantScope<'_>,
+    install_id: Uuid,
+    settings: &crate::domain::model_install::ModelTuning,
+) -> Result<ModelInstall, StoreError> {
+    let sql = format!(
+        "UPDATE model_installs SET settings = $2, updated_at = now()
+          WHERE id = $1 AND environment_id = $3
+      RETURNING {INSTALL_COLUMNS}"
+    );
+    let row = sqlx::query(&sql)
+        .bind(install_id)
+        .bind(serde_json::to_value(settings).unwrap_or_default())
+        .bind(scope.environment_id())
         .fetch_one(scope.connection())
         .await?;
     row_to_install(&row)

@@ -13,6 +13,7 @@ import ModelFitCell from '../../components/ModelFitCell.jsx';
 import StatusBadge from '../../components/StatusBadge.jsx';
 import { gib } from '../../components/ResourceBars.jsx';
 import * as models from '../../api/models.js';
+import ModelRuntimePanel from './ModelRuntimePanel.jsx';
 
 // The verdicts that mean "this machine can run it". Same list the server's
 // `Fit::fits` returns; kept here only to count and filter, never to decide.
@@ -327,6 +328,7 @@ export default function ModelsPage() {
             <tbody>
               <For each={installs()}>
                 {(row) => (
+                  <>
                   <tr>
                     <td>{row.model_name || row.model_key}</td>
                     <td>
@@ -398,6 +400,15 @@ export default function ModelsPage() {
                       </Show>
                     </td>
                   </tr>
+                  <tr class="runtime-row">
+                    <td colspan="5">
+                      <details>
+                        <summary class="small">Runtime, logs and metrics for {row.model_name || row.model_key}</summary>
+                        <ModelRuntimePanel row={row} node={nodeName()} onChanged={() => load(false)} />
+                      </details>
+                    </td>
+                  </tr>
+                  </>
                 )}
               </For>
             </tbody>

@@ -72,6 +72,21 @@ pub trait RuntimeAdapter: Send + Sync {
         timeout_seconds: u32,
     ) -> Result<ExecResult, RuntimeError>;
 
+    /// The served model's own metrics, as the runner read them.
+    ///
+    /// llama.cpp exposes token counts and KV-cache use when the server runs
+    /// with `--metrics`; a runtime that cannot read them answers with an error
+    /// instead of a zero that would look like an idle model.
+    async fn model_metrics(
+        &self,
+        model_key: &str,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        let _ = model_key;
+        Err(RuntimeError::Unavailable(
+            "this runtime cannot read model metrics".to_string(),
+        ))
+    }
+
     /// Pull the container images of one CUDA-X component on the node.
     ///
     /// The list comes from the component catalog, never from a request body

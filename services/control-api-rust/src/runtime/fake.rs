@@ -452,6 +452,26 @@ impl RuntimeAdapter for FakeRuntime {
         })
     }
 
+    async fn model_metrics(
+        &self,
+        model_key: &str,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        if !lock(&self.models).contains_key(model_key) {
+            return Err(RuntimeError::Rejected(format!(
+                "no model server for {model_key}"
+            )));
+        }
+        Ok(serde_json::json!({
+            "model_key": model_key,
+            "metrics": {
+                "llamacpp:prompt_tokens_total": 120.0,
+                "llamacpp:tokens_predicted_total": 48.0,
+                "llamacpp:requests_processing": 1.0,
+                "llamacpp:kv_cache_usage_ratio": 0.25
+            }
+        }))
+    }
+
     async fn install_libraries(
         &self,
         component: &str,
