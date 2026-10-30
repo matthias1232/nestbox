@@ -253,6 +253,13 @@ pub const OPERATIONS: &[Operation] = &[
     op("GET", "/api/v1/internal/media/info", "Whether the media bridge is available (media token)", "media", "node", false, StreamKind::None),
     op("GET", "/api/v1/internal/media/renders/{id}/asset", "The bytes of one render, for the media bridge (media token)", "media", "node", false, StreamKind::None),
     // Media settings and renders
+    op("GET", "/api/v1/accounting/overview", "Organisation or sandbox totals for a timeframe", "accounting", "viewer", false, StreamKind::None),
+    op("GET", "/api/v1/accounting/requests", "Recent proxied requests with tokens and cost", "accounting", "viewer", false, StreamKind::None),
+    op("GET", "/api/v1/accounting/settings", "Accounting retention settings", "accounting", "viewer", false, StreamKind::None),
+    op("PUT", "/api/v1/accounting/settings", "Set the accounting retention", "accounting", "admin", true, StreamKind::None),
+    op("POST", "/api/v1/accounting/purge", "Delete raw accounting rows older than a number of days", "accounting", "admin", true, StreamKind::None),
+    op("POST", "/api/v1/internal/accounting/record", "Record one proxied request (accounting token)", "accounting", "node", false, StreamKind::None),
+    op("POST", "/api/v1/internal/privacy/inspect", "Privacy decision for one proxied body (accounting token)", "accounting", "node", false, StreamKind::None),
     op("GET", "/api/v1/privacy/settings", "Content privacy settings for the environment or one sandbox", "privacy", "viewer", false, StreamKind::None),
     op("PUT", "/api/v1/privacy/settings", "Replace the content privacy policy", "privacy", "operator", true, StreamKind::None),
     op("DELETE", "/api/v1/privacy/settings/{sandbox_id}", "Drop a sandbox override so it inherits the environment default", "privacy", "operator", true, StreamKind::None),
@@ -412,6 +419,8 @@ mod tests {
             "/api/v1/internal/supervisors/{id}/report",
             "/api/v1/internal/telemetry/batch",
             "/api/v1/internal/media/render",
+            "/api/v1/internal/accounting/record",
+            "/api/v1/internal/privacy/inspect",
         ];
         for operation in OPERATIONS {
             if matches!(operation.method, "POST" | "PUT" | "PATCH" | "DELETE") {
@@ -441,6 +450,8 @@ mod tests {
             "/api/v1/internal/supervisors/{id}/report",
             "/api/v1/internal/telemetry/batch",
             "/api/v1/internal/media/render",
+            "/api/v1/internal/accounting/record",
+            "/api/v1/internal/privacy/inspect",
         ];
         for path in NODE_TOKEN_MUTATIONS {
             let operation = OPERATIONS

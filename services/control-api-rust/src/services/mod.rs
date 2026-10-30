@@ -2,6 +2,7 @@
 
 pub mod access_control;
 pub mod access_service;
+pub mod accounting_service;
 pub mod agent_service;
 pub mod audit_service;
 pub mod backup_service;

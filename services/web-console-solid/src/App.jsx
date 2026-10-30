@@ -23,6 +23,8 @@ import LogsPage from './features/logs/LogsPage.jsx';
 import McpPage from './features/mcp/McpPage.jsx';
 import MediaPage from './features/media/MediaPage.jsx';
 import PrivacyPage from './features/privacy/PrivacyPage.jsx';
+import MasterControlPage from './features/master/MasterControlPage.jsx';
+import LivePage from './features/live/LivePage.jsx';
 import BuilderPage from './features/builder/BuilderPage.jsx';
 import JobsPage from './features/jobs/JobsPage.jsx';
 import SkillsPage from './features/skills/SkillsPage.jsx';
@@ -53,6 +55,8 @@ const ROUTES = [
   { id: 'mcp', label: 'MCP servers' },
   { id: 'media', label: 'Media rendering' },
   { id: 'privacy', label: 'Content privacy' },
+  { id: 'master', label: 'Master control' },
+  { id: 'live', label: 'Agent situation' },
   { id: 'models', label: 'Models' },
   { id: 'skills', label: 'Skills' },
   { id: 'cudax', label: 'CUDA-X' },
@@ -185,6 +189,8 @@ export default function App() {
                   <Show when={route() === 'mcp'}><McpPage role={session.identity()?.role} /></Show>
                   <Show when={route() === 'media'}><MediaPage role={session.identity()?.role} /></Show>
                   <Show when={route() === 'privacy'}><PrivacyPage role={session.identity()?.role} /></Show>
+                  <Show when={route() === 'master'}><MasterControlPage role={session.identity()?.role} /></Show>
+                  <Show when={route() === 'live'}><LivePage /></Show>
                   <Show when={route() === 'logs'}><LogsPage role={session.identity()?.role} /></Show>
                 </>
               }

@@ -1,5 +1,6 @@
 //! The PostgreSQL repositories, one module per aggregate.
 
+pub mod accounting;
 pub mod agent_packs;
 pub mod access;
 pub mod audit;

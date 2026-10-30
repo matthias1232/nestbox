@@ -17,19 +17,24 @@ use super::{access_service, require, traffic_service, ServiceContext};
 use crate::domain::auth::{Permission, Principal};
 use crate::domain::runtime::{ComponentLimits, ComponentState};
 use crate::domain::stack_topology::{
-    self, EgressFacts, GatewayFacts, HostFacts, McpFacts, PortFacts, SandboxFacts, StackInput,
-    StackTopology, SupervisorFacts,
+    self, DnsFacts, EgressFacts, GatewayFacts, HostFacts, McpFacts, PortFacts, SandboxFacts,
+    StackInput, StackTopology, SupervisorFacts,
 };
 use crate::error::{ApiError, ErrorCode};
 use crate::store::postgres::access as access_store;
 use crate::store::postgres::gateways as gateway_store;
 use crate::store::postgres::mcp as mcp_store;
 use crate::store::postgres::sandboxes as sandbox_store;
+use crate::store::postgres::telemetry as telemetry_store;
 use crate::store::TenantScope;
 
 /// How long the runner may take to answer about a container.
 const RUNNER_TIMEOUT: Duration = Duration::from_secs(4);
 const MAX_LOG_TAIL: u32 = 1000;
+
+/// The window for DNS evidence, in minutes. The same order as the traffic
+/// window, so a blocked lookup and the traffic that never followed line up.
+const DNS_WINDOW_MINUTES: i64 = 60;
 
 /// The diagram of the stack a sandbox belongs to.
 pub async fn stack(
@@ -79,6 +84,20 @@ pub async fn stack(
             .map_err(ApiError::from)?
             .unwrap_or_else(|| "agent".to_string());
         roles.push((sandbox.id, role));
+    }
+    // A blocked DNS decision leaves no connection behind, so the lookups are
+    // read beside the members rather than from the traffic map. A telemetry
+    // query that fails is simply no facts: the map is what an operator opens
+    // when something is wrong, and a read gap must not turn that into an error.
+    let mut dns = Vec::new();
+    for sandbox in &members {
+        if let Ok(rows) = telemetry_store::recent_dns(&mut scope, sandbox.id, DNS_WINDOW_MINUTES).await {
+            dns.extend(rows.into_iter().map(|(host, decision, count)| DnsFacts {
+                host,
+                decision,
+                count,
+            }));
+        }
     }
     scope.commit().await.map_err(ApiError::from)?;
 
@@ -241,6 +260,7 @@ pub async fn stack(
         gateways: gateway_facts,
         components,
         egress,
+        dns,
     }))
 }
 

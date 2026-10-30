@@ -5,6 +5,7 @@
 //! something about the domain, that `if` belongs in `services/`.
 
 pub mod access;
+pub mod accounting;
 pub mod auth;
 pub mod cluster;
 pub mod cudax;
@@ -191,6 +192,17 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/sandboxes/{id}/mcp/servers/{key}/discover",
             post(mcp::discover),
         )
+        // Accounting: organisation overview, rows, retention, purge.
+        .route("/api/v1/accounting/overview", get(accounting::overview))
+        .route("/api/v1/accounting/requests", get(accounting::requests))
+        .route(
+            "/api/v1/accounting/settings",
+            get(accounting::get_settings).put(accounting::put_settings),
+        )
+        .route("/api/v1/accounting/purge", post(accounting::purge))
+        // Internal: the accounting proxy is the only writer of these rows.
+        .route("/api/v1/internal/accounting/record", post(accounting::ingest))
+        .route("/api/v1/internal/privacy/inspect", post(accounting::inspect))
         // Content privacy (DLP): policy, a filter test, incidents, purge.
         .route(
             "/api/v1/privacy/settings",

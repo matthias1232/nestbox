@@ -399,6 +399,52 @@ pub async fn facets(
     Ok(out)
 }
 
+/// The DNS names one sandbox asked for in the last `since_minutes`, grouped by
+/// name and decision.
+///
+/// A refused lookup produces no network event: the connection was never made, so
+/// the traffic rows cannot show it. This query is therefore the only evidence
+/// that the stack needed a name and could not resolve it. The grouping happens
+/// in SQL so a hostname asked for a thousand times is one row with a count, not
+/// a thousand rows the caller has to fold.
+pub async fn recent_dns(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+    since_minutes: i64,
+) -> Result<Vec<(String, String, i64)>, StoreError> {
+    let since = Utc::now() - chrono::Duration::minutes(since_minutes.clamp(1, 24 * 60));
+    let rows = sqlx::query(
+        "SELECT COALESCE(NULLIF(detail->>'hostname', ''), NULLIF(detail->>'host', '')) AS host,
+                COALESCE(detail->>'decision', '') AS decision,
+                COUNT(*) AS n
+           FROM telemetry_events
+          WHERE environment_id = $1
+            AND sandbox_id = $2
+            AND kind = 'dns'
+            AND ts >= $3
+            AND COALESCE(NULLIF(detail->>'hostname', ''), NULLIF(detail->>'host', '')) IS NOT NULL
+            AND COALESCE(detail->>'decision', '') <> ''
+          GROUP BY host, decision
+          ORDER BY n DESC, host ASC
+          LIMIT 50",
+    )
+    .bind(scope.environment_id())
+    .bind(sandbox_id)
+    .bind(since)
+    .fetch_all(scope.connection())
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push((
+            row.try_get::<String, _>("host")?,
+            row.try_get::<String, _>("decision")?,
+            row.try_get::<i64, _>("n")?,
+        ));
+    }
+    Ok(out)
+}
+
 /// Record an inference request in its own table, so the console can sort on
 /// typed columns without parsing JSON on a hot path.
 ///

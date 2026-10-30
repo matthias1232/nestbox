@@ -49,6 +49,11 @@ services:
         # API. An agent that learns its own token therefore cannot render for a
         # sandbox it is not attached to: the bridge token is the only one the
         # control API accepts for that route.
+        [ -s /secrets/accounting_token ] || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > /secrets/accounting_token
+        mkdir -p /data/accounting-secrets
+        cp /secrets/accounting_token /data/accounting-secrets/token
+        chmod 0755 /data/accounting-secrets
+        chmod 0444 /data/accounting-secrets/token
         [ -s /secrets/media_mcp_token ] || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > /secrets/media_mcp_token
         [ -s /secrets/media_bridge_token ] || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > /secrets/media_bridge_token
         mkdir -p /data/media /data/media-secrets
@@ -167,6 +172,7 @@ services:
       # The media MCP server's bridge token. The route it calls refuses every
       # request while this is missing.
       NESTBOX_MEDIA_BRIDGE_TOKEN_FILE: /secrets/media_bridge_token
+      NESTBOX_ACCOUNTING_TOKEN_FILE: /secrets/accounting_token
       NESTBOX_SESSION_COOKIE_SECURE: "false"
       # The same token the runner demands on the terminal upgrade. It comes from
       # the node directory rather than from a compose secret, because compose
@@ -366,6 +372,29 @@ services:
       - "127.0.0.1:18088:8080"
     # `runtime` is internal, and Docker cannot publish a port of a container that
     # is only on an internal network: the hub also joins `control`.
+    networks:
+      - control
+      - runtime
+
+  # The accounting proxy: every agent request to a model provider passes here.
+  # It forwards the client's own credential untouched, inspects the body against
+  # the privacy policy, and records only metadata (model, tokens, cost).
+  accounting-proxy:
+    build:
+      context: ../services/accounting-proxy
+    image: nestbox-accounting-proxy:local
+    restart: unless-stopped
+    entrypoint:
+      - sh
+      - -c
+      - NESTBOX_ACCOUNTING_TOKEN=$$(cat /run/accounting/token) exec python3 /app/server.py
+    environment:
+      NESTBOX_CONTROL_API: http://control-api:8000
+      NESTBOX_ACCOUNTING_PROXY_PORT: "8099"
+    volumes:
+      - ./data/accounting-secrets:/run/accounting:ro
+    ports:
+      - "127.0.0.1:18099:8099"
     networks:
       - control
       - runtime
