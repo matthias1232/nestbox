@@ -153,6 +153,20 @@ pub struct EgressFacts {
     pub denied: i64,
 }
 
+/// One name the stack asked for and how the policy answered.
+///
+/// A refused DNS lookup leaves no network event: the request was never made, so
+/// the traffic rows cannot show it. This is the evidence that the sandbox needed
+/// a name and could not resolve it, which is a different failure from a blocked
+/// connection and needs its own card.
+#[derive(Debug, Clone)]
+pub struct DnsFacts {
+    pub host: String,
+    /// `allow`, `deny` or `audit`.
+    pub decision: String,
+    pub count: i64,
+}
+
 /// Everything the builder needs. Plain data, so a test builds one in a few lines.
 pub struct StackInput {
     pub subject: Uuid,
@@ -168,6 +182,8 @@ pub struct StackInput {
     /// `None` when the runner could not be asked.
     pub components: Option<Vec<ComponentState>>,
     pub egress: Vec<EgressFacts>,
+    /// DNS lookups the stack made in the same window as `egress`.
+    pub dns: Vec<DnsFacts>,
 }
 
 // ---------------------------------------------------------------------------
@@ -199,7 +215,7 @@ pub struct StackNode {
     pub id: String,
     /// `operator`, `port`, `sandbox`, `mcp`, `supervisor`, `control_api`,
     /// `gateway`, `runner`, `egress_proxy`, `component`, `destination`,
-    /// `internet`, `absent`.
+    /// `dns_blocked`, `internet`, `absent`.
     pub kind: String,
     pub layer: usize,
     pub layer_key: String,
@@ -242,6 +258,19 @@ pub struct StackLayer {
     pub label: String,
 }
 
+/// One problem with how urgent it is.
+///
+/// `severity` is a rank, not a word: 0 is the worst, 5 the most informational,
+/// the same order `problems` is sorted in. The console colours by this number
+/// instead of matching words in the sentence, which would break the moment the
+/// wording changed and would mis-colour a sentence that merely mentions "block".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct RankedProblem {
+    pub text: String,
+    /// 0 worst … 5 informational.
+    pub severity: u8,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 pub struct StackTopology {
     /// The sandbox the operator opened.
@@ -256,6 +285,10 @@ pub struct StackTopology {
     /// Sentences about what is wrong or missing, worst first. Empty means
     /// nothing was found, not that nothing was checked.
     pub problems: Vec<String>,
+    /// The same problems in the same order, each with its severity rank. Kept
+    /// beside `problems` so a reader that only wants the sentences keeps the
+    /// shape it had, and the console can colour without parsing the text.
+    pub problems_ranked: Vec<RankedProblem>,
     /// How many nodes there are per status, for the header.
     pub counts: std::collections::BTreeMap<String, usize>,
 }
@@ -854,6 +887,36 @@ pub fn build(input: &StackInput) -> StackTopology {
     if hidden > 0 {
         problems.push((5, format!("{hidden} more destination(s) are not drawn; the Traffic tab lists all of them.")));
     }
+
+    // A name the policy refused to resolve is its own kind of wall: no request is
+    // ever made, so no destination card can show it. One card per host, because
+    // the failure is the name, not the sandbox that happened to ask for it.
+    let mut blocked_dns: Vec<(String, i64)> = Vec::new();
+    for row in input.dns.iter().filter(|row| row.decision == "deny") {
+        match blocked_dns.iter_mut().find(|(host, _)| host == &row.host) {
+            Some(entry) => entry.1 += row.count,
+            None => blocked_dns.push((row.host.clone(), row.count)),
+        }
+    }
+    blocked_dns.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    for (host, count) in blocked_dns {
+        let mut item = node(
+            format!("dns:{host}"),
+            "dns_blocked",
+            "destinations",
+            format!("{host} (DNS blocked)"),
+            "A name this stack asked for. The policy refused to resolve it, so nothing could connect.",
+            "error",
+            "blocked",
+        );
+        item.facts.push(fact("Decision", "deny"));
+        item.facts.push(fact("Blocked lookups", count.to_string()));
+        nodes.push(item);
+        problems.push((
+            0,
+            format!("DNS for {host} was blocked {count} time(s); the sandbox cannot resolve it."),
+        ));
+    }
     nodes.push(node(
         INTERNET.into(),
         "internet",
@@ -880,6 +943,11 @@ pub fn build(input: &StackInput) -> StackTopology {
     problems.sort_by_key(|(rank, _)| *rank);
     problems.dedup_by(|a, b| a.1 == b.1);
 
+    let problems_ranked: Vec<RankedProblem> = problems
+        .iter()
+        .map(|(severity, text)| RankedProblem { text: text.clone(), severity: *severity })
+        .collect();
+
     StackTopology {
         subject: input.subject,
         lead,
@@ -893,6 +961,7 @@ pub fn build(input: &StackInput) -> StackTopology {
         nodes,
         edges,
         problems: problems.into_iter().map(|(_, text)| text).collect(),
+        problems_ranked,
         counts,
     }
     .with_host(host_label)
@@ -946,6 +1015,7 @@ mod tests {
             gateways: vec![],
             components: None,
             egress: vec![],
+            dns: vec![],
         }
     }
 
@@ -1109,6 +1179,67 @@ mod tests {
         assert_eq!(blocked.status, "warn");
         assert!(topology.edges.iter().any(|link| link.from == blocked.id && link.to == INTERNET));
         assert!(topology.problems.iter().any(|text| text.contains("blocked")));
+    }
+
+    #[test]
+    fn a_blocked_dns_name_is_an_error_node_and_the_first_problem() {
+        let mut data = input(vec![sandbox("hermes-01", None, "agent", "running")]);
+        data.dns = vec![DnsFacts { host: "pypi.org".into(), decision: "deny".into(), count: 3 }];
+        let topology = build(&data);
+        let item = topology
+            .nodes
+            .iter()
+            .find(|item| item.kind == "dns_blocked")
+            .expect("blocked DNS node");
+        assert_eq!(item.status, "error");
+        assert_eq!(item.layer_key, "destinations");
+        assert_eq!(item.name, "pypi.org (DNS blocked)");
+        assert!(item
+            .facts
+            .iter()
+            .any(|entry| entry.label == "Decision" && entry.value == "deny"));
+        assert!(item
+            .facts
+            .iter()
+            .any(|entry| entry.label == "Blocked lookups" && entry.value == "3"));
+        assert!(topology.problems[0].contains("DNS for pypi.org was blocked 3 time(s)"));
+        assert_eq!(topology.problems_ranked[0].severity, 0);
+        assert_eq!(topology.problems_ranked[0].text, topology.problems[0]);
+    }
+
+    #[test]
+    fn a_blocked_dns_name_keeps_its_rank_through_the_sort() {
+        let lead = sandbox("hermes-01", None, "agent", "running");
+        let lead_id = lead.id;
+        let mut data = input(vec![lead]);
+        // A stopped sandbox is rank 3, so the DNS problem at rank 0 must survive
+        // in front of it.
+        data.dns = vec![DnsFacts { host: "pypi.org".into(), decision: "deny".into(), count: 1 }];
+        data.sandboxes[0].status = "stopped".into();
+        data.ports = vec![port(lead_id, "ssh", 22201, 22, true, true)];
+        let topology = build(&data);
+        assert!(topology.problems[0].contains("DNS for pypi.org"));
+        assert_eq!(topology.problems_ranked[0].severity, 0);
+        for (text, ranked) in topology.problems.iter().zip(&topology.problems_ranked) {
+            assert_eq!(text, &ranked.text);
+        }
+    }
+
+    #[test]
+    fn an_allowed_dns_name_adds_no_node_and_no_problem() {
+        let mut data = input(vec![sandbox("hermes-01", None, "agent", "running")]);
+        data.dns = vec![DnsFacts { host: "api.example.com".into(), decision: "allow".into(), count: 9 }];
+        let topology = build(&data);
+        assert!(!kinds(&topology).contains(&"dns_blocked"));
+        assert!(!topology.problems.iter().any(|text| text.contains("DNS for")));
+    }
+
+    #[test]
+    fn an_empty_dns_list_changes_nothing_and_the_map_still_builds() {
+        let topology = build(&input(vec![sandbox("hermes-01", None, "agent", "running")]));
+        assert!(!kinds(&topology).contains(&"dns_blocked"));
+        assert_eq!(topology.problems.len(), topology.problems_ranked.len());
+        assert_eq!(topology.layers.len(), 9);
     }
 
     #[test]

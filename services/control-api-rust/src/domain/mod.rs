@@ -5,6 +5,7 @@
 //! from leaking into the model of the problem.
 
 pub mod access;
+pub mod accounting;
 pub mod agent_config;
 pub mod auth;
 pub mod builder;

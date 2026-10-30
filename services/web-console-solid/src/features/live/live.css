@@ -1,0 +1,299 @@
+/* The agent situation page: map, legend, side panel.
+ *
+ * Colour is per event kind and defined once here. The five kinds are the only
+ * coloured things in the view; everything else uses the console's tokens.
+ */
+
+.live-page {
+  --kind-dns: #4da3ff;
+  --kind-https: #3ddc84;
+  --kind-mcp: #b18cff;
+  --kind-render: #ffb020;
+  --kind-model: #2dd4bf;
+  --kind-unknown: #8b9bb0;
+}
+
+.live-page .kind-dns { color: var(--kind-dns); }
+.live-page .kind-https { color: var(--kind-https); }
+.live-page .kind-mcp { color: var(--kind-mcp); }
+.live-page .kind-render { color: var(--kind-render); }
+.live-page .kind-model { color: var(--kind-model); }
+.live-page .kind-unknown { color: var(--kind-unknown); }
+
+.live-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+
+.live-strip { margin-bottom: 0; }
+
+.live-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: var(--space-4);
+  align-items: start;
+  margin-top: var(--space-4);
+}
+
+@media (max-width: 1180px) {
+  .live-body { grid-template-columns: 1fr; }
+}
+
+/* Map ------------------------------------------------------------------ */
+
+.live-map-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  padding: var(--space-3);
+  min-width: 0;
+}
+
+.live-map {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.live-legend {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.live-legend .muted { margin-left: auto; }
+
+.live-swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 5px;
+  background: currentColor;
+}
+
+.live-map-svg {
+  display: block;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.live-map-svg text {
+  font-family: var(--font);
+  fill: var(--fg);
+}
+
+/* An edge is tinted by the kind of its target, faintly: the map must stay
+   readable when ten edges cross, and colour is the legend's job. */
+.live-edge {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 1.4;
+  opacity: 0.6;
+}
+
+.live-edge.kind-dns { stroke: var(--kind-dns); opacity: 0.3; }
+.live-edge.kind-https { stroke: var(--kind-https); opacity: 0.3; }
+.live-edge.kind-mcp { stroke: var(--kind-mcp); opacity: 0.3; }
+.live-edge.kind-render { stroke: var(--kind-render); opacity: 0.3; }
+.live-edge.kind-model { stroke: var(--kind-model); opacity: 0.3; }
+.live-edge.kind-unknown { stroke: var(--kind-unknown); opacity: 0.3; }
+
+.live-edge.flash {
+  opacity: 1;
+  stroke-width: 2.6;
+}
+
+.live-target rect {
+  fill: var(--bg-raised);
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+
+.live-target-name { font-size: 11px; }
+.live-target-meta { font-size: 9.5px; fill: var(--fg-faint); }
+
+.live-target.flash rect {
+  stroke: currentColor;
+  stroke-width: 2;
+}
+
+.live-node rect {
+  fill: var(--bg-raised);
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+
+.live-node { cursor: pointer; }
+.live-node:focus { outline: none; }
+.live-node:hover rect,
+.live-node:focus-visible rect { stroke: var(--accent); }
+
+.live-node.ok rect { stroke: #1c4030; }
+.live-node.warn rect { stroke: #43330f; }
+.live-node.bad rect { stroke: #4a1d24; }
+.live-node.muted rect { stroke: var(--border-strong); }
+
+.live-node.selected rect {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.live-node.flash rect {
+  stroke: var(--fg);
+  stroke-width: 2.5;
+}
+
+.live-node-name { font-size: 12px; font-weight: 600; }
+.live-node-meta { font-size: 10px; fill: var(--fg-muted); }
+.live-node-live { fill: currentColor; }
+
+.live-dot {
+  fill: currentColor;
+  filter: drop-shadow(0 0 4px currentColor);
+  pointer-events: none;
+}
+
+/* Panel --------------------------------------------------------------- */
+
+.live-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.live-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.live-panel-head h2 {
+  margin: 0;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+
+.live-panel-head p { margin: 2px 0 0; overflow-wrap: anywhere; }
+
+.live-panel-empty h2 { margin: 0; font-size: 16px; }
+
+.live-facts { grid-template-columns: 72px minmax(0, 1fr); }
+
+.live-current > * + * { margin-left: 6px; }
+.live-current-target { overflow-wrap: anywhere; }
+
+.kind-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 0 7px;
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: nowrap;
+}
+
+.live-page .kind-chip.kind-dns { background: #101c2b; border-color: #1e3a56; }
+.live-page .kind-chip.kind-https { background: #0e2419; border-color: #1c4030; }
+.live-page .kind-chip.kind-mcp { background: #1c1729; border-color: #372c52; }
+.live-page .kind-chip.kind-render { background: #251d0d; border-color: #43330f; }
+.live-page .kind-chip.kind-model { background: #0c2725; border-color: #174943; }
+
+.live-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.live-metrics > div {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  min-width: 0;
+}
+
+.live-metrics span {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-faint);
+}
+
+.live-metrics b {
+  display: block;
+  margin-top: 2px;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.live-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 420px;
+  overflow: auto;
+}
+
+.live-log li {
+  border-left: 2px solid var(--border-strong);
+  padding: 2px 0 2px var(--space-2);
+}
+
+.live-log li:first-child { border-left-color: var(--accent); }
+
+.live-log-top {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.live-log-target {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.live-log-meta {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.live-status {
+  font-size: 10px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fg-muted);
+}
+
+.live-status.ok { color: var(--ok); border-color: #1c4030; }
+.live-status.warn { color: var(--warn); border-color: #43330f; }
+.live-status.bad { color: var(--bad); border-color: #4a1d24; }
+
+.live-note { margin: var(--space-4) 0 0; max-width: 760px; }
