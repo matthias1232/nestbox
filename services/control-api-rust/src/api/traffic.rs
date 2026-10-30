@@ -92,6 +92,33 @@ impl EnvironmentTrafficQuery {
     }
 }
 
+/// What the decisions view asks for: a window, and optionally one sandbox.
+#[derive(Debug, Deserialize)]
+pub struct DecisionsQuery {
+    /// `5m`, `15m`, `1h`, `24h`. Defaults to `1h`, capped at `24h`.
+    pub window: Option<String>,
+    /// Restrict to one sandbox, still tenant-scoped.
+    pub sandbox: Option<Uuid>,
+}
+
+/// The destinations that were denied, grouped, for the decisions view.
+pub async fn decisions(
+    State(state): State<AppState>,
+    auth: Auth,
+    Query(query): Query<DecisionsQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let answer = traffic_service::decisions(
+        &state.services,
+        &auth.principal,
+        traffic_service::DecisionsRequest {
+            window: query.window.clone(),
+            sandbox_id: query.sandbox,
+        },
+    )
+    .await?;
+    Ok(Json(answer))
+}
+
 /// Traffic across every sandbox of the caller's environment.
 pub async fn environment(
     State(state): State<AppState>,

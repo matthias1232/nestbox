@@ -9,3 +9,8 @@ import { request, query } from './client.js';
 export function environment(params = {}) {
   return request(`traffic${query(params)}`);
 }
+
+// The denied destinations, grouped by what a person can allow.
+export function decisions(params = {}) {
+  return request(`traffic/decisions${query(params)}`);
+}

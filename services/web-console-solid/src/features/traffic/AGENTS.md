@@ -3,14 +3,26 @@
 ## Purpose
 
 The promise: see what **every** sandbox is doing **now**, and see the minutes
-before it. One table, one window, one stream.
+before it. One table, one window, one stream — plus the two things an operator
+does with what they see: open a firewall for a while, and decide about a block.
 
-## How it works
+## The two views
 
-- Opening the page reads `GET /api/v1/traffic?window=…` — the environment-wide
-  window that already happened — and then opens the SSE stream. The stream only
-  carries what arrives after it opened, so without the read an idle sandbox looks
-  like a broken page and a reload loses the last minutes.
+| View | Question | Source |
+|---|---|---|
+| **Live traffic** | What is happening, and where? | `GET /traffic` (window) + the SSE stream |
+| **Decisions** | What must I decide? | `GET /traffic/decisions`, denied destinations grouped |
+
+The split is deliberate. The live view shows everything, including what passed;
+the decisions view shows only what was stopped, grouped by what a person can
+allow, because "what happened" and "what must I decide" are different questions.
+
+## How the live view works
+
+- Opening the page reads the environment-wide window first and then opens the
+  stream. The stream only carries what arrives after it opened, so without the
+  read an idle sandbox looks like a broken page and a reload loses the minutes
+  before it.
 - Both sources are normalised to one row shape. The stream carries less than the
   stored row: a live event knows the destination and the decision, a stored row
   also knows the method, path and MCP tool. The table shows the difference rather
@@ -29,17 +41,43 @@ before it. One table, one window, one stream.
 - `dns` rows are their own event kind on the server. A DNS row is badged with the
   `dns` channel; it never opened a connection.
 
+## Master switches
+
+A switch is not a setting. It is a **traffic window**: time-bounded, recorded, and
+scoped to one firewall (proxy, DNS, MCP, gateway). Two modes:
+
+- **bypass** — allow, and say nothing more;
+- **audit** — *observation mode*: allow, and record the decision as a block, so a
+  policy can be built against real traffic without breaking the workload.
+
+The panel says so in a banner while observation is on. The OpenShell supervisor is
+listed and never switchable: it carries the sandbox's API and MCP forwarding, so
+switching it off would cut the sandbox off from its tools rather than open traffic.
+
+## Decisions
+
+Three answers, and only three:
+
+- **for a time** — `POST /traffic-windows` on the destination's channel;
+- **permanently** — a rule draft, reviewed and approved (ADR 0011);
+- **not at all** — hide the row. Hiding is session-local and never changes a
+  policy; hidden targets keep being denied and are reachable through "show
+  hidden".
+
 ## Rules
 
-- A rule is never created from a click. A click creates a **draft**, which is
-  reviewed and approved (ADR 0011).
+- A rule is never created from a click. A click creates a **draft**.
 - A rendering error must not close the stream.
-- Every row names its sandbox. The question is "what is happening, and where";
-  an id alone does not answer it.
+- Every row names its sandbox. The question is "what is happening, and where"; an
+  id alone does not answer it.
 
 ## Files
 
 | File | Responsibility |
 |---|---|
 | `useTrafficStream.js` | History read, stream, normalisation, buffer, pause, filters |
-| `TrafficPage.jsx` | Controls, facets, table, draft dialog |
+| `TrafficPage.jsx` | The two views, controls, facets, table, draft dialog |
+| `useWindows.js` | The master switches: read the windows in force, open one, revoke one |
+| `MasterSwitches.jsx` | The switch panel (markup only) |
+| `useDecisions.js` | Denied targets, hide/show, allow-for-a-time, draft |
+| `DecisionsPanel.jsx` | The decisions table (markup only) |

@@ -442,3 +442,8 @@ td .block { display: block; }
 .facets .search { flex: 1 1 220px; min-width: 180px; }
 
 table.traffic td { vertical-align: top; padding-top: 4px; padding-bottom: 4px; }
+
+.master-switches { margin-bottom: var(--space-4); }
+.master-switches header { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-3); flex-wrap: wrap; }
+.master-switches h2 { margin: 0 0 2px; font-size: 15px; }
+.master-switches p { margin: 0 0 var(--space-2); }

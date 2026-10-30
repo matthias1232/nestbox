@@ -114,6 +114,112 @@ pub struct OpenWindow {
     pub sandbox_id: Option<Uuid>,
     pub expires_at: DateTime<Utc>,
     pub reason: String,
+    /// How the window treats a request it covers.
+    #[serde(default)]
+    pub mode: WindowMode,
+    /// Which traffic the window covers.
+    #[serde(default)]
+    pub channel: WindowChannel,
+}
+
+/// How a window treats a request it covers.
+///
+/// Two modes, because they answer two different operational questions. `Bypass`
+/// is "let me work for fifteen minutes". `Audit` is "show me what would be
+/// blocked while nothing breaks", which is how a policy is developed against
+/// real traffic instead of against guesses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowMode {
+    #[default]
+    Bypass,
+    Audit,
+}
+
+impl WindowMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Bypass => "bypass",
+            Self::Audit => "audit",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "bypass" => Some(Self::Bypass),
+            "audit" => Some(Self::Audit),
+            _ => None,
+        }
+    }
+}
+
+/// The firewall a window belongs to.
+///
+/// `All` is the broad switch; the others let an operator open one firewall
+/// without opening the rest. `Openshell` exists as a word even though its switch
+/// is never off: the supervisor carries the API and MCP forwarding, and a
+/// sandbox with it disabled has no way to reach its tools at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowChannel {
+    #[default]
+    All,
+    Proxy,
+    Dns,
+    Mcp,
+    Gateway,
+    Openshell,
+}
+
+impl WindowChannel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Proxy => "proxy",
+            Self::Dns => "dns",
+            Self::Mcp => "mcp",
+            Self::Gateway => "gateway",
+            Self::Openshell => "openshell",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "all" => Some(Self::All),
+            "proxy" => Some(Self::Proxy),
+            "dns" => Some(Self::Dns),
+            "mcp" => Some(Self::Mcp),
+            "gateway" => Some(Self::Gateway),
+            "openshell" => Some(Self::Openshell),
+            _ => None,
+        }
+    }
+
+    /// Whether a window on this channel covers a request on `other`.
+    ///
+    /// `All` covers everything; a specific channel covers only itself. The
+    /// reverse is deliberately false: a DNS window must not open the web.
+    pub fn covers(self, other: Self) -> bool {
+        self == Self::All || self == other
+    }
+
+    /// Whether this is a channel an operator may switch at all.
+    pub fn switchable(self) -> bool {
+        !matches!(self, Self::Openshell)
+    }
+}
+
+/// The channel a request belongs to, from what the proxy reported.
+///
+/// A DNS request is a name lookup, JSON-RPC is MCP, and everything else is a
+/// forward-proxy request. The mapping lives here so the decider, the console and
+/// a test use one vocabulary.
+pub fn channel_of_request(protocol: Option<&str>) -> WindowChannel {
+    match protocol.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+        Some("dns") => WindowChannel::Dns,
+        Some("mcp") | Some("jsonrpc") => WindowChannel::Mcp,
+        _ => WindowChannel::Proxy,
+    }
 }
 
 impl OpenWindow {
@@ -126,6 +232,16 @@ impl OpenWindow {
             None => true,
             Some(scoped) => sandbox == Some(scoped),
         }
+    }
+
+    /// Whether this window covers one request: the sandbox and the channel.
+    pub fn covers_request(
+        &self,
+        sandbox: Option<Uuid>,
+        channel: WindowChannel,
+        now: DateTime<Utc>,
+    ) -> bool {
+        self.covers(sandbox, now) && self.channel.covers(channel)
     }
 }
 
@@ -156,16 +272,29 @@ pub fn decide(
         cache_ttl_seconds: 5,
     };
 
+    // A window is scoped to a channel: a DNS window must not open the web. The
+    // mode decides whether the request passes as a bypass or passes *and* is
+    // recorded as a block, which is what observation mode is for.
+    let channel = channel_of_request(request.protocol.as_deref());
     if let Some(window) = policy
         .windows
         .iter()
-        .find(|window| window.covers(request.sandbox_id, now))
+        .find(|window| window.covers_request(request.sandbox_id, channel, now))
     {
+        let decision = match window.mode {
+            WindowMode::Bypass => Decision::Allow,
+            WindowMode::Audit => Decision::Audit,
+        };
         let mut response = base(
-            Decision::Allow,
+            decision,
             DecisionReason::Window,
             format!(
-                "Allowed by a temporary window ({}), open until {}.",
+                "{} by a temporary {} window ({}), open until {}.",
+                match window.mode {
+                    WindowMode::Bypass => "Allowed",
+                    WindowMode::Audit => "Observation mode: allowed and recorded as a block",
+                },
+                window.channel.as_str(),
                 window.reason,
                 window.expires_at.format("%H:%M:%S UTC")
             ),
@@ -646,6 +775,8 @@ mod tests {
             sandbox_id: Some(Uuid::nil()),
             expires_at: now + Duration::minutes(10),
             reason: "debugging".into(),
+            mode: WindowMode::Bypass,
+            channel: WindowChannel::All,
         };
         let out = decide(&request("anything.net", 80), &policy(vec![deny.clone()], vec![window.clone()]), now);
         assert_eq!(out.decision, Decision::Allow);
@@ -656,6 +787,61 @@ mod tests {
     }
 
     #[test]
+    fn a_dns_window_does_not_open_the_web() {
+        // The master switches are per firewall. A window that covers name
+        // lookups must not also allow an HTTPS request, or "open DNS for five
+        // minutes" would be "open everything".
+        let now = Utc::now();
+        let window = OpenWindow {
+            id: Uuid::new_v4(),
+            sandbox_id: Some(Uuid::nil()),
+            expires_at: now + Duration::minutes(5),
+            reason: "resolver check".into(),
+            mode: WindowMode::Bypass,
+            channel: WindowChannel::Dns,
+        };
+        let mut dns = request("example.com", 0);
+        dns.protocol = Some("dns".into());
+        let covered = decide(&dns, &policy(vec![], vec![window.clone()]), now);
+        assert_eq!(covered.decision, Decision::Allow);
+        assert_eq!(covered.reason, DecisionReason::Window);
+
+        let https = decide(&request("example.com", 443), &policy(vec![], vec![window]), now);
+        assert_eq!(https.decision, Decision::Deny, "a DNS window must not cover HTTPS");
+    }
+
+    #[test]
+    fn an_observation_window_allows_but_is_recorded_as_a_block() {
+        // Observation mode is the point of a policy review: nothing breaks and
+        // the console still shows what would have been denied.
+        let now = Utc::now();
+        let window = OpenWindow {
+            id: Uuid::new_v4(),
+            sandbox_id: None,
+            expires_at: now + Duration::minutes(30),
+            reason: "policy review".into(),
+            mode: WindowMode::Audit,
+            channel: WindowChannel::All,
+        };
+        let out = decide(&request("example.com", 443), &policy(vec![], vec![window]), now);
+        assert_eq!(out.decision, Decision::Audit);
+        assert!(out.decision.passes(), "observation must not stop the workload");
+        assert!(out.explanation.contains("Observation mode"));
+    }
+
+    #[test]
+    fn a_channel_covers_itself_and_all_covers_everything() {
+        assert!(WindowChannel::All.covers(WindowChannel::Dns));
+        assert!(WindowChannel::Dns.covers(WindowChannel::Dns));
+        assert!(!WindowChannel::Dns.covers(WindowChannel::Proxy));
+        assert!(!WindowChannel::Openshell.switchable());
+        assert_eq!(channel_of_request(Some("dns")), WindowChannel::Dns);
+        assert_eq!(channel_of_request(Some("mcp")), WindowChannel::Mcp);
+        assert_eq!(channel_of_request(Some("https")), WindowChannel::Proxy);
+        assert_eq!(channel_of_request(None), WindowChannel::Proxy);
+    }
+
+    #[test]
     fn a_sandbox_scoped_window_does_not_cover_another_sandbox() {
         let now = Utc::now();
         let window = OpenWindow {
@@ -663,6 +849,8 @@ mod tests {
             sandbox_id: Some(Uuid::new_v4()),
             expires_at: now + Duration::minutes(10),
             reason: "x".into(),
+            mode: WindowMode::Bypass,
+            channel: WindowChannel::All,
         };
         let out = decide(&request("a.b", 1), &policy(vec![], vec![window]), now);
         assert_eq!(out.decision, Decision::Deny);

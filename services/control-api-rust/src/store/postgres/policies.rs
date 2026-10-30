@@ -196,6 +196,51 @@ pub async fn version_spec(
     Ok(row.try_get("spec")?)
 }
 
+/// One stored revision, without its document.
+///
+/// The list answers "what changed, when, by whom"; the document itself is read
+/// on demand, because a hundred revisions of a large policy is a lot of JSON the
+/// list does not need.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct VersionRow {
+    pub version: i64,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_by: Option<String>,
+    pub size_bytes: i64,
+}
+
+/// The revision history of one policy, newest first.
+pub async fn list_versions(
+    scope: &mut TenantScope<'_>,
+    policy_id: Uuid,
+) -> Result<Vec<VersionRow>, StoreError> {
+    let rows = sqlx::query(
+        "SELECT v.version, v.created_at, u.email AS created_by,
+                octet_length(v.spec::text)::bigint AS size_bytes
+           FROM policy_versions v
+           JOIN policies p ON p.id = v.policy_id
+           LEFT JOIN users u ON u.id = v.created_by
+          WHERE p.environment_id = $1 AND v.policy_id = $2
+          ORDER BY v.version DESC
+          LIMIT 200",
+    )
+    .bind(scope.environment_id())
+    .bind(policy_id)
+    .fetch_all(scope.connection())
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(VersionRow {
+            version: row.try_get("version")?,
+            created_at: row.try_get("created_at")?,
+            created_by: row.try_get("created_by")?,
+            size_bytes: row.try_get("size_bytes")?,
+        });
+    }
+    Ok(out)
+}
+
 /// Delete a policy.
 pub async fn delete(scope: &mut TenantScope<'_>, id: Uuid) -> Result<(), StoreError> {
     let affected = sqlx::query("DELETE FROM policies WHERE environment_id = $1 AND id = $2")
@@ -850,6 +895,55 @@ pub async fn decide_draft(
     })
 }
 
+/// One traffic window as the console lists it.
+///
+/// The console needs the sandbox's name and the mode/channel words, not the row
+/// shape: a master switch without a label is a switch nobody can read.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WindowRow {
+    pub id: Uuid,
+    pub sandbox_id: Option<Uuid>,
+    pub sandbox_name: Option<String>,
+    pub scope: String,
+    pub mode: String,
+    pub channel: String,
+    pub reason: String,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// The windows in force now, newest expiry last.
+pub async fn list_windows(scope: &mut TenantScope<'_>) -> Result<Vec<WindowRow>, StoreError> {
+    let rows = sqlx::query(
+        "SELECT w.id, w.sandbox_id, s.name AS sandbox_name, w.scope, w.mode, w.channel,
+                w.reason, w.expires_at
+           FROM traffic_windows w
+           LEFT JOIN sandboxes s ON s.id = w.sandbox_id AND s.environment_id = w.environment_id
+          WHERE w.environment_id = $1
+            AND w.revoked_at IS NULL
+            AND w.expires_at > now()
+          ORDER BY w.expires_at ASC
+          LIMIT 100",
+    )
+    .bind(scope.environment_id())
+    .fetch_all(scope.connection())
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(WindowRow {
+            id: row.try_get("id")?,
+            sandbox_id: row.try_get("sandbox_id")?,
+            sandbox_name: row.try_get("sandbox_name")?,
+            scope: row.try_get("scope")?,
+            mode: row.try_get("mode")?,
+            channel: row.try_get("channel")?,
+            reason: row.try_get("reason")?,
+            expires_at: row.try_get("expires_at")?,
+        });
+    }
+    Ok(out)
+}
+
 /// Open a temporary traffic window.
 pub async fn open_window(
     scope: &mut TenantScope<'_>,
@@ -857,12 +951,14 @@ pub async fn open_window(
     scope_kind: &str,
     reason: &str,
     minutes: i32,
+    mode: &str,
+    channel: &str,
     created_by: Option<Uuid>,
 ) -> Result<(Uuid, chrono::DateTime<chrono::Utc>), StoreError> {
     let row = sqlx::query(
         "INSERT INTO traffic_windows
-            (environment_id, sandbox_id, scope, reason, expires_at, created_by)
-         VALUES ($1, $2, $3, $4, now() + make_interval(mins => $5), $6)
+            (environment_id, sandbox_id, scope, reason, expires_at, mode, channel, created_by)
+         VALUES ($1, $2, $3, $4, now() + make_interval(mins => $5), $6, $7, $8)
          RETURNING id, expires_at",
     )
     .bind(scope.environment_id())
@@ -870,6 +966,8 @@ pub async fn open_window(
     .bind(scope_kind)
     .bind(reason)
     .bind(minutes)
+    .bind(mode)
+    .bind(channel)
     .bind(created_by)
     .fetch_one(scope.connection())
     .await?;

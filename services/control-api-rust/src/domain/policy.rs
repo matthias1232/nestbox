@@ -689,6 +689,60 @@ impl Enforcement {
     }
 }
 
+/// Which firewall a policy document describes, as the console groups it.
+///
+/// Two kinds, because the document says exactly that much. A document that
+/// carries only `network_policies` is about egress and nothing else; a document
+/// that also carries `filesystem_policy`, `landlock` or `process` is the whole
+/// sandbox fence, which is what people mean by an OpenShell policy. DNS rules
+/// are rows in their own table, not document sections, so they are not a kind
+/// here — a policy that carries a DNS rule is still a network policy with a
+/// separate companion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyKind {
+    Openshell,
+    Network,
+}
+
+impl PolicyKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Openshell => "openshell",
+            Self::Network => "network",
+        }
+    }
+}
+
+/// The sections a document actually carries, in document order.
+///
+/// Reading the keys instead of trusting a label is what keeps the badge true: a
+/// document edited to add a filesystem section becomes an OpenShell policy
+/// without anyone updating a column.
+pub fn document_sections(spec: &serde_json::Value) -> Vec<&'static str> {
+    let Some(object) = spec.as_object() else {
+        return Vec::new();
+    };
+    PolicySection::all()
+        .into_iter()
+        .filter(|section| object.contains_key(section.as_str()))
+        .map(|section| section.as_str())
+        .collect()
+}
+
+/// Classify one document.
+pub fn classify(spec: &serde_json::Value) -> PolicyKind {
+    let sections = document_sections(spec);
+    let startup = sections
+        .iter()
+        .any(|section| *section != PolicySection::NetworkPolicies.as_str());
+    if startup {
+        PolicyKind::Openshell
+    } else {
+        PolicyKind::Network
+    }
+}
+
 /// Validate a policy document and report which sections it touches.
 ///
 /// Returns the sections present so the caller can decide whether a save is a
@@ -2014,5 +2068,30 @@ mod tests {
         assert_eq!(endpoint_host_port("https://api.example.com/v1"), Some(("api.example.com".into(), 443)));
         assert_eq!(endpoint_host_port("http://gw.local/v1"), Some(("gw.local".into(), 80)));
         assert_eq!(endpoint_host_port("nonsense"), None);
+    }
+
+    #[test]
+    fn a_document_is_classified_by_the_sections_it_carries() {
+        // The badge is derived, not stored: adding a filesystem section makes a
+        // policy an OpenShell policy without anyone updating a column.
+        let network_only = serde_json::json!({
+            "network_policies": { "api": { "endpoints": [] } }
+        });
+        assert_eq!(classify(&network_only), PolicyKind::Network);
+        assert_eq!(document_sections(&network_only), vec!["network_policies"]);
+
+        let whole_fence = serde_json::json!({
+            "filesystem_policy": { "paths": [] },
+            "network_policies": {}
+        });
+        assert_eq!(classify(&whole_fence), PolicyKind::Openshell);
+        assert_eq!(
+            document_sections(&whole_fence),
+            vec!["filesystem_policy", "network_policies"]
+        );
+
+        // A document that is not an object is not classified as anything it is
+        // not: the network default is the narrower claim.
+        assert_eq!(classify(&serde_json::json!("nonsense")), PolicyKind::Network);
     }
 }

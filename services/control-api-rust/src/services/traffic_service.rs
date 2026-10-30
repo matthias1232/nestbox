@@ -402,6 +402,55 @@ pub async fn environment_traffic(
     })
 }
 
+/// What the decisions view asks for: a window, and optionally one sandbox.
+pub struct DecisionsRequest {
+    pub window: Option<String>,
+    pub sandbox_id: Option<Uuid>,
+}
+
+/// The denied destinations in one window, worst first.
+///
+/// The decisions view is deliberately narrower than the traffic list: only what
+/// was stopped, grouped by what a person can allow. Default window is one hour,
+/// because a decision that is a day old is usually already resolved, and the cap
+/// stays at a day for the same reason as the traffic list.
+pub async fn decisions(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    request: DecisionsRequest,
+) -> Result<serde_json::Value, ApiError> {
+    require(principal, Permission::TelemetryRead)?;
+    let window = parse_window(request.window.as_deref().or(Some("1h")))?
+        .capped(MAX_WINDOW_SECONDS);
+    let (from, to) = window.bounds();
+
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
+        .await
+        .map_err(ApiError::from)?;
+    if let Some(sandbox_id) = request.sandbox_id {
+        ensure_sandbox(&mut scope, sandbox_id).await?;
+    }
+    let items = store::denied_targets(&mut scope, from, to, request.sandbox_id, store::MAX_EDGES)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+
+    let unresolved: Vec<String> = items
+        .iter()
+        .filter(|item| item.reason.is_none())
+        .map(|item| item.host.clone())
+        .collect();
+    geography_service::spawn_fill(ctx.pool.clone(), unresolved);
+
+    Ok(serde_json::json!({
+        "window": window.label(),
+        "window_seconds": window.seconds,
+        "from": from,
+        "to": to,
+        "items": items,
+    }))
+}
+
 /// One request and response body, after the redactor.
 #[derive(Debug, serde::Serialize)]
 pub struct BodyView {

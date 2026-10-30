@@ -23,8 +23,27 @@ pub async fn list(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let policies = policy_service::list(&state.services, &auth.principal).await?;
     let global = policy_service::global(&state.services, &auth.principal).await?;
+    // The kind is derived from the document, not stored: a policy edited to add
+    // a filesystem section becomes an OpenShell policy without a migration.
+    let items: Vec<serde_json::Value> = policies
+        .iter()
+        .map(|policy| {
+            let mut value = serde_json::to_value(policy).unwrap_or(serde_json::Value::Null);
+            if let serde_json::Value::Object(map) = &mut value {
+                map.insert(
+                    "kind".into(),
+                    serde_json::json!(crate::domain::policy::classify(&policy.spec).as_str()),
+                );
+                map.insert(
+                    "sections".into(),
+                    serde_json::json!(crate::domain::policy::document_sections(&policy.spec)),
+                );
+            }
+            value
+        })
+        .collect();
     Ok(Json(serde_json::json!({
-        "items": policies,
+        "items": items,
         "global": global,
     })))
 }
@@ -454,12 +473,45 @@ pub async fn reject_draft(
     ))
 }
 
+/// The revision history of one policy, newest first.
+pub async fn versions(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let rows = policy_service::versions(&state.services, &auth.principal, id).await?;
+    Ok(Json(serde_json::json!({ "items": rows })))
+}
+
+/// The traffic windows in force, with their mode, channel and expiry.
+pub async fn windows(
+    State(state): State<AppState>,
+    auth: Auth,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let windows = policy_service::windows(&state.services, &auth.principal).await?;
+    Ok(Json(serde_json::json!({ "items": windows })))
+}
+
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct WindowRequest {
     pub sandbox_id: Option<Uuid>,
     #[serde(default = "default_minutes")]
     pub minutes: i32,
+    /// `bypass` allows and forgets; `audit` allows and records the block.
+    #[serde(default = "default_mode")]
+    pub mode: String,
+    /// `all`, `proxy`, `dns`, `mcp`, `gateway`. `openshell` is refused.
+    #[serde(default = "default_channel")]
+    pub channel: String,
     pub reason: String,
+}
+
+fn default_mode() -> String {
+    "bypass".to_string()
+}
+
+fn default_channel() -> String {
+    "all".to_string()
 }
 
 fn default_minutes() -> i32 {
@@ -477,6 +529,8 @@ pub async fn open_window(
         &auth.principal,
         body.sandbox_id,
         body.minutes,
+        &body.mode,
+        &body.channel,
         body.reason.trim(),
     )
     .await?;

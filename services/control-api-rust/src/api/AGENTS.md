@@ -36,7 +36,7 @@ The architecture test enforces the last two.
 | `system.rs` | Health, readiness, runtime, OpenAPI, environments, audit |
 | `sandboxes.rs` | Sandbox list, detail, create, actions, logs, exec, stack membership (`PUT /sandboxes/{id}/stack`) |
 | `sandboxes_settings.rs` | A sandbox's supervisor settings: read the thresholds, write them back |
-| `policies.rs` | Policies, rules, drafts, traffic windows, and the node-token egress check (`feat/policy-decider`) |
+| `policies.rs` | Policies (with the kind derived from their sections), the revision history, rules, drafts, traffic windows, and the node-token egress check (`feat/policy-decider`) |
 | `telemetry.rs` | History, facets, ingest, and the node-token batch from an egress proxy |
 | `events.rs` | SSE streams |
 | `cluster.rs` | Gateways, supervisors |
@@ -53,10 +53,10 @@ The architecture test enforces the last two.
 | `inventory.rs` | Snapshot and refresh |
 | `stack.rs` | `GET /sandboxes/{id}/stack-topology`, `GET /system/components`, component logs |
 | `access.rs` | SSH key, one-time download, rotation, ports, sessions, `GET /sandboxes/{id}/connect`, `PUT /nodes/{id}/endpoint` (`feat/sandbox-access`) |
-| `traffic.rs` | Traffic rows for one sandbox and for the whole environment, one body, map edges, effective policies, MCP calls (`feat/live-traffic`) |
+| `traffic.rs` | Traffic rows for one sandbox and for the whole environment, the denied-destination decisions view, one body, map edges, effective policies, MCP calls (`feat/live-traffic`) |
 | `mcp.rs` | MCP registry and sandbox attachments, and the discovery trigger |
 | `media.rs` | Media settings, a sandbox's choice, renders and assets, and the media-token bridge |
-| `sandboxes_terminal.rs` | The terminal WebSocket (`feat/terminal`) |
+| `sandboxes_terminal.rs` | The terminal WebSocket and the stored tab list a reload reopens (`feat/terminal`) |
 | `topology.rs` | The cluster graph and its live edges (`feat/live-traffic`) |
 
 The Admin Center's read endpoints (`traffic.rs`, `topology.rs`) take a window and
