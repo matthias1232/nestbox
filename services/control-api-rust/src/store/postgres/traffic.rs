@@ -584,8 +584,8 @@ pub async fn summary_environment(
         "{base}
          SELECT protocol, COUNT(*) AS n
            FROM base
-          WHERE ($5::uuid IS NULL OR sandbox_id = $5::uuid)
-            AND ($6::text IS NULL OR host ILIKE '%' || $6 || '%')
+          WHERE ($4::uuid IS NULL OR sandbox_id = $4::uuid)
+            AND ($5::text IS NULL OR host ILIKE '%' || $5 || '%')
           GROUP BY protocol
           ORDER BY n DESC, protocol
           LIMIT 12",
