@@ -26,6 +26,15 @@ pub async fn list(
     Ok(Json(serde_json::json!({ "items": items })))
 }
 
+/// Probe every profile, in failover order, and persist each verdict.
+pub async fn probe_all(
+    State(state): State<AppState>,
+    auth: Auth,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let items = provider_service::probe_all(&state.services, &auth.principal).await?;
+    Ok(Json(serde_json::json!({ "items": items })))
+}
+
 /// One provider profile.
 pub async fn get(
     State(state): State<AppState>,

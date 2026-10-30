@@ -57,12 +57,19 @@ const FILTERS = [
   { id: 'unreachable', label: 'Unreachable' },
 ];
 
+// Where a profile sits in the failover order; the server defaults to 100.
+const priorityOf = (profile) => {
+  const value = Number(profile?.labels?.priority);
+  return Number.isFinite(value) && value > 0 ? value : 100;
+};
+
 const blank = {
   name: '',
   kind: 'openai_compatible',
   endpoint: '',
   model: '',
   secret_ref: 'file:///secrets/',
+  priority: '100',
 };
 
 // A probe is recent enough that "3 min ago" is more useful than a timestamp.
@@ -96,6 +103,7 @@ export default function ProvidersPage() {
   const [notice, setNotice] = createSignal(null);
   // The last probe of this session, per profile. The server also persists the
   // verdict; this keeps the sentence next to the row that produced it.
+  const [testingAll, setTestingAll] = createSignal(false);
   const [probes, setProbes] = createSignal({});
   const [probing, setProbing] = createSignal({});
   // A 409 provider.in_use with the sandboxes that still select the profile.
@@ -204,6 +212,9 @@ export default function ProvidersPage() {
         endpoint: value.endpoint.trim(),
         model: value.model.trim() || null,
         secret_ref: value.secret_ref.trim() || null,
+        // Lower is tried first. Sent as a label so no migration is needed to
+        // change the order.
+        labels: { priority: Number(value.priority) || 100 },
       });
       setNotice(`Provider “${created.name}” registered.`);
       setForm({ ...blank });
@@ -221,6 +232,12 @@ export default function ProvidersPage() {
     // still replace it with a private NIM deployment, but does not have to
     // discover the path from an error message.
     setForm({ ...current, kind, endpoint: kind === 'nvidia' && !current.endpoint.trim() ? 'https://integrate.api.nvidia.com/v1' : current.endpoint });
+  }
+
+  function setPriority(value) {
+    const current = editing();
+    if (!current) return;
+    setEditing({ ...current, labels: { ...(current.labels || {}), priority: Number(value) || 100 } });
   }
 
   async function saveEdit(event) {
@@ -242,6 +259,29 @@ export default function ProvidersPage() {
       await load();
     } catch (failure) {
       setError(failure.message);
+    }
+  }
+
+  /// Probe every endpoint at once and read the answer as the failover order.
+  async function probeAll() {
+    setError(null);
+    setNotice(null);
+    setTestingAll(true);
+    try {
+      const answer = await api.probeAll();
+      const items = answer.items || [];
+      const alive = items.filter((item) => item.reachable);
+      const first = alive[0];
+      setNotice(
+        `${alive.length} of ${items.length} endpoints answer. Tried in this order: `
+        + items.map((item) => `${item.name} (${item.priority})${item.reachable ? '' : ' ✗'}`).join(' → ')
+        + (first ? `. Agents use “${first.name}”.` : '. No endpoint answers, so agents get no model.'),
+      );
+      await load();
+    } catch (failure) {
+      setError(failure.message);
+    } finally {
+      setTestingAll(false);
     }
   }
 
@@ -303,6 +343,9 @@ export default function ProvidersPage() {
           </p>
         </div>
         <div class="controls">
+          <button class="secondary" onClick={probeAll} disabled={testingAll()}>
+            {testingAll() ? 'Testing every key…' : 'Test all keys'}
+          </button>
           <button class="secondary" onClick={load}>Refresh</button>
         </div>
       </header>
@@ -357,6 +400,7 @@ export default function ProvidersPage() {
             <thead>
               <tr>
                 <th>Name</th>
+                <th title="Lower is tried first when the one above does not answer">Order</th>
                 <th>Kind</th>
                 <th>Endpoint</th>
                 <th>Model</th>
@@ -497,6 +541,16 @@ export default function ProvidersPage() {
                        onChange={(value) => setEditing({ ...editing(), secret_ref: value })} />
             <small class="muted">The key this provider is called with. Add keys in “API keys” above; the value is never shown again.</small>
           </label>
+          <label class="field">
+            <span>Failover order</span>
+            <input type="number" min="1" max="1000" value={priorityOf(editing())}
+                   onInput={(e) => setPriority(e.currentTarget.value)} />
+            <small class="muted">
+              1 is tried first, 1000 last; two profiles with the same number fall back to
+              “local before cloud”. Only a provider whose last test answered is used, so a
+              dead key hands over to the next one without touching a sandbox.
+            </small>
+          </label>
           <div class="actions">
             <button type="submit">Save</button>
             <button type="button" class="ghost" onClick={() => setEditing(null)}>Cancel</button>
@@ -606,6 +660,15 @@ export default function ProvidersPage() {
             <KeyPicker keys={keys()} value={form().secret_ref}
                        onChange={(value) => setForm({ ...form(), secret_ref: value })} />
             <small class="muted">Pick a stored key (add one in “API keys” above), or none for a local model.</small>
+          </label>
+          <label class="field">
+            <span>Failover order</span>
+            <input type="number" min="1" max="1000" value={form().priority}
+                   onInput={(e) => setForm({ ...form(), priority: e.currentTarget.value })} />
+            <small class="muted">
+              Lower is tried first. Give the key you want agents to use today the smallest number,
+              the spare keys the next ones.
+            </small>
           </label>
         </div>
         <div class="actions">

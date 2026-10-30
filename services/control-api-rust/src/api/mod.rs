@@ -337,6 +337,8 @@ pub fn router(state: AppState) -> Router {
                 .put(providers::update)
                 .delete(providers::delete),
         )
+        // Registered before `{id}` so a static path is never read as an id.
+        .route("/api/v1/providers/probe-all", post(providers::probe_all))
         .route("/api/v1/providers/{id}/probe", post(providers::probe))
         .route("/api/v1/secrets", get(secrets::list).post(secrets::put))
         .route("/api/v1/secrets/{id}", axum::routing::delete(secrets::delete))

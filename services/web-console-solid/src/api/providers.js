@@ -26,6 +26,11 @@ export function remove(id) {
   return request(`providers/${id}`, { method: 'DELETE' });
 }
 
+/** Probe every endpoint and persist each verdict; answers in failover order. */
+export function probeAll() {
+  return request('providers/probe-all', { method: 'POST' });
+}
+
 export function probe(id) {
   return request(`providers/${id}/probe`, { method: 'POST' });
 }

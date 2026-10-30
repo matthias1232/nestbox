@@ -171,6 +171,7 @@ pub async fn create(
     if let Some(locator) = request.secret_ref.as_deref() {
         validate_locator(locator)?;
     }
+    priority_from_labels(&request.labels)?;
 
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
@@ -230,6 +231,7 @@ pub async fn update(
     if let Some(locator) = secret_ref.as_deref() {
         validate_locator(locator)?;
     }
+    priority_from_labels(&labels)?;
 
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
@@ -337,6 +339,62 @@ pub async fn probe(
     scope.commit().await.map_err(ApiError::from)?;
 
     Ok(result)
+}
+
+/// One line of the "test every key" answer.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct ProbeSummary {
+    pub id: Uuid,
+    pub name: String,
+    pub kind: String,
+    pub priority: i64,
+    pub reachable: bool,
+    pub status: String,
+    /// The first thing that went wrong, as the probe saw it.
+    pub detail: Option<String>,
+}
+
+/// Probe every profile and persist each verdict.
+///
+/// This is what makes a priority list real: without a pass over all keys, an
+/// operator has to open each row to learn which one is dead, and the failover
+/// order would be built on stale statuses.
+pub async fn probe_all(
+    ctx: &ServiceContext,
+    principal: &Principal,
+) -> Result<Vec<ProbeSummary>, ApiError> {
+    require(principal, Permission::ProviderWrite)?;
+    let profiles = list(ctx, principal).await?;
+    let mut summaries = Vec::with_capacity(profiles.len());
+    for profile in profiles {
+        let result = measure(ctx, &profile).await;
+        let status = if result.reachable {
+            ProviderStatus::Reachable
+        } else {
+            ProviderStatus::Unreachable
+        };
+        let mut scope = TenantScope::begin_for(&ctx.pool, principal)
+            .await
+            .map_err(ApiError::from)?;
+        store::set_status(&mut scope, profile.id, status)
+            .await
+            .map_err(ApiError::from)?;
+        scope.commit().await.map_err(ApiError::from)?;
+        let priority = priority_of(&profile);
+        let kind = profile.kind.as_str().to_string();
+        summaries.push(ProbeSummary {
+            id: profile.id,
+            name: profile.name.clone(),
+            kind,
+            priority,
+            reachable: result.reachable,
+            status: status.as_str().to_string(),
+            detail: Some(result.detail).filter(|text| !text.trim().is_empty()),
+        });
+    }
+    // Sorted the way they are tried, so the list reads as the failover order.
+    summaries.sort_by_key(|entry| (entry.priority, entry.name.clone()));
+    Ok(summaries)
 }
 
 /// Ask the endpoint whether it answers.
@@ -597,6 +655,39 @@ fn validate_locator(locator: &str) -> Result<(), ApiError> {
 /// best, and a cloud API is last. Without that order the alphabet decided which
 /// model an agent used, which is how a sandbox ended up calling the gateway
 /// with a key that was not meant for it.
+/// Where a provider sits when nobody said otherwise.
+pub const DEFAULT_PRIORITY: i64 = 100;
+
+/// Where one profile sits in the failover order.
+///
+/// Read from `labels.priority`: lower is tried first, absent means 100. A label
+/// rather than a column on purpose — the order is a routing preference, not a
+/// fact about the endpoint, and a label needs no migration to change.
+pub fn priority_of(profile: &ProviderProfile) -> i64 {
+    profile
+        .labels
+        .get("priority")
+        .and_then(|value| value.as_i64())
+        .unwrap_or(DEFAULT_PRIORITY)
+        .clamp(1, 1000)
+}
+
+/// The priority a request asks for, checked.
+///
+/// A wrong type is a 422 naming the field, not a provider quietly created at the
+/// default: "I set 3" and "it is 100" must never be the same answer.
+pub fn priority_from_labels(labels: &serde_json::Value) -> Result<Option<i64>, ApiError> {
+    match labels.get("priority") {
+        None => Ok(None),
+        Some(value) => match value.as_i64() {
+            Some(number) if (1..=1000).contains(&number) => Ok(Some(number)),
+            _ => Err(ApiError::validation(
+                "A provider priority is a whole number from 1 (tried first) to 1000 (tried last).",
+            )),
+        },
+    }
+}
+
 pub fn select_inference_profile(profiles: &[ProviderProfile]) -> Option<&ProviderProfile> {
     let speaks_openai = |profile: &ProviderProfile| {
         matches!(
@@ -613,17 +704,29 @@ pub fn select_inference_profile(profiles: &[ProviderProfile]) -> Option<&Provide
                 | ProviderKind::Omniroute
         )
     };
-    let reachable = || profiles.iter().filter(|p| p.status == ProviderStatus::Reachable);
-    reachable()
-        .filter(|profile| speaks_openai(profile))
-        .min_by_key(|profile| match profile.kind {
+    let kind_rank = |profile: &ProviderProfile| match profile.kind {
             ProviderKind::LocalOpenaiCompatible | ProviderKind::LocalVllm => 0,
             ProviderKind::OpenaiCompatible | ProviderKind::Openai => 1,
             ProviderKind::Nvidia => 2,
-            ProviderKind::Omniroute => 3,
-            _ => 3,
+        ProviderKind::Omniroute => 3,
+        _ => 3,
+    };
+    // Two rules, in this order: only a profile whose last probe answered is
+    // eligible (a dead key is no fallback), and the lowest priority among them
+    // wins. The kind breaks ties, so a local model still beats a cloud gateway
+    // at equal priority.
+    let reachable = || {
+        profiles
+            .iter()
+            .filter(|profile| profile.status == ProviderStatus::Reachable)
+    };
+    reachable()
+        .filter(|profile| speaks_openai(profile))
+        .min_by_key(|profile| (priority_of(profile), kind_rank(profile)))
+        .or_else(|| {
+            reachable()
+                .min_by_key(|profile| (priority_of(profile), kind_rank(profile)))
         })
-        .or_else(|| reachable().next())
 }
 
 #[cfg(test)]
@@ -715,6 +818,46 @@ mod tests {
             ProviderStatus::Unreachable,
         )];
         assert!(select_inference_profile(&profiles).is_none());
+    }
+
+    fn with_priority(mut profile: ProviderProfile, priority: i64) -> ProviderProfile {
+        profile.labels = serde_json::json!({ "priority": priority });
+        profile
+    }
+
+    #[test]
+    fn a_key_with_a_lower_priority_is_tried_first_even_against_a_local_model() {
+        let profiles = vec![
+            profile("local/qwen@local", ProviderKind::LocalOpenaiCompatible, ProviderStatus::Reachable),
+            with_priority(profile("nvidia-b", ProviderKind::Nvidia, ProviderStatus::Reachable), 1),
+        ];
+        let chosen = select_inference_profile(&profiles).expect("a profile");
+        assert_eq!(chosen.name, "nvidia-b", "an explicit priority beats the kind tie-break");
+    }
+
+    #[test]
+    fn a_dead_key_is_skipped_for_the_next_one_in_the_order() {
+        let profiles = vec![
+            with_priority(profile("nvidia-first", ProviderKind::Nvidia, ProviderStatus::Unreachable), 1),
+            with_priority(profile("nvidia-second", ProviderKind::Nvidia, ProviderStatus::Reachable), 2),
+        ];
+        let chosen = select_inference_profile(&profiles).expect("a profile");
+        assert_eq!(chosen.name, "nvidia-second");
+    }
+
+    #[test]
+    fn without_a_priority_a_profile_sits_at_the_default() {
+        assert_eq!(priority_of(&profile("x", ProviderKind::Nvidia, ProviderStatus::Reachable)), DEFAULT_PRIORITY);
+        assert_eq!(priority_of(&with_priority(profile("x", ProviderKind::Nvidia, ProviderStatus::Reachable), 7)), 7);
+    }
+
+    #[test]
+    fn a_priority_outside_the_range_is_refused_rather_than_clamped_silently() {
+        assert!(priority_from_labels(&serde_json::json!({ "priority": 0 })).is_err());
+        assert!(priority_from_labels(&serde_json::json!({ "priority": 1001 })).is_err());
+        assert!(priority_from_labels(&serde_json::json!({ "priority": "3" })).is_err());
+        assert_eq!(priority_from_labels(&serde_json::json!({ "priority": 3 })).unwrap(), Some(3));
+        assert_eq!(priority_from_labels(&serde_json::json!({})).unwrap(), None);
     }
 
     #[test]
