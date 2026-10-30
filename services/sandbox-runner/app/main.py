@@ -7,6 +7,7 @@ OpenShell SDK adapter without changing the public control-plane contract.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 from datetime import UTC, datetime
@@ -1046,9 +1047,12 @@ def parse_prometheus(text: str) -> dict[str, float]:
             continue
         name, _, value = line.rpartition(" ")
         try:
-            metrics[name] = float(value)
+            number = float(value)
         except ValueError:
             continue
+        if math.isnan(number) or math.isinf(number):
+            continue
+        metrics[name] = number
     return metrics
 
 
