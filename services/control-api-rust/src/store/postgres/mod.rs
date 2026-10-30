@@ -20,6 +20,7 @@ pub mod models;
 pub mod nodes;
 pub mod persistent_roots;
 pub mod policies;
+pub mod privacy;
 pub mod backups;
 pub mod providers;
 pub mod vault;

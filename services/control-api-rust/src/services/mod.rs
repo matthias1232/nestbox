@@ -23,6 +23,7 @@ pub mod node_service;
 pub mod pack_service;
 pub mod persist_service;
 pub mod policy_service;
+pub mod privacy_service;
 pub mod provider_service;
 pub mod sandbox_service;
 pub mod selection;

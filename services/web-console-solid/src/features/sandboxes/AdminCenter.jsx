@@ -45,7 +45,7 @@ const TABS = [
   { id: 'map', label: 'Topology', component: MapTab },
   { id: 'supervisor', label: 'Supervisor', component: SupervisorTab },
   { id: 'sessions', label: 'Sessions', component: SessionsTab },
-  { id: 'policies', label: 'Policies', component: PoliciesTab },
+  { id: 'policies', label: 'Policies & DNS', component: PoliciesTab },
   { id: 'processes', label: 'Processes', component: ProcessesTab },
   { id: 'inventory', label: 'Inventory', component: InventoryTab },
   { id: 'logs', label: 'Logs', component: LogsTab },

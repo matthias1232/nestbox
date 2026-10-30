@@ -169,7 +169,7 @@ export default function StackTopology(props) {
               </span>
             </p>
             <Show when={data().problems.length > 0}>
-              <ul class="stack-problems">
+              <ul class={data().problems.some((text) => /block|deny|denied|fail/i.test(text)) ? 'stack-problems stack-problems--alert' : 'stack-problems'}>
                 <For each={data().problems.slice(0, 6)}>{(text) => <li>{text}</li>}</For>
               </ul>
             </Show>
