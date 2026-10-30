@@ -452,6 +452,13 @@ impl RuntimeAdapter for FakeRuntime {
         })
     }
 
+    async fn model_logs(&self, model_key: &str, tail: u32) -> Result<String, RuntimeError> {
+        if !lock(&self.models).contains_key(model_key) {
+            return Err(RuntimeError::NotFound(format!("model-{model_key}")));
+        }
+        Ok(format!("model-{model_key}: last {tail} lines (fake output)"))
+    }
+
     async fn model_metrics(
         &self,
         model_key: &str,

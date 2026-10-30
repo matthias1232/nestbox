@@ -89,10 +89,41 @@ impl InstallState {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct ModelTuning {
+    // ---- context and generation ----
     /// `--ctx-size`: the context window the server allocates.
     pub context_size: Option<i64>,
+    /// `--n-predict`: tokens generated per request (`-1` = until the context ends).
+    pub n_predict: Option<i32>,
+    /// `--n-keep`: tokens kept from the prompt when the context shifts.
+    pub n_keep: Option<i32>,
+    /// `--no-context-shift` when false: refuse to slide the context window.
+    pub context_shift: Option<bool>,
+    /// `--cache-reuse`: minimum chunk size for KV-cache reuse.
+    pub cache_reuse: Option<i32>,
+    /// `--defrag-thold`: defragment the KV cache below this fragmentation.
+    pub defrag_thold: Option<f32>,
+
+    // ---- GPU and memory ----
     /// `--n-gpu-layers`: how many layers go to the GPU (`-1` = all).
     pub gpu_layers: Option<i32>,
+    /// `--split-mode`: how a model is split across several GPUs.
+    pub split_mode: Option<String>,
+    /// `--row-split`: split rows instead of layers (multi-GPU).
+    pub row_split: Option<bool>,
+    /// `--n-cpu-moe`: keep this many MoE expert layers on the CPU.
+    pub n_cpu_moe: Option<i32>,
+    /// `--main-gpu`.
+    pub main_gpu: Option<i32>,
+    /// `--tensor-split`: per-GPU proportions, comma separated.
+    pub tensor_split: Option<String>,
+    /// `--no-mmap` when false.
+    pub mmap: Option<bool>,
+    /// `--mlock`.
+    pub mlock: Option<bool>,
+    /// `--no-kv-offload` when false.
+    pub kv_offload: Option<bool>,
+
+    // ---- batching and threads ----
     /// `--parallel`: how many requests the server serves at once.
     pub parallel: Option<i32>,
     /// `--batch-size` and `--ubatch-size`: prompt processing chunks.
@@ -101,23 +132,68 @@ pub struct ModelTuning {
     /// `--threads` / `--threads-batch`; absent uses the node's cores.
     pub threads: Option<i32>,
     pub threads_batch: Option<i32>,
+    /// `--threads-http`: HTTP worker threads.
+    pub threads_http: Option<i32>,
+    /// `--timeout`: seconds a request may take before the server closes it.
+    pub timeout: Option<i64>,
+    /// `--no-warmup`: skip the warm-up run at start.
+    pub no_warmup: Option<bool>,
+
+    // ---- KV cache ----
     /// `-fa on|off`.
     pub flash_attention: Option<bool>,
     /// `--cache-type-k` / `--cache-type-v` (`f16`, `bf16`, `q8_0`, `q4_0`, ...).
     pub cache_type_k: Option<String>,
     pub cache_type_v: Option<String>,
-    /// `--no-mmap` when false.
-    pub mmap: Option<bool>,
-    /// `--mlock`.
-    pub mlock: Option<bool>,
-    /// `--no-kv-offload` when false.
-    pub kv_offload: Option<bool>,
-    /// `--tensor-split`: per-GPU proportions, comma separated.
-    pub tensor_split: Option<String>,
-    /// `--main-gpu`.
-    pub main_gpu: Option<i32>,
-    /// `--seed`.
+
+    // ---- RoPE / YaRN (long context) ----
+    /// `--rope-scaling`: `none`, `linear` or `yarn`.
+    pub rope_scaling: Option<String>,
+    /// `--rope-scale`: the factor the context is stretched by.
+    pub rope_scale: Option<f32>,
+    /// `--rope-freq-base`.
+    pub rope_freq_base: Option<f32>,
+    /// `--rope-freq-scale`.
+    pub rope_freq_scale: Option<f32>,
+    /// `--yarn-orig-ctx`: the context the model was trained with.
+    pub yarn_orig_ctx: Option<i64>,
+    /// `--yarn-ext-factor`, `--yarn-attn-factor`, `--yarn-beta-fast`, `--yarn-beta-slow`.
+    pub yarn_ext_factor: Option<f32>,
+    pub yarn_attn_factor: Option<f32>,
+    pub yarn_beta_fast: Option<f32>,
+    pub yarn_beta_slow: Option<f32>,
+
+    // ---- sampling defaults ----
+    /// `--seed`; absent is the server's random seed.
     pub seed: Option<i64>,
+    /// `--temp`.
+    pub temp: Option<f32>,
+    /// `--top-k`, `--top-p`, `--min-p`, `--typical-p`.
+    pub top_k: Option<i32>,
+    pub top_p: Option<f32>,
+    pub min_p: Option<f32>,
+    pub typical_p: Option<f32>,
+    /// `--repeat-penalty`, `--presence-penalty`, `--frequency-penalty`.
+    pub repeat_penalty: Option<f32>,
+    pub presence_penalty: Option<f32>,
+    pub frequency_penalty: Option<f32>,
+    /// `--mirostat` (0 off, 1, 2), `--mirostat-lr`, `--mirostat-ent`.
+    pub mirostat: Option<i32>,
+    pub mirostat_lr: Option<f32>,
+    pub mirostat_ent: Option<f32>,
+
+    // ---- serving behaviour ----
+    /// `--alias`: the name the model answers to in `/v1/models`.
+    pub alias: Option<String>,
+    /// `--embeddings` and `--pooling`.
+    pub embeddings: Option<bool>,
+    pub pooling: Option<String>,
+    /// `--reasoning-format`: how reasoning output is separated.
+    pub reasoning_format: Option<String>,
+    /// `--slots`: expose the slot monitoring endpoint.
+    pub slots: Option<bool>,
+    /// `--verbose`.
+    pub verbose: Option<bool>,
     /// `--metrics`: on unless explicitly switched off, because the model's
     /// graphs and token counts depend on it.
     pub metrics: Option<bool>,
@@ -127,6 +203,25 @@ pub struct ModelTuning {
 
 /// Cache types llama.cpp accepts for the KV cache.
 const CACHE_TYPES: &[&str] = &["f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"];
+const SPLIT_MODES: &[&str] = &["none", "layer", "row"];
+const ROPE_SCALINGS: &[&str] = &["none", "linear", "yarn"];
+const POOLINGS: &[&str] = &["none", "mean", "cls", "last", "rank"];
+const REASONING_FORMATS: &[&str] = &["none", "deepseek", "deepseek-legacy"];
+
+/// Every flag this struct may write, so `apply` can replace instead of append.
+const CONTROLLED_FLAGS: &[&str] = &[
+    "--ctx-size", "--n-predict", "--n-keep", "--no-context-shift", "--cache-reuse",
+    "--defrag-thold", "--n-gpu-layers", "--split-mode", "--row-split", "--n-cpu-moe",
+    "--main-gpu", "--tensor-split", "--no-mmap", "--mlock", "--no-kv-offload", "--parallel",
+    "--batch-size", "--ubatch-size", "--threads", "--threads-batch", "--threads-http",
+    "--timeout", "--no-warmup", "-fa", "--flash-attn", "--cache-type-k", "--cache-type-v",
+    "--rope-scaling", "--rope-scale", "--rope-freq-base", "--rope-freq-scale", "--yarn-orig-ctx",
+    "--yarn-ext-factor", "--yarn-attn-factor", "--yarn-beta-fast", "--yarn-beta-slow", "--seed",
+    "--temp", "--top-k", "--top-p", "--min-p", "--typical-p", "--repeat-penalty",
+    "--presence-penalty", "--frequency-penalty", "--mirostat", "--mirostat-lr", "--mirostat-ent",
+    "--alias", "--embeddings", "--pooling", "--reasoning-format", "--slots", "--verbose",
+    "--metrics", "--jinja",
+];
 
 impl ModelTuning {
     /// Reject values that cannot work, and warn about values that can but are
@@ -146,24 +241,54 @@ impl ModelTuning {
                 ));
             }
         }
-        if let Some(layers) = self.gpu_layers {
-            if !(-1..=999).contains(&layers) {
-                return Err("gpu_layers must be between -1 and 999".to_string());
-            }
-        }
-        if let Some(parallel) = self.parallel {
-            if !(1..=256).contains(&parallel) {
-                return Err("parallel must be between 1 and 256".to_string());
-            }
-        }
         for (name, value, low, high) in [
+            ("n_predict", self.n_predict, -1, 1_048_576),
+            ("n_keep", self.n_keep, -1, 1_048_576),
+            ("cache_reuse", self.cache_reuse, 0, 65_536),
+            ("gpu_layers", self.gpu_layers, -1, 999),
+            ("n_cpu_moe", self.n_cpu_moe, 0, 999),
+            ("main_gpu", self.main_gpu, 0, 15),
+            ("parallel", self.parallel, 1, 256),
             ("batch_size", self.batch_size, 32, 16_384),
             ("ubatch_size", self.ubatch_size, 32, 16_384),
             ("threads", self.threads, 1, 1024),
             ("threads_batch", self.threads_batch, 1, 1024),
+            ("threads_http", self.threads_http, 1, 256),
+            ("top_k", self.top_k, 0, 1_000),
+            ("mirostat", self.mirostat, 0, 2),
         ] {
             if let Some(value) = value {
                 if !(low..=high).contains(&value) {
+                    return Err(format!("{name} must be between {low} and {high}"));
+                }
+            }
+        }
+        if let Some(timeout) = self.timeout {
+            if !(1..=86_400).contains(&timeout) {
+                return Err("timeout must be between 1 and 86400 seconds".to_string());
+            }
+        }
+        for (name, value, low, high) in [
+            ("defrag_thold", self.defrag_thold, -1.0, 1.0),
+            ("rope_scale", self.rope_scale, 0.1, 64.0),
+            ("rope_freq_base", self.rope_freq_base, 1.0, 10_000_000.0),
+            ("rope_freq_scale", self.rope_freq_scale, 0.01, 100.0),
+            ("yarn_ext_factor", self.yarn_ext_factor, -1.0, 100.0),
+            ("yarn_attn_factor", self.yarn_attn_factor, 0.0, 100.0),
+            ("yarn_beta_fast", self.yarn_beta_fast, 0.0, 10_000.0),
+            ("yarn_beta_slow", self.yarn_beta_slow, 0.0, 10_000.0),
+            ("temp", self.temp, 0.0, 5.0),
+            ("top_p", self.top_p, 0.0, 1.0),
+            ("min_p", self.min_p, 0.0, 1.0),
+            ("typical_p", self.typical_p, 0.0, 1.0),
+            ("repeat_penalty", self.repeat_penalty, 0.0, 10.0),
+            ("presence_penalty", self.presence_penalty, -2.0, 2.0),
+            ("frequency_penalty", self.frequency_penalty, -2.0, 2.0),
+            ("mirostat_lr", self.mirostat_lr, 0.0, 1.0),
+            ("mirostat_ent", self.mirostat_ent, 0.0, 100.0),
+        ] {
+            if let Some(value) = value {
+                if !value.is_finite() || value < low || value > high {
                     return Err(format!("{name} must be between {low} and {high}"));
                 }
             }
@@ -173,22 +298,28 @@ impl ModelTuning {
                 return Err("ubatch_size cannot be larger than batch_size".to_string());
             }
         }
-        for (name, value) in [
-            ("cache_type_k", self.cache_type_k.as_deref()),
-            ("cache_type_v", self.cache_type_v.as_deref()),
+        for (name, value, allowed) in [
+            ("cache_type_k", self.cache_type_k.as_deref(), CACHE_TYPES),
+            ("cache_type_v", self.cache_type_v.as_deref(), CACHE_TYPES),
+            ("split_mode", self.split_mode.as_deref(), SPLIT_MODES),
+            ("rope_scaling", self.rope_scaling.as_deref(), ROPE_SCALINGS),
+            ("pooling", self.pooling.as_deref(), POOLINGS),
+            ("reasoning_format", self.reasoning_format.as_deref(), REASONING_FORMATS),
         ] {
             if let Some(value) = value {
-                if !CACHE_TYPES.contains(&value) {
-                    return Err(format!(
-                        "{name} must be one of {}",
-                        CACHE_TYPES.join(", ")
-                    ));
+                if !allowed.contains(&value) {
+                    return Err(format!("{name} must be one of {}", allowed.join(", ")));
                 }
             }
         }
         if let Some(split) = self.tensor_split.as_deref() {
             if split.split(',').any(|part| part.trim().parse::<f32>().is_err()) {
                 return Err("tensor_split must be comma separated numbers".to_string());
+            }
+        }
+        if let Some(alias) = self.alias.as_deref() {
+            if alias.is_empty() || alias.len() > 120 || alias.contains(char::is_whitespace) {
+                return Err("alias must be a non-empty name without spaces".to_string());
             }
         }
         if let (Some(context), Some(parallel)) = (self.context_size, self.parallel) {
@@ -199,6 +330,19 @@ impl ModelTuning {
                 );
             }
         }
+        if self.rope_scaling.as_deref() == Some("yarn") && self.yarn_orig_ctx.is_none() {
+            warnings.push(
+                "YaRN scaling without yarn_orig_ctx uses the model's trained context; set it if \
+                 the server picks the wrong base."
+                    .to_string(),
+            );
+        }
+        if self.mirostat.unwrap_or(0) > 0 && self.temp.is_some() {
+            warnings.push(
+                "Mirostat replaces temperature sampling; temp has no effect while mirostat is on."
+                    .to_string(),
+            );
+        }
         Ok(warnings)
     }
 
@@ -208,34 +352,53 @@ impl ModelTuning {
     /// instead of being appended after it and depending on llama.cpp's handling
     /// of repeated flags.
     pub fn apply(&self, command: &mut Vec<String>, threads: i64) {
-        for flag in [
-            "--ctx-size",
-            "--n-gpu-layers",
-            "--parallel",
-            "--batch-size",
-            "--ubatch-size",
-            "--threads",
-            "--threads-batch",
-            "-fa",
-            "--flash-attn",
-            "--cache-type-k",
-            "--cache-type-v",
-            "--no-mmap",
-            "--mlock",
-            "--no-kv-offload",
-            "--tensor-split",
-            "--main-gpu",
-            "--seed",
-            "--metrics",
-            "--jinja",
-        ] {
+        for flag in CONTROLLED_FLAGS {
             strip_flag(command, flag);
         }
         if let Some(value) = self.context_size {
             push_flag(command, "--ctx-size", value.to_string());
         }
+        if let Some(value) = self.n_predict {
+            push_flag(command, "--n-predict", value.to_string());
+        }
+        if let Some(value) = self.n_keep {
+            push_flag(command, "--n-keep", value.to_string());
+        }
+        if self.context_shift == Some(false) {
+            command.push("--no-context-shift".to_string());
+        }
+        if let Some(value) = self.cache_reuse {
+            push_flag(command, "--cache-reuse", value.to_string());
+        }
+        if let Some(value) = self.defrag_thold {
+            push_flag(command, "--defrag-thold", value.to_string());
+        }
         if let Some(value) = self.gpu_layers {
             push_flag(command, "--n-gpu-layers", value.to_string());
+        }
+        if let Some(value) = self.split_mode.as_deref() {
+            push_flag(command, "--split-mode", value.to_string());
+        }
+        if self.row_split == Some(true) {
+            command.push("--row-split".to_string());
+        }
+        if let Some(value) = self.n_cpu_moe {
+            push_flag(command, "--n-cpu-moe", value.to_string());
+        }
+        if let Some(value) = self.main_gpu {
+            push_flag(command, "--main-gpu", value.to_string());
+        }
+        if let Some(value) = self.tensor_split.as_deref() {
+            push_flag(command, "--tensor-split", value.to_string());
+        }
+        if self.mmap == Some(false) {
+            command.push("--no-mmap".to_string());
+        }
+        if self.mlock == Some(true) {
+            command.push("--mlock".to_string());
+        }
+        if self.kv_offload == Some(false) {
+            command.push("--no-kv-offload".to_string());
         }
         if let Some(value) = self.parallel {
             push_flag(command, "--parallel", value.to_string());
@@ -254,6 +417,15 @@ impl ModelTuning {
         if let Some(value) = self.threads_batch {
             push_flag(command, "--threads-batch", value.to_string());
         }
+        if let Some(value) = self.threads_http {
+            push_flag(command, "--threads-http", value.to_string());
+        }
+        if let Some(value) = self.timeout {
+            push_flag(command, "--timeout", value.to_string());
+        }
+        if self.no_warmup == Some(true) {
+            command.push("--no-warmup".to_string());
+        }
         if let Some(value) = self.flash_attention {
             push_flag(command, "-fa", if value { "on".into() } else { "off".into() });
         }
@@ -263,23 +435,86 @@ impl ModelTuning {
         if let Some(value) = self.cache_type_v.as_deref() {
             push_flag(command, "--cache-type-v", value.to_string());
         }
-        if self.mmap == Some(false) {
-            command.push("--no-mmap".to_string());
+        if let Some(value) = self.rope_scaling.as_deref() {
+            push_flag(command, "--rope-scaling", value.to_string());
         }
-        if self.mlock == Some(true) {
-            command.push("--mlock".to_string());
+        if let Some(value) = self.rope_scale {
+            push_flag(command, "--rope-scale", value.to_string());
         }
-        if self.kv_offload == Some(false) {
-            command.push("--no-kv-offload".to_string());
+        if let Some(value) = self.rope_freq_base {
+            push_flag(command, "--rope-freq-base", value.to_string());
         }
-        if let Some(value) = self.tensor_split.as_deref() {
-            push_flag(command, "--tensor-split", value.to_string());
+        if let Some(value) = self.rope_freq_scale {
+            push_flag(command, "--rope-freq-scale", value.to_string());
         }
-        if let Some(value) = self.main_gpu {
-            push_flag(command, "--main-gpu", value.to_string());
+        if let Some(value) = self.yarn_orig_ctx {
+            push_flag(command, "--yarn-orig-ctx", value.to_string());
+        }
+        if let Some(value) = self.yarn_ext_factor {
+            push_flag(command, "--yarn-ext-factor", value.to_string());
+        }
+        if let Some(value) = self.yarn_attn_factor {
+            push_flag(command, "--yarn-attn-factor", value.to_string());
+        }
+        if let Some(value) = self.yarn_beta_fast {
+            push_flag(command, "--yarn-beta-fast", value.to_string());
+        }
+        if let Some(value) = self.yarn_beta_slow {
+            push_flag(command, "--yarn-beta-slow", value.to_string());
         }
         if let Some(value) = self.seed {
             push_flag(command, "--seed", value.to_string());
+        }
+        if let Some(value) = self.temp {
+            push_flag(command, "--temp", value.to_string());
+        }
+        if let Some(value) = self.top_k {
+            push_flag(command, "--top-k", value.to_string());
+        }
+        if let Some(value) = self.top_p {
+            push_flag(command, "--top-p", value.to_string());
+        }
+        if let Some(value) = self.min_p {
+            push_flag(command, "--min-p", value.to_string());
+        }
+        if let Some(value) = self.typical_p {
+            push_flag(command, "--typical-p", value.to_string());
+        }
+        if let Some(value) = self.repeat_penalty {
+            push_flag(command, "--repeat-penalty", value.to_string());
+        }
+        if let Some(value) = self.presence_penalty {
+            push_flag(command, "--presence-penalty", value.to_string());
+        }
+        if let Some(value) = self.frequency_penalty {
+            push_flag(command, "--frequency-penalty", value.to_string());
+        }
+        if let Some(value) = self.mirostat {
+            push_flag(command, "--mirostat", value.to_string());
+        }
+        if let Some(value) = self.mirostat_lr {
+            push_flag(command, "--mirostat-lr", value.to_string());
+        }
+        if let Some(value) = self.mirostat_ent {
+            push_flag(command, "--mirostat-ent", value.to_string());
+        }
+        if let Some(value) = self.alias.as_deref() {
+            push_flag(command, "--alias", value.to_string());
+        }
+        if self.embeddings == Some(true) {
+            command.push("--embeddings".to_string());
+        }
+        if let Some(value) = self.pooling.as_deref() {
+            push_flag(command, "--pooling", value.to_string());
+        }
+        if let Some(value) = self.reasoning_format.as_deref() {
+            push_flag(command, "--reasoning-format", value.to_string());
+        }
+        if self.slots == Some(true) {
+            command.push("--slots".to_string());
+        }
+        if self.verbose == Some(true) {
+            command.push("--verbose".to_string());
         }
         if self.metrics != Some(false) {
             command.push("--metrics".to_string());
