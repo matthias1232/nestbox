@@ -46,17 +46,27 @@ def psql(sql: str) -> None:
 
 def call(path: str, method: str = "GET", body=None, expect=None):
     data = None if body is None else json.dumps(body).encode()
-    request = urllib.request.Request(
-        BASE + path,
-        data=data,
-        method=method,
-        headers={"authorization": f"Bearer {TOKEN}", "content-type": "application/json"},
-    )
+
+    def attempt():
+        request = urllib.request.Request(
+            BASE + path,
+            data=data,
+            method=method,
+            headers={"authorization": f"Bearer {TOKEN}", "content-type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=900) as answer:
+                return answer.status, answer.read()
+        except urllib.error.HTTPError as error:
+            return error.code, error.read()
+
+    # A deploy of the control plane closes every connection; one retry keeps a
+    # parallel session's restart from looking like a feature failure.
     try:
-        with urllib.request.urlopen(request, timeout=900) as answer:
-            status, payload = answer.status, answer.read()
-    except urllib.error.HTTPError as error:
-        status, payload = error.code, error.read()
+        status, payload = attempt()
+    except (ConnectionResetError, urllib.error.URLError):
+        time.sleep(10)
+        status, payload = attempt()
     if expect is not None and status not in (expect if isinstance(expect, (set, tuple, list)) else {expect}):
         raise AssertionError(f"{method} {path} -> {status}: {payload[:400]!r}")
     try:
@@ -177,8 +187,18 @@ def scenario_alpine() -> dict | None:
 
 def scenario_repository() -> dict | None:
     print("repository")
-    with urllib.request.urlopen("https://download.docker.com/linux/ubuntu/gpg", timeout=60) as answer:
-        key = answer.read().decode()
+    key = ""
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(
+                "https://download.docker.com/linux/ubuntu/gpg", timeout=60
+            ) as answer:
+                key = answer.read().decode()
+            break
+        except OSError:
+            if attempt == 2:
+                raise
+            time.sleep(5)
     check("signing key fetched", key.startswith("-----BEGIN PGP PUBLIC KEY BLOCK-----"), f"{len(key)} bytes")
     recipe = create_recipe(
         "acc-repo-" + secrets.token_hex(3),
