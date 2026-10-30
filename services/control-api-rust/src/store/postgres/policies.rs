@@ -196,6 +196,51 @@ pub async fn version_spec(
     Ok(row.try_get("spec")?)
 }
 
+/// One stored revision, without its document.
+///
+/// The list answers "what changed, when, by whom"; the document itself is read
+/// on demand, because a hundred revisions of a large policy is a lot of JSON the
+/// list does not need.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct VersionRow {
+    pub version: i64,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_by: Option<String>,
+    pub size_bytes: i64,
+}
+
+/// The revision history of one policy, newest first.
+pub async fn list_versions(
+    scope: &mut TenantScope<'_>,
+    policy_id: Uuid,
+) -> Result<Vec<VersionRow>, StoreError> {
+    let rows = sqlx::query(
+        "SELECT v.version, v.created_at, u.email AS created_by,
+                octet_length(v.spec::text)::bigint AS size_bytes
+           FROM policy_versions v
+           JOIN policies p ON p.id = v.policy_id
+           LEFT JOIN users u ON u.id = v.created_by
+          WHERE p.environment_id = $1 AND v.policy_id = $2
+          ORDER BY v.version DESC
+          LIMIT 200",
+    )
+    .bind(scope.environment_id())
+    .bind(policy_id)
+    .fetch_all(scope.connection())
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(VersionRow {
+            version: row.try_get("version")?,
+            created_at: row.try_get("created_at")?,
+            created_by: row.try_get("created_by")?,
+            size_bytes: row.try_get("size_bytes")?,
+        });
+    }
+    Ok(out)
+}
+
 /// Delete a policy.
 pub async fn delete(scope: &mut TenantScope<'_>, id: Uuid) -> Result<(), StoreError> {
     let affected = sqlx::query("DELETE FROM policies WHERE environment_id = $1 AND id = $2")

@@ -31,6 +31,10 @@ export default function PoliciesPage() {
   const [rules, setRules] = createSignal([]);
   const [drafts, setDrafts] = createSignal([]);
   const [selected, setSelected] = createSignal(null);
+  const [search, setSearch] = createSignal('');
+  const [kindFilter, setKindFilter] = createSignal('');
+  const [revisions, setRevisions] = createSignal([]);
+  const [revisionError, setRevisionError] = createSignal(null);
   const [editor, setEditor] = createSignal('');
   const [error, setError] = createSignal(null);
   const [outcome, setOutcome] = createSignal(null);
@@ -74,7 +78,31 @@ export default function PoliciesPage() {
     setSpec(policy.spec);
     setEditor(JSON.stringify(policy.spec, null, 2));
     setOutcome(null);
+    loadVersions(policy.id);
   }
+
+  /** The revision history is read per policy, on selection. */
+  async function loadVersions(id) {
+    setRevisions([]);
+    setRevisionError(null);
+    try {
+      const answer = await api.versions(id);
+      setRevisions(answer.items || []);
+    } catch (failure) {
+      setRevisionError(failure.message);
+    }
+  }
+
+  /** The visible policies: search over name, filter by the kind the server derived. */
+  const shownPolicies = () => {
+    const needle = search().trim().toLowerCase();
+    const kind = kindFilter();
+    return policies().filter((policy) => {
+      if (kind && policy.kind !== kind) return false;
+      if (!needle) return true;
+      return `${policy.name} ${policy.scope} ${policy.kind || ''}`.toLowerCase().includes(needle);
+    });
+  };
 
   // Start a new policy from a blank document or from a preset.
   function startCreate() {
@@ -216,18 +244,43 @@ export default function PoliciesPage() {
       <Tabs tabs={TABS} active={tab()} onChange={setTab} />
 
       <Show when={tab() === 'policies'}>
+        <div class="facets">
+          <For each={[{ id: '', label: 'All policies' }, { id: 'openshell', label: 'OpenShell' }, { id: 'network', label: 'Network' }]}>
+            {(item) => (
+              <button
+                class={kindFilter() === item.id ? 'chip active' : 'chip'}
+                onClick={() => setKindFilter(item.id)}
+              >
+                {item.label}
+              </button>
+            )}
+          </For>
+          <input
+            class="search"
+            placeholder="Search a policy by name"
+            value={search()}
+            onInput={(event) => setSearch(event.currentTarget.value)}
+          />
+        </div>
         <div class="split">
           <div class="table-scroll">
             <table>
-              <thead><tr><th>Name</th><th>Scope</th><th class="narrow">Version</th><th>Updated</th></tr></thead>
+              <thead><tr><th>Name</th><th>Scope</th><th class="narrow">Kind</th><th class="narrow">Version</th><th>Updated</th></tr></thead>
               <tbody>
-                <For each={policies()}>
+                <For each={shownPolicies()}>
                   {(policy) => (
                     <tr class={selected()?.id === policy.id ? 'selected' : ''}
                         onClick={() => open(policy)}>
                       <td>{policy.name}</td>
                       <td><StatusBadge status={policy.scope === 'global' ? 'degraded' : 'running'}
                                        label={policy.scope} /></td>
+                      <td class="narrow">
+                        <StatusBadge
+                          status={policy.kind === 'openshell' ? 'degraded' : 'running'}
+                          label={policy.kind === 'openshell' ? 'OpenShell' : 'Network'}
+                          title={(policy.sections || []).join(', ') || 'no section'}
+                        />
+                      </td>
                       <td class="narrow mono">{policy.version}</td>
                       <td class="mono small">{policy.updated_at}</td>
                     </tr>
@@ -303,6 +356,41 @@ export default function PoliciesPage() {
                   {' '}Sections: {outcome().sections.join(', ') || 'none'}.
                 </p>
               </Show>
+
+              <details class="revisions">
+                <summary>History ({revisions().length})</summary>
+                <p class="muted small">
+                  Every save writes a revision before it applies, so this is what the policy
+                  was, not a reconstruction of it.
+                </p>
+                <Show when={revisionError()}>
+                  <p class="error">{revisionError()}</p>
+                </Show>
+                <Show
+                  when={revisions().length > 0}
+                  fallback={<p class="muted small">No earlier revision yet.</p>}
+                >
+                  <div class="table-scroll">
+                    <table class="dense">
+                      <thead>
+                        <tr><th class="narrow">Version</th><th>Saved</th><th>By</th><th class="narrow">Size</th></tr>
+                      </thead>
+                      <tbody>
+                        <For each={revisions()}>
+                          {(row) => (
+                            <tr>
+                              <td class="narrow mono">v{row.version}</td>
+                              <td class="mono small">{new Date(row.created_at).toLocaleString()}</td>
+                              <td class="small">{row.created_by || 'unknown'}</td>
+                              <td class="narrow mono small">{row.size_bytes} B</td>
+                            </tr>
+                          )}
+                        </For>
+                      </tbody>
+                    </table>
+                  </div>
+                </Show>
+              </details>
             </div>
           </Show>
           <Show when={!selected() && !creating()}>

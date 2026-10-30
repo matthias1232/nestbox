@@ -54,6 +54,11 @@ export function decideDraft(id, approve, reason) {
   return request(`rule-drafts/${id}/${action}`, { method: 'POST', body: { reason } });
 }
 
+// The revision history, newest first: what changed, when, and by whom.
+export function versions(policyId) {
+  return request(`policies/${policyId}/versions`);
+}
+
 // The windows in force: mode, channel and expiry, for the master switches.
 export function windows() {
   return request('traffic-windows');

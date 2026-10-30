@@ -36,7 +36,7 @@ The architecture test enforces the last two.
 | `system.rs` | Health, readiness, runtime, OpenAPI, environments, audit |
 | `sandboxes.rs` | Sandbox list, detail, create, actions, logs, exec, stack membership (`PUT /sandboxes/{id}/stack`) |
 | `sandboxes_settings.rs` | A sandbox's supervisor settings: read the thresholds, write them back |
-| `policies.rs` | Policies, rules, drafts, traffic windows, and the node-token egress check (`feat/policy-decider`) |
+| `policies.rs` | Policies (with the kind derived from their sections), the revision history, rules, drafts, traffic windows, and the node-token egress check (`feat/policy-decider`) |
 | `telemetry.rs` | History, facets, ingest, and the node-token batch from an egress proxy |
 | `events.rs` | SSE streams |
 | `cluster.rs` | Gateways, supervisors |

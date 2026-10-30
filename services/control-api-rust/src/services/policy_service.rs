@@ -69,6 +69,31 @@ pub async fn get(
     Ok(policy)
 }
 
+/// The revision history of one policy, newest first.
+///
+/// The rows are written by `store::insert` and `store::update` inside the same
+/// transaction as the change, so a version cannot exist without its policy and a
+/// policy change cannot exist without its version. This read is what makes the
+/// history visible instead of merely stored.
+pub async fn versions(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    policy_id: Uuid,
+) -> Result<Vec<store::VersionRow>, ApiError> {
+    require(principal, Permission::PolicyRead)?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
+        .await
+        .map_err(ApiError::from)?;
+    // Reading the policy first turns "not found" and "no revisions" into two
+    // different answers.
+    store::get(&mut scope, policy_id).await.map_err(ApiError::from)?;
+    let rows = store::list_versions(&mut scope, policy_id)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(rows)
+}
+
 /// The active global override, if any.
 pub async fn global(
     ctx: &ServiceContext,

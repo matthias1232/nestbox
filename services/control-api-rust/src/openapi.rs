@@ -104,6 +104,7 @@ pub const OPERATIONS: &[Operation] = &[
     op("PUT", "/api/v1/policies/{id}", "Replace a policy document", "policies", "operator", true, StreamKind::None),
     op("DELETE", "/api/v1/policies/{id}", "Delete a policy", "policies", "operator", true, StreamKind::None),
     op("GET", "/api/v1/policies/{id}/diff", "Diff against an earlier revision", "policies", "viewer", false, StreamKind::None),
+    op("GET", "/api/v1/policies/{id}/versions", "The revision history of a policy, newest first", "policies", "viewer", false, StreamKind::None),
     op("POST", "/api/v1/policies/{id}/clone", "Copy a policy under a new name", "policies", "operator", true, StreamKind::None),
     op("POST", "/api/v1/policies/{id}/assign", "Assign a policy to several sandboxes", "policies", "operator", true, StreamKind::None),
     op("POST", "/api/v1/network-rules/copy", "Copy rules to other sandboxes or to all of them", "policies", "operator", true, StreamKind::None),
