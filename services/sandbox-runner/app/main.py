@@ -7,7 +7,6 @@ OpenShell SDK adapter without changing the public control-plane contract.
 from __future__ import annotations
 
 import logging
-import math
 import os
 import re
 from datetime import UTC, datetime
@@ -28,6 +27,7 @@ from app import telemetry_shipper
 from app import host as host_load
 from app import backups as root_backups
 from app import catalogue as package_catalogue
+from app.model_metrics import parse_prometheus
 from app import openshell_backend as osh
 from app.images import image_allowed
 from app.workload import get_container, list_workloads, openshell_name, sandbox_name
@@ -1031,71 +1031,6 @@ def inspect_model(key: str) -> dict[str, Any]:
         "exit_code": state.get("ExitCode"),
         "error": state.get("Error", ""),
     }
-
-
-def parse_prometheus(text: str) -> dict[str, float]:
-    """Turn a Prometheus exposition body into `{series: value}`.
-
-    Only the latest sample of each series is kept. Histogram buckets are kept
-    with their `le` label, because they are what a latency graph needs; comment
-    and metadata lines are ignored.
-    """
-    metrics: dict[str, float] = {}
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        name, _, value = line.rpartition(" ")
-        try:
-            number = float(value)
-        except ValueError:
-            continue
-        if math.isnan(number) or math.isinf(number):
-            continue
-        metrics[name] = number
-    return metrics
-
-
-@app.get("/v1/models/{key}/metrics")
-def model_metrics(key: str) -> dict[str, Any]:
-    """Read the served model's own metrics.
-
-    llama.cpp exposes them on the port the container listens on when it was
-    started with `--metrics`. The runner is on the same network, so it asks the
-    container directly; a model that is not running, or that was started
-    without metrics, is a 503 with the reason instead of an empty graph.
-    """
-    import urllib.error
-    import urllib.request
-
-    key = model_key(key)
-    name = model_container(key)
-    port = MODEL_PORTS.get(key)
-    if port is None:
-        try:
-            item = client.containers.get(name)
-            item.reload()
-        except NotFound:
-            raise HTTPException(404, f"no model server {name}") from None
-        # The port is the first exposed one; serve_model always publishes one.
-        exposed = item.attrs.get("Config", {}).get("ExposedPorts") or {}
-        for spec in exposed:
-            candidate = spec.split("/")[0]
-            if candidate.isdigit():
-                port = int(candidate)
-                break
-    if port is None:
-        raise HTTPException(503, f"{name} does not report a port to read metrics from")
-    url = f"http://{name}:{port}/metrics"
-    try:
-        with urllib.request.urlopen(url, timeout=5) as response:  # noqa: S310
-            body = response.read().decode("utf-8", "replace")
-    except (urllib.error.URLError, OSError) as exc:
-        raise HTTPException(
-            503,
-            f"the model server did not answer {url}: {exc}. Start it with --metrics.",
-        ) from exc
-    return {"model_key": key, "container": name, "metrics": parse_prometheus(body)}
 
 
 @app.delete("/v1/models/serve/{key}")

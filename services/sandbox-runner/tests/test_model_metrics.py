@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from app.main import parse_prometheus
+from app.model_metrics import parse_prometheus
 
 
 class ParsePrometheusTests(unittest.TestCase):
