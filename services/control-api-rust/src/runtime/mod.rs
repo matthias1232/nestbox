@@ -72,6 +72,18 @@ pub trait RuntimeAdapter: Send + Sync {
         timeout_seconds: u32,
     ) -> Result<ExecResult, RuntimeError>;
 
+    /// The last log lines of a served model's container.
+    ///
+    /// Separate from `logs`, which reads a sandbox: a model server is not a
+    /// sandbox, and asking the sandbox route for `model-<key>` answers "not
+    /// found" even while the model runs.
+    async fn model_logs(&self, model_key: &str, tail: u32) -> Result<String, RuntimeError> {
+        let _ = (model_key, tail);
+        Err(RuntimeError::Unavailable(
+            "this runtime cannot read model logs".to_string(),
+        ))
+    }
+
     /// The served model's own metrics, as the runner read them.
     ///
     /// llama.cpp exposes token counts and KV-cache use when the server runs

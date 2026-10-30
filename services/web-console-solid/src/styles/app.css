@@ -392,3 +392,41 @@ svg.spark {
   border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
   border-radius: 6px;
 }
+
+/* Tuning form: one labelled control per runtime flag, with its own help. */
+.tuning-group { margin: var(--space-3) 0; }
+.tuning-group > summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+}
+.runtime-field { position: relative; }
+.runtime-label { display: inline-flex; align-items: center; gap: 6px; }
+.help-dot, .reset-dot {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  line-height: 1;
+  border-radius: 50%;
+  font-size: 11px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.18));
+  background: transparent;
+  color: var(--fg-muted, inherit);
+  cursor: pointer;
+}
+.help-dot:hover, .reset-dot:hover { border-color: var(--accent, #d97706); color: var(--accent, #d97706); }
+.reset-dot { border-radius: 4px; }
+.runtime-control { display: grid; gap: 4px; }
+.runtime-control input[type="range"] { width: 100%; }
+.field-help {
+  margin-top: 6px;
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  border-left: 2px solid var(--accent, #d97706);
+  background: var(--bg-sunken, rgba(0, 0, 0, 0.18));
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.field-help p { margin: 0 0 4px; }
+.field-help p:last-child { margin-bottom: 0; }

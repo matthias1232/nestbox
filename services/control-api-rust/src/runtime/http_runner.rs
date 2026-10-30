@@ -350,6 +350,22 @@ impl RuntimeAdapter for HttpRunner {
             .await
     }
 
+    async fn model_logs(&self, model_key: &str, tail: u32) -> Result<String, RuntimeError> {
+        #[derive(Deserialize)]
+        struct LogResponse {
+            #[serde(default)]
+            logs: String,
+        }
+        let response: LogResponse = self
+            .send(
+                reqwest::Method::GET,
+                &format!("/v1/models/{model_key}/logs?tail={tail}"),
+                None,
+            )
+            .await?;
+        Ok(response.logs)
+    }
+
     async fn model_metrics(
         &self,
         model_key: &str,

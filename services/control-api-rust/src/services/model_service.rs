@@ -1230,7 +1230,7 @@ pub async fn logs(
     scope.commit().await.map_err(ApiError::from)?;
 
     let container = model_container_name(key);
-    let text = ctx.runtime.logs(&container, tail).await.map_err(|error| {
+    let text = ctx.runtime.model_logs(key, tail).await.map_err(|error| {
         ApiError::new(
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
             ErrorCode::NODE_RUNTIME_UNAVAILABLE,

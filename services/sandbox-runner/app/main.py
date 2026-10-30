@@ -1033,6 +1033,70 @@ def inspect_model(key: str) -> dict[str, Any]:
     }
 
 
+@app.get("/v1/models/{key}/logs")
+def model_logs(key: str, tail: int = 200) -> dict[str, Any]:
+    """The last lines of a served model's container.
+
+    A model server is not a sandbox, so this is its own endpoint: asking the
+    sandbox route for `model-<key>` answers "sandbox not found", which reads
+    like a missing model even when it is running.
+    """
+    key = model_key(key)
+    name = model_container(key)
+    try:
+        item = client.containers.get(name)
+    except NotFound:
+        raise HTTPException(404, f"no model server {name}") from None
+    tail = max(1, min(int(tail), 2000))
+    try:
+        body = item.logs(tail=tail)
+    except DockerException as exc:
+        raise HTTPException(400, f"the logs of {name} could not be read: {exc}") from exc
+    text = body.decode("utf-8", "replace") if isinstance(body, bytes) else str(body)
+    return {"name": name, "tail": tail, "logs": text}
+
+
+@app.get("/v1/models/{key}/metrics")
+def model_metrics(key: str) -> dict[str, Any]:
+    """Read the served model's own metrics.
+
+    llama.cpp exposes them on the port the container listens on when it was
+    started with `--metrics`. The runner is on the same network, so it asks the
+    container directly; a model that is not running, or that was started
+    without metrics, is a 503 with the reason instead of an empty graph.
+    """
+    import urllib.error
+    import urllib.request
+
+    key = model_key(key)
+    name = model_container(key)
+    port = MODEL_PORTS.get(key)
+    if port is None:
+        try:
+            item = client.containers.get(name)
+            item.reload()
+        except NotFound:
+            raise HTTPException(404, f"no model server {name}") from None
+        exposed = item.attrs.get("Config", {}).get("ExposedPorts") or {}
+        for spec in exposed:
+            candidate = spec.split("/")[0]
+            if candidate.isdigit():
+                port = int(candidate)
+                break
+    if port is None:
+        raise HTTPException(503, f"{name} does not report a port to read metrics from")
+    url = f"http://{name}:{port}/metrics"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:  # noqa: S310
+            body = response.read().decode("utf-8", "replace")
+    except (urllib.error.URLError, OSError) as exc:
+        raise HTTPException(
+            503,
+            f"the model server did not answer {url}: {exc}. Start it with --metrics.",
+        ) from exc
+    return {"model_key": key, "container": name, "metrics": parse_prometheus(body)}
+
+
 @app.delete("/v1/models/serve/{key}")
 def stop_model(key: str) -> dict[str, Any]:
     key = model_key(key)
