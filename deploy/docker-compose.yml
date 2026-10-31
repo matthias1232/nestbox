@@ -50,6 +50,10 @@ services:
         # sandbox it is not attached to: the bridge token is the only one the
         # control API accepts for that route.
         [ -s /secrets/accounting_token ] || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > /secrets/accounting_token
+        # Readable by the API's unprivileged user: init-data runs as root and the
+        # chown above already ran, so a 0600 file here would be unreadable and the
+        # ingest would answer 503 with no visible reason.
+        chmod 0644 /secrets/accounting_token
         mkdir -p /data/accounting-secrets
         cp /secrets/accounting_token /data/accounting-secrets/token
         chmod 0755 /data/accounting-secrets
