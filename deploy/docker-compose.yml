@@ -272,7 +272,7 @@ services:
     image: restic/rest-server:0.13.0
     restart: unless-stopped
     network_mode: host
-    command: ["--path", "/data", "--listen", "${NESTBOX_OVERLAY_HUB_IP:-10.77.0.1}:8500", "--append-only", "--no-auth"]
+    command: ["rest-server", "--path", "/data", "--listen", "${NESTBOX_OVERLAY_HUB_IP:-10.77.0.1}:8500", "--append-only", "--no-auth"]
     volumes:
       - ./data/restic:/data
 
