@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import os
 import time
 import urllib.error
@@ -76,6 +77,9 @@ def split_host(authority: str | None) -> tuple[str | None, int | None]:
     return (host or text), _int(port)
 
 
+TIMESTAMP_INSIDE = re.compile(r"(?<=[A-Za-z0-9+/=])\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?")
+
+
 def record_from_line(line: str) -> dict[str, Any] | None:
     """One access-log line as the control API's traffic entry, or `None`.
 
@@ -85,8 +89,13 @@ def record_from_line(line: str) -> dict[str, Any] | None:
     start = line.find("{")
     if start < 0:
         return None
+    # Docker cuts a long line into 16 KiB pieces and puts a timestamp in front of
+    # each piece, so a recorded body arrives with timestamps inside its base64.
+    # Neither base64 nor JSON ever contains this shape, so removing it restores
+    # the line exactly as the proxy wrote it.
+    body = TIMESTAMP_INSIDE.sub("", line[start:])
     try:
-        raw = json.loads(line[start:])
+        raw = json.loads(body)
     except ValueError:
         return None
     if not isinstance(raw, dict) or "target_host" not in raw and "host" not in raw:

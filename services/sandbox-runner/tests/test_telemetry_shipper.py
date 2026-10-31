@@ -31,6 +31,14 @@ def line(**fields) -> str:
 
 
 class RecordTest(unittest.TestCase):
+    def test_a_body_cut_by_docker_is_joined_again(self) -> None:
+        # Docker splits a long line into pieces and stamps each piece.
+        cut = line(request_body="QUJD@@")
+        cut = cut.replace("@@", "2026-10-29T01:14:23.999Z REVG")
+        record = ship.record_from_line(cut)
+        self.assertEqual(record["request_body"], "QUJDREVG")
+        self.assertEqual(record["ts"], "2026-10-29T01:14:23.240Z")
+
     def test_maps_the_fields_the_control_api_reads(self) -> None:
         record = ship.record_from_line(line())
         self.assertEqual(record["sandbox_id"], SANDBOX)
