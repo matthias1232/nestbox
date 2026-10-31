@@ -24,6 +24,8 @@ COPY control-api-rust/migrations ./migrations
 COPY control-api-rust/src ./src
 # Same relative path the compiler resolves from `src/services/`.
 COPY tool-images/supervisor/supervisor.py /app/tool-images/supervisor/supervisor.py
+COPY tool-images/desktop/install.sh /app/tool-images/desktop/install.sh
+COPY tool-images/desktop/nestbox-desktop /app/tool-images/desktop/nestbox-desktop
 # Touch main.rs so cargo rebuilds the crate after the dependency cache pass.
 RUN touch src/main.rs && cargo build --release --locked
 
