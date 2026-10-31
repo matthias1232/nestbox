@@ -7,6 +7,7 @@
 // instead of staying empty without a reason.
 import { For, Show, createSignal } from 'solid-js';
 import * as deck from '../../api/deck.js';
+import * as policies from '../../api/policies.js';
 import { usePolling } from '../../components/Poll.js';
 import { isModelCall, readRequest, readResponse } from './chats.js';
 
@@ -17,6 +18,26 @@ export default function ChatsTab(props) {
   const [error, setError] = createSignal(null);
   const [seenTunnel, setSeenTunnel] = createSignal(false);
   const [open, setOpen] = createSignal({});
+  const [mode, setMode] = createSignal(null);
+  const [switching, setSwitching] = createSignal(false);
+  const inspects = () => ['transparent', 'hybrid'].includes(mode());
+  policies.egressMode(props.sandbox.id).then((answer) => setMode(answer.mode)).catch(() => setMode(null));
+
+  // The mode is fixed when the container is created, so changing it recreates
+  // the sandbox. Persistent roots (the agent's login and history) survive; a
+  // running program does not.
+  async function inspect() {
+    if (!window.confirm('Switch this sandbox to "transparent"? It is recreated: running programs end, persistent folders (including the agent login) are kept. Afterwards the proxy can read model calls.')) return;
+    setSwitching(true);
+    try {
+      await policies.setEgressMode(props.sandbox.id, 'transparent');
+      setMode('transparent');
+    } catch (failure) {
+      setError(failure.message);
+    } finally {
+      setSwitching(false);
+    }
+  }
   const cache = new Map();
 
   async function refresh() {
@@ -50,6 +71,16 @@ export default function ChatsTab(props) {
         <span class="muted small">{turns().length} model calls in the last 24 h, newest first</span>
       </div>
       <Show when={error()}><p class="error">{error()}</p></Show>
+      <Show when={mode() && !inspects()}>
+        <p class="notice">
+          This sandbox runs in <b>{mode()}</b> mode: the proxy only sees an encrypted tunnel to the model host, so a
+          conversation (also one from a signed-in account) cannot be read here. In <b>transparent</b> or
+          <b> hybrid</b> mode the proxy opens the connection with its own certificate and records it.
+          {' '}<button class="tiny primary" disabled={switching()} onClick={inspect}>
+            {switching() ? 'Switching…' : 'Switch to transparent'}
+          </button>
+        </p>
+      </Show>
       <Show when={!turns().length}>
         <p class="muted">
           No model call has been recorded for this sandbox.
