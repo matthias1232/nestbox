@@ -124,6 +124,8 @@ static_resources:
                           mcp_tool: "%DYNAMIC_METADATA(nestbox:mcp_tool)%"
                           mcp_is_error: "%DYNAMIC_METADATA(nestbox:mcp_is_error)%"
                           mcp_result_kind: "%DYNAMIC_METADATA(nestbox:mcp_result_kind)%"
+                          request_body: "%DYNAMIC_METADATA(nestbox:request_body)%"
+                          response_body: "%DYNAMIC_METADATA(nestbox:response_body)%"
                           # The decision the control API made, copied out of the
                           # ext_authz response headers into filter metadata (see
                           # `dynamic_metadata_from_headers` below). Empty until
@@ -365,6 +367,8 @@ static_resources:
                           mcp_tool: "%DYNAMIC_METADATA(nestbox:mcp_tool)%"
                           mcp_is_error: "%DYNAMIC_METADATA(nestbox:mcp_is_error)%"
                           mcp_result_kind: "%DYNAMIC_METADATA(nestbox:mcp_result_kind)%"
+                          request_body: "%DYNAMIC_METADATA(nestbox:request_body)%"
+                          response_body: "%DYNAMIC_METADATA(nestbox:response_body)%"
                           decision: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-decision)%"
                           reason: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-reason)%"
                           rule_id: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-rule-id)%"

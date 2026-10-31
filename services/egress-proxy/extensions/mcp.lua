@@ -54,6 +54,21 @@ local function set(handle, name, value)
   handle:streamInfo():dynamicMetadata():set("nestbox", name, value)
 end
 
+-- How much of a body is recorded. The control API keeps the same 64 KiB and
+-- marks a longer body as truncated, so the proxy never ships more than that.
+local BODY_LIMIT = 65536
+
+-- Record a body for the access log as base64 under `name`.
+local function record_body(handle, name, bytes)
+  if bytes == nil or bytes == "" then
+    return
+  end
+  if #bytes > BODY_LIMIT then
+    bytes = string.sub(bytes, 1, BODY_LIMIT)
+  end
+  set(handle, name, handle:base64Escape(bytes))
+end
+
 local function json(headers)
   local content_type = headers:get("content-type")
   if not content_type then
@@ -211,6 +226,16 @@ function envoy_on_request(handle)
 
   set(handle, "mcp_session_id", headers:get("mcp-session-id"))
 
+  if headers:get(":method") ~= "CONNECT" then
+    -- Ask the server for an uncompressed answer so the recorded response is
+    -- readable. A compressed body in the log would be noise.
+    headers:remove("accept-encoding")
+    local seen, buffered = pcall(function() return handle:body() end)
+    if seen and buffered ~= nil and buffered:length() > 0 then
+      record_body(handle, "request_body", buffered:getBytes(0, buffered:length()))
+    end
+  end
+
   if not json(headers) then
     return
   end
@@ -243,6 +268,18 @@ function envoy_on_response(handle)
 
   local content_type = headers:get("content-type")
   if not content_type or string.find(lower(content_type), "application/json", 1, true) == nil then
+    -- Streamed answers (server-sent events, chunked chat replies) are read
+    -- chunk by chunk and passed on untouched, so recording does not delay the
+    -- first token. Only the first BODY_LIMIT bytes are kept.
+    local kept, size = {}, 0
+    for chunk in handle:bodyChunks() do
+      local n = chunk:length()
+      if size < BODY_LIMIT and n > 0 then
+        kept[#kept + 1] = chunk:getBytes(0, math.min(n, BODY_LIMIT - size))
+        size = size + math.min(n, BODY_LIMIT - size)
+      end
+    end
+    record_body(handle, "response_body", table.concat(kept))
     return
   end
 
@@ -254,6 +291,7 @@ function envoy_on_response(handle)
   if text == nil or text == "" then
     return
   end
+  record_body(handle, "response_body", text)
   if string.find(text, '"isError"%s*:%s*true') then
     set(handle, "mcp_is_error", "true")
     set(handle, "mcp_result_kind", "tool_error")

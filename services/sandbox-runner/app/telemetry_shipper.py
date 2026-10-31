@@ -117,6 +117,8 @@ def record_from_line(line: str) -> dict[str, Any] | None:
         "sni": _text(raw.get("sni")),
         "app_protocol": _text(raw.get("app_protocol")),
         "user_agent": _text(raw.get("user_agent")),
+        "request_body": _text(raw.get("request_body")),
+        "response_body": _text(raw.get("response_body")),
         "request_id": _text(raw.get("request_id")),
         "decision": _text(raw.get("decision")),
         "reason": _text(raw.get("reason")),
