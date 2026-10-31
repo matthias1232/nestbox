@@ -1012,6 +1012,7 @@ pub async fn instantiate(
         mounts: runtime_mounts,
         gpu_count: recipe.resources.gpu_count,
         egress_mode: "forward_proxy".to_string(),
+        node_id: None,
     };
 
     match ctx.runtime.create(runtime_spec).await {

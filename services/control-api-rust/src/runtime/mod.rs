@@ -466,6 +466,7 @@ impl TerminalSocket for RunnerTerminal {
 
 pub mod fake;
 pub mod http_runner;
+pub mod router;
 
 #[cfg(test)]
 mod tests {

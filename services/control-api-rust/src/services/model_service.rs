@@ -319,6 +319,21 @@ pub async fn probe_node(
     probe_and_store(ctx, principal.environment_id, node).await
 }
 
+/// Measure a node on the control plane's own initiative, for the loop that watches joined
+/// nodes. No caller to authorise: it only asks the node's own runner what it has.
+pub async fn measure_node(
+    ctx: &ServiceContext,
+    environment_id: Uuid,
+    node_id: Uuid,
+) -> Result<(), ApiError> {
+    let mut scope = TenantScope::begin(&ctx.pool, environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let node = nodes::get(&mut scope, node_id).await.map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    probe_and_store(ctx, environment_id, node).await.map(|_| ())
+}
+
 /// One install as `GET /models/installs` returns it.
 #[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
 pub struct InstallView {
@@ -2030,7 +2045,7 @@ async fn probe_hardware(
     environment_id: Uuid,
     node: &Node,
 ) -> Result<Measurement, RuntimeError> {
-    let report = ctx.runtime.hardware().await?;
+    let report = ctx.runtime_for(node.id).hardware().await?;
     Ok(Measurement {
         profile: profile_from_report(environment_id, node.id, &report),
         container_gpu: report.container_gpu,

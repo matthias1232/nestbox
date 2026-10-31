@@ -92,6 +92,13 @@ fn config(mode: DeployMode) -> Config {
             client_id: "client".into(),
             client_secret: "secret".into(),
         }],
+        overlay: nestbox_control_api::config::OverlayConfig {
+            dir: Default::default(),
+            endpoint: String::new(),
+            hub_ip: "10.77.0.1".into(),
+            registry: "10.77.0.1:5000".into(),
+            control_url: "http://10.77.0.1:8080".into(),
+        },
     }
 }
 
@@ -285,6 +292,9 @@ async fn sign_in_by_identity_provider_registers_invites_and_refuses_strangers() 
     // An invitation to one sandbox: the person becomes a member and sees exactly that sandbox.
     let env = reach[0].0;
     let owner_principal = principal(user_id, env, Role::Admin);
+    // A new workspace has no node (it brings its own); give it one so it can hold a sandbox.
+    sqlx::query("INSERT INTO nodes (name, display_name, environment_id, kind, runner_url) VALUES ('signup-node', 'signup-node', $1, 'vm', 'http://10.77.0.9:9000')")
+        .bind(env).execute(&owner).await.expect("node");
     let kept = sandbox_service::create(&ctx, &owner_principal, request("kept")).await.expect("kept");
     sandbox_service::create(&ctx, &owner_principal, request("private")).await.expect("private");
     let invitation = tenancy_service::invite(&ctx, &owner_principal, "admin", Some(kept.id), Some("guest@example.test"), 7).await.expect("invite");
@@ -348,4 +358,88 @@ async fn nodes_belong_to_a_tenant_and_a_sandbox_name_is_unique_on_the_installati
     // Neither sees the other's sandboxes.
     assert_eq!(names(&ctx, &acme_admin).await, vec!["shared-name"]);
     assert_eq!(names(&ctx, &globex_admin).await, vec!["other-name"]);
+}
+
+#[tokio::test]
+async fn a_machine_joins_with_a_one_time_token_and_gets_an_address_and_a_place_on_the_hub() {
+    use nestbox_control_api::services::node_join_service;
+    let Some(owner) = connect().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+    let pool = app_pool().await;
+    let dir = tempfile::tempdir().expect("temp dir");
+    std::fs::write(dir.path().join("vault_key"), "ab".repeat(32)).expect("vault key");
+    std::fs::write(dir.path().join("hub.pub"), "HUBKEYHUBKEYHUBKEYHUBKEYHUBKEYHUBKEYHUBKEY1=\n").expect("hub key");
+    let ctx = ServiceContext::new(
+        pool.clone(),
+        Arc::new(FakeRuntime::new()),
+        Arc::new(LocalBus::new()),
+        dir.path().to_path_buf(),
+    );
+    let mut cfg = config(DeployMode::SelfHosted);
+    cfg.overlay.dir = dir.path().to_path_buf();
+    cfg.overlay.endpoint = "203.0.113.7:51821".into();
+
+    let env = uuid(ENVIRONMENT);
+    let admin_id = admin_user(&owner, "00000000-0000-0000-0000-000000000001", "root@example.test").await;
+    sqlx::query("INSERT INTO user_scopes (user_id, environment_id, role) VALUES ($1, $2, 'admin')")
+        .bind(admin_id).bind(env).execute(&owner).await.expect("scope");
+    let admin = principal(admin_id, env, Role::Admin);
+    let site = tenancy_service::list_sites(&ctx, &admin).await.expect("sites")[0].id;
+
+    // Only an administrator asks, and the name is checked.
+    let member = principal(admin_id, env, Role::Member);
+    assert!(node_join_service::create_token(&ctx, &cfg, &member, "gpu-1", site).await.is_err());
+    assert!(node_join_service::create_token(&ctx, &cfg, &admin, "Not A Name", site).await.is_err());
+    let made = node_join_service::create_token(&ctx, &cfg, &admin, "gpu-1", site).await.expect("token");
+    assert!(made.command.contains(&made.token) && made.command.contains("| sudo bash"));
+
+    let script = node_join_service::script(&ctx, &cfg, &made.token).await.expect("script");
+    assert!(script.contains(&made.token) && !script.contains("__TOKEN__") && !script.contains("__COMPOSE__"));
+    assert!(node_join_service::script(&ctx, &cfg, "wrong").await.is_err());
+
+    let key = "8GVx1N0wZ2tJ5p3m8cEoQ0Yg3ZtWk1bq6sT9eXr+pQk=";
+    assert!(node_join_service::join(&ctx, &cfg, &made.token, "not-a-key", "h").await.is_err());
+    let joined = node_join_service::join(&ctx, &cfg, &made.token, key, "gpu-box").await.expect("join");
+    assert_eq!(joined.node_name, "gpu-1");
+    assert!(joined.overlay_ip.starts_with("10.77.1."), "the first site network is 10.77.1.0/24: {}", joined.overlay_ip);
+    assert_eq!(joined.hub_endpoint, "203.0.113.7:51821");
+
+    // The token is spent.
+    assert!(node_join_service::join(&ctx, &cfg, &made.token, key, "again").await.is_err());
+    assert!(node_join_service::script(&ctx, &cfg, &made.token).await.is_err());
+
+    // The node row, its place in the site, and what the control plane keeps of the token.
+    let (url, site_id, locator, runner_ref): (String, Uuid, String, String) = sqlx::query_as(
+        "SELECT runner_url, site_id, node_token_ref, runner_token_ref FROM nodes WHERE name = 'gpu-1'",
+    )
+    .fetch_one(&owner).await.expect("node");
+    assert_eq!(url, format!("http://{}:9000", joined.overlay_ip));
+    assert_eq!(site_id, site);
+    assert!(locator.starts_with("digest://") && !locator.contains(&joined.node_token), "only a hash of the token is kept as a locator");
+    assert_eq!(runner_ref, "db://node-gpu-1");
+    assert!(nestbox_control_api::security::node_token::verify(&locator, dir.path(), &joined.node_token).is_ok());
+    assert!(nestbox_control_api::security::node_token::verify(&locator, dir.path(), "another-token").is_err());
+
+    // The vault returns the clear token for the runner, and the hub is told about the key.
+    use nestbox_control_api::services::secret_service;
+    assert_eq!(secret_service::credential(&ctx, env, &runner_ref).await.expect("vault"), joined.node_token);
+    let peers = std::fs::read_to_string(dir.path().join("peers.conf")).expect("peers");
+    assert!(peers.contains(key) && peers.contains(&format!("{}/32", joined.overlay_ip)));
+
+    // A second node in the same site gets the next address; a name taken is refused.
+    assert!(node_join_service::create_token(&ctx, &cfg, &admin, "gpu-1", site).await.is_err());
+    let second = node_join_service::create_token(&ctx, &cfg, &admin, "gpu-2", site).await.expect("second token");
+    let other = node_join_service::join(&ctx, &cfg, &second.token, "Zk1bq6sT9eXr+pQk8GVx1N0wZ2tJ5p3m8cEoQ0Yg3Zt=", "b").await.expect("second");
+    assert_eq!(other.overlay_ip, joined.overlay_ip.replace(".2", ".3"));
+
+    // The node belongs to this data center only, and can be removed while empty.
+    let customer = tenancy_service::create_customer(&ctx, &admin, "Other Co").await.expect("customer");
+    let other_env = customer.environments[0].id;
+    let other_admin = principal(admin_user(&owner, &customer.id.to_string(), "x@other.test").await, other_env, Role::Admin);
+    assert!(node_join_service::remove(&ctx, &cfg, &other_admin, joined.node_id).await.is_err(), "not another data center's node");
+    node_join_service::remove(&ctx, &cfg, &admin, joined.node_id).await.expect("remove");
+    let peers = std::fs::read_to_string(dir.path().join("peers.conf")).expect("peers");
+    assert!(!peers.contains(key), "a removed node loses its place on the hub");
 }

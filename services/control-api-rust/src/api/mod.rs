@@ -17,6 +17,7 @@ pub mod mcp;
 pub mod media;
 pub mod metrics;
 pub mod models;
+pub mod node_join;
 pub mod nodes;
 pub mod oidc;
 pub mod packs;
@@ -434,7 +435,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/models/{key}/metrics", get(models::metrics))
         // Nodes
         .route("/api/v1/nodes", get(nodes::list))
-        .route("/api/v1/nodes/{id}", get(nodes::get))
+        .route("/api/v1/node-join-tokens", post(node_join::create_token))
+        .route("/api/v1/join/{token}/script", get(node_join::script))
+        .route("/api/v1/join/{token}", post(node_join::join))
+        .route("/api/v1/nodes/{id}", get(nodes::get).delete(node_join::remove))
         .route("/api/v1/nodes/{id}/sandboxes", get(nodes::sandboxes))
         .route("/api/v1/nodes/{id}/display", put(nodes::update_display))
         .route("/api/v1/nodes/{id}/probe", post(nodes::probe))

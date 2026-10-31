@@ -88,6 +88,9 @@ pub struct SandboxSpec {
     /// the container exists: `direct` puts the container on a network with a
     /// route out, and the two TLS-reading modes need the node CA mounted.
     pub egress_mode: String,
+    /// The node the sandbox is placed on. `None` means the local node. The dispatcher needs it
+    /// at creation, before the sandbox row is committed and a lookup by name could find it.
+    pub node_id: Option<uuid::Uuid>,
 }
 
 /// What the runner found on its own host, as raw text the control plane parses.

@@ -1009,6 +1009,7 @@ pub async fn create(
         // A new sandbox has no mode row yet, so it starts on the default the
         // proxy itself runs. Choosing another mode recreates the container.
         egress_mode: "forward_proxy".to_string(),
+        node_id: Some(node.id),
     };
 
     let configured_environment: BTreeMap<String, String> =
@@ -2039,6 +2040,7 @@ pub async fn recreate(
         mounts: mounts.clone(),
         gpu_count: 0,
         egress_mode: egress_mode.as_str().to_string(),
+        node_id: Some(sandbox.node_id),
     };
     match ctx.runtime.create(spec).await {
         Ok(facts) => {

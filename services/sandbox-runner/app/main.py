@@ -38,6 +38,38 @@ from app.workload import get_container, list_workloads, openshell_name, sandbox_
 app = FastAPI(title="Nestbox Sandbox Runtime", version="1.0.0")
 client = docker.from_env()
 
+
+def _expected_token() -> str:
+    path = os.getenv("NESTBOX_NODE_TOKEN_FILE", "")
+    if path:
+        try:
+            with open(path, encoding="utf-8") as handle:
+                return handle.read().strip()
+        except OSError:
+            return ""
+    return os.getenv("NESTBOX_NODE_TOKEN", "").strip()
+
+
+@app.middleware("http")
+async def require_node_token(request, call_next):
+    """On a node reached over the network, every request carries the node token.
+
+    The appliance's own runner sits on a private compose network and does not set this. A joined
+    node does (ADR 0047): its runner holds the Docker socket, so an unauthenticated port on any
+    network is a root shell. No token configured is a refusal, never an open door. WebSockets
+    (terminal, desktop) check the token themselves in their handshake.
+    """
+    if os.getenv("NESTBOX_RUNNER_REQUIRE_TOKEN") == "1" and request.url.path != "/healthz":
+        import hmac
+        from fastapi.responses import JSONResponse
+
+        expected = _expected_token()
+        header = request.headers.get("authorization", "")
+        presented = header[7:].strip() if header.lower().startswith("bearer ") else ""
+        if not expected or not presented or not hmac.compare_digest(expected, presented):
+            return JSONResponse({"detail": "The node token was refused."}, status_code=401)
+    return await call_next(request)
+
 # Uvicorn configures its own loggers and leaves the root logger bare, so a module
 # logger's `info` would be dropped and only its warnings would reach the console
 # through the last-resort handler. The egress wiring is exactly the thing an

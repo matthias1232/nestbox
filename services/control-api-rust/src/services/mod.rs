@@ -17,6 +17,7 @@ pub mod geography_service;
 pub mod inventory_service;
 pub mod job_service;
 pub mod mcp_service;
+pub mod node_join_service;
 pub mod oidc_service;
 pub mod media_service;
 pub mod metrics_service;
@@ -60,6 +61,10 @@ pub struct ServiceContext {
     /// never reads a global configuration and a test can point it at a temp
     /// directory.
     pub secret_dir: std::path::PathBuf,
+    /// The dispatcher in front of every node's runner, when this process has one. `runtime`
+    /// is the same object seen through the trait; this handle is for the calls that must name
+    /// a node ("measure that machine") instead of a sandbox.
+    pub router: Option<Arc<crate::runtime::router::RuntimeRouter>>,
 }
 
 impl ServiceContext {
@@ -75,6 +80,23 @@ impl ServiceContext {
             runtime,
             bus,
             secret_dir,
+            router: None,
+        }
+    }
+
+    /// The same context with a dispatcher; `runtime` becomes the dispatcher.
+    pub fn with_router(mut self, router: Arc<crate::runtime::router::RuntimeRouter>) -> Self {
+        self.runtime = router.clone();
+        self.router = Some(router);
+        self
+    }
+
+    /// The runner of one node. Without a dispatcher there is one runner and it is every
+    /// node's, which is what a single-machine install and the unit tests are.
+    pub fn runtime_for(&self, node: uuid::Uuid) -> Arc<dyn RuntimeAdapter> {
+        match &self.router {
+            Some(router) => router.for_node(Some(node)),
+            None => self.runtime.clone(),
         }
     }
 }

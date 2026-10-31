@@ -52,6 +52,24 @@ pub struct Config {
     pub public_url: String,
     /// The identity providers an operator configured. Empty means password sign-in only.
     pub oidc: Vec<OidcProviderConfig>,
+    /// How nodes on other machines reach this control plane (ADR 0047).
+    pub overlay: OverlayConfig,
+}
+
+/// The WireGuard overlay the control plane is the hub of.
+#[derive(Debug, Clone)]
+pub struct OverlayConfig {
+    /// Where the hub container and the API exchange files: `hub.pub` (read) and
+    /// `peers.conf` (written). Empty disables joining.
+    pub dir: PathBuf,
+    /// `host:port` a node dials to reach the hub from outside, for example `203.0.113.7:51821`.
+    pub endpoint: String,
+    /// The hub's address inside the overlay.
+    pub hub_ip: String,
+    /// `host:port` of the image registry as nodes see it, over the overlay.
+    pub registry: String,
+    /// The control plane's address as nodes see it, over the overlay.
+    pub control_url: String,
 }
 
 /// How this installation treats people it does not know yet.
@@ -125,6 +143,14 @@ impl Config {
                 .trim_end_matches('/')
                 .to_string(),
             oidc: read_oidc_providers(),
+            overlay: OverlayConfig {
+                dir: std::env::var("NESTBOX_OVERLAY_DIR").map(PathBuf::from).unwrap_or_default(),
+                endpoint: std::env::var("NESTBOX_OVERLAY_ENDPOINT").unwrap_or_default(),
+                hub_ip: std::env::var("NESTBOX_OVERLAY_HUB_IP").unwrap_or_else(|_| "10.77.0.1".into()),
+                registry: std::env::var("NESTBOX_REGISTRY").unwrap_or_else(|_| "10.77.0.1:5000".into()),
+                control_url: std::env::var("NESTBOX_OVERLAY_CONTROL_URL")
+                    .unwrap_or_else(|_| "http://10.77.0.1:8080".into()),
+            },
         })
     }
 

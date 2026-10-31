@@ -200,6 +200,13 @@ fn config(secret_dir: &str) -> Config {
         deploy_mode: nestbox_control_api::config::DeployMode::SelfHosted,
         public_url: String::new(),
         oidc: Vec::new(),
+        overlay: nestbox_control_api::config::OverlayConfig {
+            dir: Default::default(),
+            endpoint: String::new(),
+            hub_ip: "10.77.0.1".into(),
+            registry: "10.77.0.1:5000".into(),
+            control_url: "http://10.77.0.1:8080".into(),
+        },
     }
 }
 

@@ -82,6 +82,10 @@ pub struct HttpRunner {
     base_url: String,
     network: String,
     client: reqwest::Client,
+    /// The remote node's own token. The local runner is reached on a private compose network
+    /// and uses the node token file instead; a runner on another machine is reached over the
+    /// overlay and demands its token on every request (ADR 0047).
+    token: Option<String>,
 }
 
 impl HttpRunner {
@@ -97,7 +101,20 @@ impl HttpRunner {
                 .connect_timeout(std::time::Duration::from_secs(5))
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
+            token: None,
         }
+    }
+
+    /// The same runner, authenticated with the token of the node it runs on.
+    pub fn with_token(mut self, token: impl Into<String>) -> Self {
+        let token = token.into();
+        self.token = Some(token).filter(|t| !t.trim().is_empty());
+        self
+    }
+
+    /// The token to present to this runner: its own if it has one, else the local node token.
+    fn node_token(&self) -> Option<String> {
+        self.token.clone().or_else(read_node_token)
     }
 
     /// The same host and port, with the WebSocket scheme.
@@ -119,6 +136,9 @@ impl HttpRunner {
     ) -> Result<T, RuntimeError> {
         let url = format!("{}{}", self.base_url, path);
         let mut request = self.client.request(method, url);
+        if let Some(token) = &self.token {
+            request = request.bearer_auth(token);
+        }
         if let Some(payload) = body {
             request = request.json(payload);
         }
@@ -629,7 +649,7 @@ impl RuntimeAdapter for HttpRunner {
             .map_err(|error| RuntimeError::Rejected(format!("invalid desktop URL: {error}")))?;
         // Same rule as the terminal: the node token rides in the subprotocol
         // header, never in a URL that a log would keep.
-        let protocol = match read_node_token() {
+        let protocol = match self.node_token() {
             Some(token) => format!("nestbox-vnc, {token}"),
             None => "nestbox-vnc".to_string(),
         };
@@ -672,7 +692,7 @@ impl RuntimeAdapter for HttpRunner {
         // file takes effect for the next session instead of requiring a restart
         // of the API, and a token never sits in the process longer than the
         // handshake that needs it.
-        let token = read_node_token();
+        let token = self.node_token();
         let protocol = match &token {
             Some(token) => format!("{TERMINAL_SUBPROTOCOL}, {token}"),
             None => TERMINAL_SUBPROTOCOL.to_string(),

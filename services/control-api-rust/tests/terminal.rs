@@ -188,6 +188,7 @@ fn spec(name: &str) -> SandboxSpec {
         mounts: Vec::new(),
         gpu_count: 0,
         egress_mode: "forward_proxy".into(),
+        node_id: None,
     }
 }
 

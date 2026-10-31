@@ -50,12 +50,31 @@ async fn main() {
         return;
     }
 
-    let runtime: Arc<dyn RuntimeAdapter> = Arc::new(HttpRunner::new(
+    // The local runner is the default; nodes that joined over the overlay are added by the
+    // loop below, and the router sends each call to the machine the sandbox lives on.
+    let local: Arc<dyn RuntimeAdapter> = Arc::new(HttpRunner::new(
         config.runner_url.clone(),
         config.runtime_network.clone(),
     ));
+    let router = Arc::new(nestbox_control_api::runtime::router::RuntimeRouter::new(local, Some(pool.clone())));
+    let runtime: Arc<dyn RuntimeAdapter> = router.clone();
 
-    let state = AppState::new(config.clone(), runtime, pool);
+    let mut state = AppState::new(config.clone(), runtime, pool);
+    state.services = state.services.clone().with_router(router.clone());
+
+    // Joined nodes: load their runners into the router and look at each one.
+    {
+        let services = state.services.clone();
+        let router = router.clone();
+        tokio::spawn(async move {
+            loop {
+                if let Err(error) = nestbox_control_api::services::node_join_service::sync(&services, &router).await {
+                    tracing::debug!(code = error.code.0, "node sync pass skipped");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            }
+        });
+    }
 
     // A build that was running when the process died leaves its recipe
     // `building` and its job `running`. Neither will ever finish, so they are
