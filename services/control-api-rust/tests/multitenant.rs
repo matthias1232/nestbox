@@ -443,3 +443,37 @@ async fn a_machine_joins_with_a_one_time_token_and_gets_an_address_and_a_place_o
     let peers = std::fs::read_to_string(dir.path().join("peers.conf")).expect("peers");
     assert!(!peers.contains(key), "a removed node loses its place on the hub");
 }
+
+#[tokio::test]
+async fn an_image_is_assigned_once_per_scope_and_the_matrix_lists_it() {
+    use nestbox_control_api::services::image_sync_service;
+    let Some(owner) = connect().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+    let pool = app_pool().await;
+    let ctx = context(&pool);
+    let env = uuid(ENVIRONMENT);
+    let admin_id = admin_user(&owner, "00000000-0000-0000-0000-000000000001", "img@example.test").await;
+    sqlx::query("INSERT INTO user_scopes (user_id, environment_id, role) VALUES ($1, $2, 'admin')")
+        .bind(admin_id).bind(env).execute(&owner).await.expect("scope");
+    let admin = principal(admin_id, env, Role::Admin);
+    let member = principal(admin_id, env, Role::Member);
+    let site = tenancy_service::list_sites(&ctx, &admin).await.expect("sites")[0].id;
+
+    let first = image_sync_service::assign(&ctx, &admin, "nestbox-claude-code:local", "environment", None).await.expect("assign");
+    let again = image_sync_service::assign(&ctx, &admin, "nestbox-claude-code:local", "environment", None).await.expect("again");
+    assert_eq!(first.id, again.id, "the same assignment twice is one assignment");
+    image_sync_service::assign(&ctx, &admin, "nestbox-claude-code:local", "site", Some(site)).await.expect("site scope");
+    assert!(image_sync_service::assign(&ctx, &admin, "http://evil/x", "environment", None).await.is_err());
+    assert!(image_sync_service::assign(&ctx, &admin, "x:1", "site", Some(Uuid::new_v4())).await.is_err(), "a site of another data center is not found");
+    assert!(image_sync_service::assign(&ctx, &member, "x:1", "environment", None).await.is_err(), "only an administrator assigns");
+    let long = format!("a{}", "b".repeat(255));
+    assert!(image_sync_service::assign(&ctx, &admin, &long, "environment", None).await.is_err());
+
+    let matrix = image_sync_service::matrix(&ctx, &admin).await.expect("matrix");
+    assert_eq!(matrix.images, vec!["nestbox-claude-code:local"]);
+    assert_eq!(matrix.assignments.len(), 2);
+    image_sync_service::unassign(&ctx, &admin, first.id).await.expect("unassign");
+    assert_eq!(image_sync_service::matrix(&ctx, &admin).await.expect("matrix").assignments.len(), 1);
+}

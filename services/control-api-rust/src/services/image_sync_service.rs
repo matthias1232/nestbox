@@ -67,7 +67,7 @@ pub struct Matrix {
 pub fn valid_image(image: &str) -> bool {
     let bytes = image.as_bytes();
     !bytes.is_empty()
-        && bytes.len() <= 300
+        && bytes.len() <= 255
         && bytes[0].is_ascii_alphanumeric()
         && !image.contains("://")
         && bytes.iter().all(|b| b.is_ascii_alphanumeric() || b"._/:@-".contains(b))
