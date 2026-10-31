@@ -13,6 +13,38 @@ import { For, Show, createSignal, onCleanup, onMount } from 'solid-js';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+
+/**
+ * Put text on the clipboard, also when the console is served over plain HTTP.
+ *
+ * `navigator.clipboard` exists only in a secure context, and the appliance
+ * console is reached by IP over HTTP, so the fallback is a hidden textarea and
+ * `execCommand('copy')`, which works from a user gesture anywhere.
+ */
+function copyText(text) {
+  if (!text) return;
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).catch(() => legacyCopy(text));
+    return;
+  }
+  legacyCopy(text);
+}
+
+function legacyCopy(text) {
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.setAttribute('readonly', '');
+  area.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
+  document.body.appendChild(area);
+  const focused = document.activeElement;
+  area.select();
+  try {
+    document.execCommand('copy');
+  } finally {
+    document.body.removeChild(area);
+    focused?.focus?.();
+  }
+}
 import * as api from '../../api/sandboxes.js';
 import '../../styles/deck.css';
 
@@ -178,6 +210,25 @@ export default function TerminalTab(props) {
       term.open(host);
       fit.fit();
       term.onData((data) => socket?.readyState === WebSocket.OPEN && socket.send(data));
+      // xterm keeps its selection internally, so the browser's own copy never
+      // sees it. Copy on release of the mouse (a user gesture, which the old
+      // clipboard path needs on plain HTTP) and on Ctrl+Shift+C / Ctrl+Insert /
+      // Ctrl+C while something is selected. Paste (Ctrl+V, Ctrl+Shift+V,
+      // Shift+Insert, middle-click) already arrives through the browser.
+      host.addEventListener('mouseup', () => {
+        if (term?.hasSelection()) copyText(term.getSelection());
+      });
+      term.attachCustomKeyEventHandler((event) => {
+        if (event.type !== 'keydown' || !term.hasSelection()) return true;
+        const key = event.key.toLowerCase();
+        const copy =
+          (event.ctrlKey && event.shiftKey && key === 'c') ||
+          (event.ctrlKey && event.key === 'Insert') ||
+          (event.ctrlKey && !event.shiftKey && key === 'c');
+        if (!copy) return true;
+        copyText(term.getSelection());
+        return false;
+      });
       observer = new ResizeObserver(() => {
         fit.fit();
         if (socket?.readyState === WebSocket.OPEN) {
