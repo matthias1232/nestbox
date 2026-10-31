@@ -1538,6 +1538,20 @@ mod draft_tests {
 }
 
 fn openshell_proxy_rules(sandbox_id: Uuid, environment_id: Uuid) -> Vec<NetworkRule> {
+    let mut rules = accounting_proxy_rules(sandbox_id, environment_id);
+    rules.extend(gateway_proxy_rules(sandbox_id, environment_id));
+    rules
+}
+
+/// The allow rule for the accounting proxy, when model traffic is routed there.
+fn accounting_proxy_rules(sandbox_id: Uuid, environment_id: Uuid) -> Vec<NetworkRule> {
+    match crate::services::provider_service::accounting_proxy_url() {
+        Some(url) => crate::domain::policy::rules_for_accounting_proxy(&url, sandbox_id, environment_id),
+        None => Vec::new(),
+    }
+}
+
+fn gateway_proxy_rules(sandbox_id: Uuid, environment_id: Uuid) -> Vec<NetworkRule> {
     if !crate::services::sandbox_service::openshell_runtime() {
         return Vec::new();
     }

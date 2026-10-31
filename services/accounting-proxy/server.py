@@ -33,9 +33,11 @@ dependency cannot change what ships.
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from http.client import HTTPConnection, HTTPSConnection
@@ -165,6 +167,39 @@ class Outcome:
 
 
 # -- routing ---------------------------------------------------------------
+
+
+_SANDBOX_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_UPSTREAM_HOST = re.compile(r"^[A-Za-z0-9.-]+(:[0-9]{1,5})?$")
+
+
+def split_identity(raw_path: str) -> tuple[str, str | None, str] | None:
+    """Read `/s/<sandbox>[/u/<scheme>/<host>]/rest` off a request path.
+
+    Returns `(sandbox, upstream_or_None, remaining_path_with_query)`, or `None`
+    when the path carries no identity prefix. A malformed prefix is treated as
+    no prefix at all, so it can never smuggle a value into a row or an upstream.
+    """
+    parts = urlsplit(raw_path)
+    segments = parts.path.split("/")
+    # ["", "s", "<sandbox>", ...]
+    if len(segments) < 3 or segments[1] != "s" or not _SANDBOX_SEGMENT.match(segments[2]):
+        return None
+    sandbox = segments[2]
+    rest = segments[3:]
+    upstream: str | None = None
+    if (
+        len(rest) >= 3
+        and rest[0] == "u"
+        and rest[1] in {"http", "https"}
+        and _UPSTREAM_HOST.match(rest[2])
+    ):
+        upstream = f"{rest[1]}://{rest[2]}"
+        rest = rest[3:]
+    remaining = "/" + "/".join(rest)
+    if parts.query:
+        remaining += "?" + parts.query
+    return sandbox, upstream, remaining
 
 
 def dialect_of(path: str) -> str:
@@ -662,6 +697,20 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"status": "ok", "service": "accounting-proxy"})
             return
 
+        # Identity travels in the path, not in a header: the egress proxy that
+        # sits between a sandbox and this service drops `X-Nestbox-*` headers, so
+        # a header-borne identity would arrive empty. `/s/<sandbox>/…` names the
+        # sandbox; an optional `/u/<scheme>/<host[:port]>/…` right after it names
+        # the upstream (the gateway an agent is configured for). Both are
+        # stripped before the request is forwarded.
+        path_upstream: str | None = None
+        identity = split_identity(self.path)
+        if identity is not None:
+            sandbox_name, path_upstream, rest = identity
+            config = dataclasses.replace(config, sandbox=sandbox_name)
+            self.path = rest
+            clean = urlsplit(self.path).path
+
         try:
             body = self._read_body()
         except ValueError as exc:
@@ -673,7 +722,7 @@ class Handler(BaseHTTPRequestHandler):
         dialect = dialect_of(self.path)
         try:
             base = upstream_for(
-                config, self.path, self.headers.get(UPSTREAM_HEADER)
+                config, self.path, self.headers.get(UPSTREAM_HEADER) or path_upstream
             )
         except UpstreamUnavailable as exc:
             self._send_json(

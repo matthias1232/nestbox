@@ -1599,6 +1599,44 @@ pub fn rules_from_mcp(
         .collect()
 }
 
+/// The allow rule that lets one sandbox reach the accounting proxy.
+///
+/// Model traffic that is routed through the proxy (`route_through_accounting`)
+/// has to be allowed to reach it, or the agent would be cut off by the control
+/// plane that sent it there. The rule names the proxy's host and port and
+/// nothing else; what the proxy forwards upstream is the proxy's own business
+/// and is recorded there. Empty when the URL has no host.
+pub fn rules_for_accounting_proxy(
+    proxy_url: &str,
+    sandbox_id: Uuid,
+    environment_id: Uuid,
+) -> Vec<NetworkRule> {
+    let Some((host, port)) = endpoint_host_port(proxy_url) else {
+        return Vec::new();
+    };
+    vec![NetworkRule {
+        id: Uuid::nil(),
+        environment_id,
+        policy_id: None,
+        sandbox_id: Some(sandbox_id),
+        name: "Accounting proxy".to_string(),
+        action: RuleAction::Allow,
+        host: host.clone(),
+        port: Some(port),
+        protocol: RuleProtocol::Tcp,
+        methods: vec![],
+        binaries: vec![],
+        matchers: vec![
+            Matcher { kind: MatcherKind::Host, value: Some(host) },
+            Matcher { kind: MatcherKind::Port, value: Some(port.to_string()) },
+        ],
+        enforcement: Enforcement::Enforced,
+        priority: DOCUMENT_ALLOW_PRIORITY - 100,
+        enabled: true,
+        version: 1,
+    }]
+}
+
 /// The allow rule that lets a gateway sandbox reach the egress proxy.
 ///
 /// On an OpenShell gateway every destination must be named in the policy,
@@ -2112,4 +2150,15 @@ mod tests {
         // not: the network default is the narrower claim.
         assert_eq!(classify(&serde_json::json!("nonsense")), PolicyKind::Network);
     }
+    #[test]
+    fn the_accounting_proxy_is_allowed_for_that_sandbox_only() {
+        let sandbox = Uuid::new_v4();
+        let rules = rules_for_accounting_proxy("http://host.openshell.internal:18099/", sandbox, Uuid::nil());
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].host, "host.openshell.internal");
+        assert_eq!(rules[0].port, Some(18099));
+        assert_eq!(rules[0].sandbox_id, Some(sandbox));
+        assert!(rules_for_accounting_proxy("not a url", sandbox, Uuid::nil()).is_empty());
+    }
+
 }

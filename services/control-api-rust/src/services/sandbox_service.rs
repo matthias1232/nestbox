@@ -935,10 +935,11 @@ pub async fn create(
     // locator at this moment and never stored (ADR 0005), so recreating the
     // sandbox picks up a rotated key without an edit here.
     let mut environment = if pack_needs_inference(&sandbox.pack_key) {
-        match crate::services::provider_service::environment_for_pack(
+        match crate::services::provider_service::environment_for_sandbox(
             ctx,
             principal.environment_id,
             &sandbox.pack_key,
+            &sandbox.name,
         )
         .await
         {
@@ -1890,7 +1891,7 @@ pub async fn reconfigure_agent(
         ));
     }
     let mut environment: BTreeMap<String, String> =
-        crate::services::provider_service::environment_for_pack(ctx, principal.environment_id, &sandbox.pack_key)
+        crate::services::provider_service::environment_for_sandbox(ctx, principal.environment_id, &sandbox.pack_key, &sandbox.name)
             .await?
             .into_iter()
             .collect();
@@ -1971,7 +1972,7 @@ pub async fn recreate(
 
     let mut environment: Vec<(String, String)> = {
         let mut values: BTreeMap<String, String> =
-            crate::services::provider_service::environment_for_pack(ctx, principal.environment_id, &sandbox.pack_key)
+            crate::services::provider_service::environment_for_sandbox(ctx, principal.environment_id, &sandbox.pack_key, &sandbox.name)
                 .await
                 .map(|values| values.into_iter().collect())
                 .unwrap_or_default();

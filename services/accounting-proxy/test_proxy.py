@@ -657,5 +657,29 @@ def inspect_decision(content: str) -> dict:
     }
 
 
+class SplitIdentityTests(unittest.TestCase):
+    """The sandbox rides in the path because the egress proxy drops headers."""
+
+    def test_a_sandbox_prefix_is_read_and_stripped(self):
+        self.assertEqual(
+            proxy.split_identity("/s/claude-01/v1/messages?beta=1"),
+            ("claude-01", None, "/v1/messages?beta=1"),
+        )
+
+    def test_an_upstream_can_follow_the_sandbox(self):
+        self.assertEqual(
+            proxy.split_identity("/s/a/u/https/llm.example.com:443/v1/chat/completions"),
+            ("a", "https://llm.example.com:443", "/v1/chat/completions"),
+        )
+
+    def test_a_malformed_prefix_is_no_prefix(self):
+        for raw in ("/v1/messages", "/s/", "/s/../v1", "/s/a b/v1", "/s//v1"):
+            self.assertIsNone(proxy.split_identity(raw), raw)
+
+    def test_a_bad_upstream_scheme_stays_in_the_path(self):
+        found = proxy.split_identity("/s/a/u/file/etc/passwd")
+        self.assertEqual(found, ("a", None, "/u/file/etc/passwd"))
+
+
 if __name__ == "__main__":
     unittest.main()

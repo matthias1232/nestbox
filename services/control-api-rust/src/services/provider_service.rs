@@ -568,6 +568,31 @@ pub async fn inference_environment(
     Ok(environment)
 }
 
+/// Where agents reach the accounting proxy, when the deployment routes model
+/// traffic through it. Unset means agents talk to their gateway directly.
+pub fn accounting_proxy_url() -> Option<String> {
+    std::env::var("NESTBOX_ACCOUNTING_PROXY_URL")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+/// `environment_for_pack`, plus the routing a named sandbox needs: when the
+/// deployment sets `NESTBOX_ACCOUNTING_PROXY_URL`, the agent's model base URLs
+/// go through the accounting proxy with the sandbox named in the path.
+pub async fn environment_for_sandbox(
+    ctx: &ServiceContext,
+    environment_id: Uuid,
+    pack_key: &str,
+    sandbox_name: &str,
+) -> Result<BTreeMap<String, String>, ApiError> {
+    let mut environment = environment_for_pack(ctx, environment_id, pack_key).await?;
+    if let Some(proxy) = accounting_proxy_url() {
+        crate::domain::agent_config::route_through_accounting(&mut environment, &proxy, sandbox_name);
+    }
+    Ok(environment)
+}
+
 /// The environment for a pack, by what it speaks.
 ///
 /// The agents (Hermes, Claude Code, OpenCode, OpenChamber) use the OmniRoute profile

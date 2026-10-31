@@ -290,6 +290,36 @@ pub fn gateway_environment(endpoint: &str, model: Option<&str>, key: &str) -> BT
     environment
 }
 
+/// Point the model base URLs of an agent environment at the accounting proxy.
+///
+/// The proxy needs two facts the request itself cannot carry through the egress
+/// proxy (which drops `X-Nestbox-*` headers): which sandbox asks, and where the
+/// request was meant to go. Both are put in the path, `/s/<sandbox>/u/<scheme>/
+/// <host>/…`, and the proxy strips them again before it forwards. A base URL that
+/// is not http(s) or that is already routed is left alone, so the call is safe to
+/// repeat.
+pub fn route_through_accounting(
+    environment: &mut BTreeMap<String, String>,
+    proxy_url: &str,
+    sandbox_name: &str,
+) {
+    let proxy = proxy_url.trim().trim_end_matches('/');
+    if proxy.is_empty() || sandbox_name.is_empty() {
+        return;
+    }
+    for key in ["OPENAI_BASE_URL", "OPENAI_API_BASE", "ANTHROPIC_BASE_URL"] {
+        let Some(current) = environment.get(key).cloned() else { continue };
+        if current.starts_with(proxy) {
+            continue;
+        }
+        let Some((scheme, rest)) = current.split_once("://") else { continue };
+        if scheme != "http" && scheme != "https" {
+            continue;
+        }
+        environment.insert(key.to_string(), format!("{proxy}/s/{sandbox_name}/u/{scheme}/{rest}"));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,5 +432,23 @@ mod tests {
     fn a_pack_without_configuration_or_a_sandbox_without_an_endpoint_gets_no_files() {
         assert!(files_for("ubuntu-dev", &env()).is_empty());
         assert!(files_for("opencode", &BTreeMap::new()).is_empty());
+    }
+
+    #[test]
+    fn model_base_urls_are_routed_through_the_accounting_proxy_by_path() {
+        let mut environment = gateway_environment("http://10.90.92.30:20128/v1", Some("m"), "k");
+        route_through_accounting(&mut environment, "http://host.openshell.internal:18099/", "claude-01");
+        assert_eq!(
+            environment["ANTHROPIC_BASE_URL"],
+            "http://host.openshell.internal:18099/s/claude-01/u/http/10.90.92.30:20128"
+        );
+        assert_eq!(
+            environment["OPENAI_BASE_URL"],
+            "http://host.openshell.internal:18099/s/claude-01/u/http/10.90.92.30:20128/v1"
+        );
+        assert_eq!(environment["OPENAI_API_KEY"], "k", "the credential is untouched");
+        let once = environment.clone();
+        route_through_accounting(&mut environment, "http://host.openshell.internal:18099", "claude-01");
+        assert_eq!(environment, once, "routing twice changes nothing");
     }
 }

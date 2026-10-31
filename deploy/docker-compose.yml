@@ -186,6 +186,10 @@ services:
       # request while this is missing.
       NESTBOX_MEDIA_BRIDGE_TOKEN_FILE: /secrets/media_bridge_token
       NESTBOX_ACCOUNTING_TOKEN_FILE: /secrets/accounting_token
+      # Opt-in: set to the address a sandbox reaches the accounting proxy at
+      # (OpenShell: http://host.openshell.internal:18099) and every agent's model
+      # base URL is routed through it, with the sandbox named in the path.
+      NESTBOX_ACCOUNTING_PROXY_URL: ${NESTBOX_ACCOUNTING_PROXY_URL:-}
       NESTBOX_SESSION_COOKIE_SECURE: "false"
       # The same token the runner demands on the terminal upgrade. It comes from
       # the node directory rather than from a compose secret, because compose

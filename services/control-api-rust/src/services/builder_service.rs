@@ -930,10 +930,11 @@ pub async fn instantiate(
     // environment; the credential is resolved at use and never stored.
     let mut environment = if crate::services::sandbox_service::pack_needs_inference(&sandbox.pack_key)
     {
-        match crate::services::provider_service::environment_for_pack(
+        match crate::services::provider_service::environment_for_sandbox(
             ctx,
             principal.environment_id,
             &sandbox.pack_key,
+            &sandbox.name,
         )
         .await
         {

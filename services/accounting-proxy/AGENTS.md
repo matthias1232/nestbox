@@ -34,6 +34,14 @@ upstream as it would without this proxy.
 | `/v1beta/models/...` (Gemini), anything else | `NESTBOX_DEFAULT_UPSTREAM` |
 | any path, with `X-Nestbox-Upstream: https://…` | that URL, overriding the table |
 
+**Identity in the path.** The egress proxy between a sandbox and this service
+drops `X-Nestbox-*` headers, so the sandbox rides in the path:
+`/s/<sandbox-name>/…` names it, and an optional `/u/<http|https>/<host[:port]>`
+right after names the upstream (the gateway the agent was configured for). Both
+are stripped before forwarding. A malformed prefix counts as no prefix. The
+control API writes these URLs into the agent environment when
+`NESTBOX_ACCOUNTING_PROXY_URL` is set (`agent_config::route_through_accounting`).
+
 `GET /healthz` answers `{"status":"ok","service":"accounting-proxy"}` and needs
 no token. Every other method on every other path is forwarded.
 

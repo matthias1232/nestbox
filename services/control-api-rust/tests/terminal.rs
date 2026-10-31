@@ -187,6 +187,7 @@ fn spec(name: &str) -> SandboxSpec {
         pids_limit: 256,
         mounts: Vec::new(),
         gpu_count: 0,
+        egress_mode: "forward_proxy".into(),
     }
 }
 
