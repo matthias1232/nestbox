@@ -1908,6 +1908,18 @@ pub async fn reconfigure_agent(
     principal: &Principal,
     id: Uuid,
 ) -> Result<serde_json::Value, ApiError> {
+    reconfigure_pack(ctx, principal, id, None).await
+}
+
+/// The same, for one named pack. A sandbox built from a recipe holds several
+/// agents, and only the first one's pack is the sandbox's own; the others have
+/// to be named or their files are never written.
+pub async fn reconfigure_pack(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    id: Uuid,
+    pack_override: Option<&str>,
+) -> Result<serde_json::Value, ApiError> {
     require(principal, Permission::SandboxWrite)?;
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
@@ -1920,15 +1932,16 @@ pub async fn reconfigure_agent(
             "Configuration is written into a running sandbox; start it first.",
         ));
     }
+    let pack_key = pack_override.unwrap_or(&sandbox.pack_key).to_string();
     let mut environment: BTreeMap<String, String> =
-        crate::services::provider_service::environment_for_sandbox(ctx, principal.environment_id, &sandbox.pack_key, &sandbox.name)
+        crate::services::provider_service::environment_for_sandbox(ctx, principal.environment_id, &pack_key, &sandbox.name)
             .await?
             .into_iter()
             .collect();
     apply_login_choice(&mut environment, sandbox.spec.get("login").and_then(|v| v.as_str()));
     environment.extend(egress_environment(&egress_proxy_url()));
     let servers = mcp_configs(ctx, principal, sandbox.id, &sandbox.name).await;
-    let written = apply_agent_files(ctx, &sandbox.name, &sandbox.pack_key, &environment, &servers).await;
+    let written = apply_agent_files(ctx, &sandbox.name, &pack_key, &environment, &servers).await;
     Ok(serde_json::json!({ "files_written": written }))
 }
 
