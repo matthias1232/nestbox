@@ -149,7 +149,7 @@ impl Config {
                 hub_ip: std::env::var("NESTBOX_OVERLAY_HUB_IP").unwrap_or_else(|_| "10.77.0.1".into()),
                 registry: std::env::var("NESTBOX_REGISTRY").unwrap_or_else(|_| "10.77.0.1:5000".into()),
                 control_url: std::env::var("NESTBOX_OVERLAY_CONTROL_URL")
-                    .unwrap_or_else(|_| "http://10.77.0.1:8080".into()),
+                    .unwrap_or_else(|_| "http://10.77.0.1:8000".into()),
             },
         })
     }
