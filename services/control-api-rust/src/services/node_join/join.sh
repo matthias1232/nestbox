@@ -107,6 +107,9 @@ if [ ! -s "$DIR/secrets/proxy/egress-ca.key" ]; then
 fi
 cp "$DIR/secrets/node-token" "$DIR/secrets/proxy/node-token"
 chmod 644 "$DIR/secrets/proxy/"*
+# The proxy and the runner run as their own users; they must be able to walk to these files.
+# (The umask above is 077 for the WireGuard key, which is the one file that stays private.)
+chmod 755 "$DIR" "$DIR/secrets" "$DIR/secrets/proxy"
 cat > "$DIR/.env" <<ENV
 REGISTRY=$REGISTRY
 OVERLAY_IP=$OVERLAY_IP
