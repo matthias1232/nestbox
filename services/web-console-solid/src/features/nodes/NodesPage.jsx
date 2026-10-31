@@ -11,6 +11,7 @@ import { For, Show, createMemo, createSignal, onMount } from 'solid-js';
 import Empty from '../../components/Empty.jsx';
 import BudgetBars from './BudgetBars.jsx';
 import NodeDrawer from './NodeDrawer.jsx';
+import JoinNode from './JoinNode.jsx';
 import { kindLabel, statusTone } from './nodeFormat.js';
 import { useNodes } from './useNodes.js';
 import '../../styles/nodes.css';
@@ -136,9 +137,13 @@ export default function NodesPage(props) {
 
       <Show when={state.loaded() && state.items().length === 0}>
         <Empty
-          title="No node registered"
-          hint="Phase 1 registers the host the control plane runs on. A node appears here once it is registered, and its budget once it has been probed."
+          title="No node yet"
+          hint="A data center runs sandboxes on its own nodes. Add a machine below: you get one line to paste on it, and it shows up here within a minute."
         />
+      </Show>
+
+      <Show when={props.role === 'admin'}>
+        <JoinNode onChanged={() => state.load()} />
       </Show>
 
       <p class="muted small phase-note">

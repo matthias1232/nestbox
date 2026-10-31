@@ -153,7 +153,7 @@ export default function App() {
                   <Show when={route() === 'cluster'}><ClusterPage /></Show>
                   <Show when={route() === 'system'}><SystemPage role={session.identity()?.role} /></Show>
                   <Show when={route() === 'nodes'}>
-                    <NodesPage onOpenSandbox={openAdmin} />
+                    <NodesPage onOpenSandbox={openAdmin} role={session.identity()?.role} />
                   </Show>
                   <Show when={route() === 'providers'}><ProvidersPage /></Show>
                   <Show when={route() === 'proxies'}><ProxiesPage role={session.identity()?.role} /></Show>

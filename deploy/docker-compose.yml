@@ -198,6 +198,16 @@ services:
       # mounted under `/run/secrets`: that directory belongs to the compose
       # secrets and is mounted read-only, so a second mount below it fails.
       NESTBOX_NODE_TOKEN_FILE: /run/node/token
+      # Joining nodes over the overlay (ADR 0047). Empty endpoint = joining is off.
+      NESTBOX_OVERLAY_DIR: /overlay
+      NESTBOX_OVERLAY_ENDPOINT: ${NESTBOX_OVERLAY_ENDPOINT:-}
+      NESTBOX_PUBLIC_URL: ${NESTBOX_PUBLIC_URL:-}
+      NESTBOX_MODE: ${NESTBOX_MODE:-selfhosted}
+      NESTBOX_OIDC_PROVIDERS: ${NESTBOX_OIDC_PROVIDERS:-}
+      NESTBOX_OIDC_GOOGLE_CLIENT_ID: ${NESTBOX_OIDC_GOOGLE_CLIENT_ID:-}
+      NESTBOX_OIDC_GOOGLE_CLIENT_SECRET: ${NESTBOX_OIDC_GOOGLE_CLIENT_SECRET:-}
+      NESTBOX_OIDC_GITHUB_CLIENT_ID: ${NESTBOX_OIDC_GITHUB_CLIENT_ID:-}
+      NESTBOX_OIDC_GITHUB_CLIENT_SECRET: ${NESTBOX_OIDC_GITHUB_CLIENT_SECRET:-}
       RUST_LOG: info,tower_http=warn
     secrets:
       - database_url
@@ -211,6 +221,8 @@ services:
       # read-only, and the runner never mounts this directory.
       - ./secrets/ssh:/secrets/ssh
       - ./secrets/node:/run/node:ro
+      # The hub's public key (read) and the peer list (written): see overlay-hub.
+      - ./data/overlay:/overlay
     depends_on:
       postgres:
         condition: service_healthy
@@ -223,6 +235,32 @@ services:
     networks:
       - control
       - runtime
+
+  # The WireGuard hub and the image registry for nodes on other machines (ADR 0047, 0048).
+  # Both run on the host network: the hub owns the `nb-hub` interface, and the registry listens
+  # on the host's loopback (the hub forwards it to the overlay address).
+  overlay-hub:
+    build:
+      context: ./overlay-hub
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    environment:
+      NESTBOX_OVERLAY_HUB_IP: ${NESTBOX_OVERLAY_HUB_IP:-10.77.0.1}
+      NESTBOX_OVERLAY_PORT: ${NESTBOX_OVERLAY_PORT:-51821}
+    volumes:
+      - ./data/overlay:/overlay
+
+  registry:
+    image: registry:2
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      REGISTRY_HTTP_ADDR: 127.0.0.1:5000
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+    volumes:
+      - ./data/registry:/var/lib/registry
 
   web-console:
     build:
