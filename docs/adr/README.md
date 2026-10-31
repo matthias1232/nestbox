@@ -50,6 +50,7 @@ supersedes the old one and note the supersession in both files.
 | [0040](0040-a-media-release-is-per-person.md) | A media release is per person, not only per environment | Accepted |
 | [0041](0041-name-lookups-and-bounded-master-switches.md) | A name lookup is its own event, and a master switch is a bounded window | Accepted |
 | [0042](0042-model-traffic-is-routed-through-the-accounting-proxy-by-path.md) | Model traffic is routed through the accounting proxy, and the sandbox rides in the path | Accepted |
+| [0043](0043-a-sandbox-can-have-a-desktop-and-is-watched-live.md) | A sandbox can have a desktop, and is watched live | Accepted |
 
 ## Writing a new ADR
 

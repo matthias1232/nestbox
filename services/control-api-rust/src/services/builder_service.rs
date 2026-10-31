@@ -50,6 +50,11 @@ use crate::store::postgres::{
 /// reusing the previous template's image because no recipe field moved.
 const GENERATOR_VERSION: u32 = 6;
 
+/// The desktop pack's install and start scripts. Part of the generated
+/// Dockerfile, so a change to either must change the image's content hash.
+const DESKTOP_INSTALL: &str = include_str!("../../../tool-images/desktop/install.sh");
+const DESKTOP_START: &str = include_str!("../../../tool-images/desktop/nestbox-desktop");
+
 /// The supervisor program shipped inside every image the builder produces.
 ///
 /// It has to be part of the content hash: a fix in this file changes what the
@@ -95,6 +100,8 @@ pub enum PackInstall {
     Binary { url: String, name: String },
     /// A git repository cloned to `/opt/<pack>`.
     Git { url: String, directory: String },
+    /// The graphical desktop: the shipped install and start scripts.
+    Desktop,
 }
 
 /// One agent as the image will contain it.
@@ -1368,6 +1375,7 @@ fn prerequisites(kinds: &[InstallKind]) -> Vec<&'static str> {
             InstallKind::Pip => &["python3", "python3-pip"],
             InstallKind::Binary => &["curl", "ca-certificates"],
             InstallKind::Git => &["git"],
+            InstallKind::Desktop => &["ca-certificates", "curl", "gnupg"],
             InstallKind::Image | InstallKind::None => &[],
         };
         for key in needed {
@@ -1406,6 +1414,7 @@ fn pack_install(pack: &AgentPack) -> Result<PackInstall, String> {
                 pack.key
             ))
         }
+        InstallKind::Desktop => PackInstall::Desktop,
         InstallKind::Script => PackInstall::Script(validate_url(reference.ok_or_else(missing)?)?),
         InstallKind::Npm => PackInstall::Npm(validate_spec(reference.ok_or_else(missing)?)?),
         InstallKind::Pip => PackInstall::Pip(validate_spec(reference.ok_or_else(missing)?)?),
@@ -1738,6 +1747,12 @@ fn install_step(install: &PackInstall) -> Result<String, String> {
                 shell_quote(&url)
             )
         }
+        PackInstall::Desktop => format!(
+            "RUN echo {install} | base64 -d > /tmp/nestbox-desktop-install.sh \\\n && sh /tmp/nestbox-desktop-install.sh \\\n && rm /tmp/nestbox-desktop-install.sh\n\
+             RUN echo {start} | base64 -d > /usr/local/bin/nestbox-desktop \\\n && chmod 0755 /usr/local/bin/nestbox-desktop\n",
+            install = dockerfile_payload(DESKTOP_INSTALL),
+            start = dockerfile_payload(DESKTOP_START),
+        ),
         PackInstall::Npm(spec) => {
             let spec = validate_spec(spec)?;
             format!(
@@ -1808,6 +1823,12 @@ pub fn content_hash(
                     PackInstall::Git { url, directory } => {
                         serde_json::json!({ "kind": "git", "url": url, "directory": directory })
                     }
+                    // The scripts are the install: editing one has to produce a new image.
+                    PackInstall::Desktop => serde_json::json!({
+                        "kind": "desktop",
+                        "install": DESKTOP_INSTALL,
+                        "start": DESKTOP_START,
+                    }),
                 },
                 "homes": agent.home_directories,
             })
@@ -2177,6 +2198,29 @@ async fn audit(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_desktop_pack_installs_its_scripts_and_hashes_them() {
+        let mut desktop = plan(PackageManager::Apt, &["vim"]);
+        desktop.agents.push(PlannedAgent {
+            instance: "desktop".into(),
+            pack_key: "desktop".into(),
+            install: PackInstall::Desktop,
+            home_directories: vec!["/home/nestbox".into()],
+            command: vec!["/usr/local/bin/nestbox-desktop".into()],
+            env_slots: Vec::new(),
+            home_mode: HomeMode::Shared,
+            port: None,
+        });
+        let text = dockerfile(&desktop).expect("a desktop dockerfile");
+        assert!(text.contains("nestbox-desktop-install.sh"), "{text}");
+        assert!(text.contains("> /usr/local/bin/nestbox-desktop"), "{text}");
+        let plain = plan(PackageManager::Apt, &["vim"]);
+        assert_ne!(
+            content_hash(&desktop, &resources(), &[], SUPERVISOR_PROGRAM),
+            content_hash(&plain, &resources(), &[], SUPERVISOR_PROGRAM)
+        );
+    }
+
     use super::*;
     use crate::domain::builder::HomeMode;
 

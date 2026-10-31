@@ -33,6 +33,7 @@ import PoliciesTab from './PoliciesTab.jsx';
 import ProcessesTab from './ProcessesTab.jsx';
 import ConnectionsTab from './ConnectionsTab.jsx';
 import ChatsTab from './ChatsTab.jsx';
+import DesktopTab from './DesktopTab.jsx';
 import InventoryTab from './InventoryTab.jsx';
 import LogsTab from './LogsTab.jsx';
 import MountsTab from './MountsTab.jsx';
@@ -43,6 +44,7 @@ const TABS = [
   { id: 'chats', label: 'Chats', component: ChatsTab },
   { id: 'mcp', label: 'MCP', component: McpTab },
   { id: 'terminal', label: 'Terminal', component: TerminalTab },
+  { id: 'desktop', label: 'Desktop', component: DesktopTab },
   { id: 'access', label: 'Access', component: AccessTab },
   { id: 'mounts', label: 'Mounts', component: MountsTab },
   { id: 'map', label: 'Topology', component: MapTab },

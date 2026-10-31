@@ -157,6 +157,8 @@ seconds instead of half an hour.
 | `app/catalogue.py` | Live package search and post-build verification: fixed scripts, validated query, throwaway container |
 | `app/stats.py` | One-shot `docker stats` samples and the poster loop |
 | `app/processes.py` | `docker top` for one sandbox |
+| `app/connections.py` | The sockets of one sandbox and the process that owns each, by a fixed `sh` probe run as the sandbox user; a sample, not a trace |
+| `app/vnc.py` | The desktop transport: node token, then a fixed `python3` bridge in the container copies bytes between `127.0.0.1:5900` and the WebSocket; nothing is recorded |
 | `app/inventory.py` | Runs the probe and parses its sections |
 | `app/inventory.sh` | The fixed probe script, executed inside the container |
 | `app/terminal.py` | The browser terminal: node token, PTY pump, resize, idle close |

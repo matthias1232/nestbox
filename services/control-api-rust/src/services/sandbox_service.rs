@@ -996,6 +996,13 @@ pub async fn create(
             // The agent starts already connected: its own config files are written
             // before anyone opens a shell. Best effort; a failure is logged and the
             // environment still carries the same facts.
+            // A sandbox with a desktop gets its browser as an MCP server before
+            // the agent's files are written, so the agent starts knowing it.
+            if sandbox.pack_key == "desktop" || sandbox.image.contains("desktop") {
+                if let Err(error) = crate::services::mcp_service::attach(ctx, principal, sandbox.id, "chrome-browser", true).await {
+                    tracing::warn!(sandbox = %sandbox.name, code = error.code.0, "could not attach the browser MCP");
+                }
+            }
             let servers = mcp_configs(ctx, principal, sandbox.id, &sandbox.name).await;
             apply_agent_files(ctx, &sandbox.name, &sandbox.pack_key, &configured_environment, &servers).await;
             // An agent starts with the Nestbox MCP hub attached when the hub is
