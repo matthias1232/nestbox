@@ -376,7 +376,7 @@ static_resources:
                       routes:
                         - match: { prefix: "/" }
                           route:
-                            cluster: dynamic_forward_proxy_cluster
+                            cluster: dynamic_forward_proxy_cluster_tls
                             timeout: 300s
                             idle_timeout: 60s
                 http_filters:
@@ -447,6 +447,36 @@ static_resources:
           dns_cache_config:
             name: dynamic_forward_proxy_cache
             dns_lookup_family: V4_ONLY
+    # What the terminated hop leaves through. The broker hands Envoy a decrypted
+    # request; this cluster encrypts it again towards the real server, with the
+    # SNI the client asked for and the server's certificate checked against the
+    # system roots. Without this the request would reach the internet in clear
+    # text, which is the opposite of what an inspecting proxy is for.
+    - name: dynamic_forward_proxy_cluster_tls
+      connect_timeout: 5s
+      lb_policy: CLUSTER_PROVIDED
+      cluster_type:
+        name: envoy.clusters.dynamic_forward_proxy
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
+          dns_cache_config:
+            name: dynamic_forward_proxy_cache
+            dns_lookup_family: V4_ONLY
+      transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+          common_tls_context:
+            validation_context:
+              trusted_ca: { filename: /etc/ssl/certs/ca-certificates.crt }
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          upstream_http_protocol_options:
+            auto_sni: true
+            auto_san_validation: true
+          explicit_http_config:
+            http_protocol_options: {}
     # The certificate broker. An endpoint that is down here is an HTTPS request
     # that fails closed: the client gets a 503 instead of an unverified tunnel.
     - name: tls_terminator
