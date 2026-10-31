@@ -10,7 +10,8 @@ services:
       NESTBOX_RUNNER_REQUIRE_TOKEN: "1"
       NESTBOX_NODE_TOKEN_FILE: /run/node/node-token
       NESTBOX_ALLOWED_PREFIXES: "${REGISTRY}/"
-      NESTBOX_ALLOWED_IMAGES: "ubuntu:24.04,debian:12-slim,rockylinux:9,fedora:41,alpine:3.21"
+      NESTBOX_IMAGE_REGISTRY: ${REGISTRY}
+      NESTBOX_ALLOWED_IMAGES: "ubuntu:24.04,debian:12-slim,rockylinux:9,fedora:41,alpine:3.21,nestbox-ubuntu-dev:local,nestbox-hermes:local,nestbox-openclaw:local,nestbox-tool-git:local,nestbox-claude-code:local,nestbox-openchamber:local"
       NESTBOX_RUNTIME_NETWORK: nestbox-node_runtime
       NESTBOX_PERSISTENT_BASE: /var/lib/nestbox/persistent
       NESTBOX_CONTROL_API_URL: http://control-api:8000

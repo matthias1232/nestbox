@@ -19,7 +19,7 @@ use crate::domain::runtime::{
     ComponentLimits,
     BuildRequest, BuildResult, CatalogueAnswer, CatalogueRequest, ComponentState, ExecResult,
     ForwardRequest, HardwareReport, ImageVerification, ModelDownload, ModelDownloadResult,
-    ModelServe, ModelServeResult, RuntimeFacts, SandboxSpec, SshCredential, VerificationAnswer,
+    ModelServe, ModelServeResult, NodeImageFact, RuntimeFacts, SandboxSpec, SshCredential, VerificationAnswer,
 };
 
 /// Fehler aus der Ausführungsschicht.
@@ -299,6 +299,14 @@ pub trait RuntimeAdapter: Send + Sync {
     /// The appliance's own containers: state and health.
     async fn components(&self) -> Result<Vec<ComponentState>, RuntimeError> {
         Err(RuntimeError::Unavailable("this runtime does not report components".into()))
+    }
+    /// The tagged images this node holds.
+    async fn images(&self) -> Result<Vec<NodeImageFact>, RuntimeError> {
+        Err(RuntimeError::Unavailable("this runtime does not report images".into()))
+    }
+    /// Pull one assigned image from the control plane's registry.
+    async fn pull_image(&self, _image: &str) -> Result<NodeImageFact, RuntimeError> {
+        Err(RuntimeError::Unavailable("this runtime cannot pull images".into()))
     }
 
     /// The last lines of one appliance component. `service` must be one of the

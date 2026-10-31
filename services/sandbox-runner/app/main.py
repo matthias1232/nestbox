@@ -30,6 +30,7 @@ from app import telemetry_shipper
 from app import host as host_load
 from app import backups as root_backups
 from app import catalogue as package_catalogue
+from app import registry_images
 from app.model_metrics import parse_prometheus
 from app import openshell_backend as osh
 from app.images import image_allowed
@@ -98,6 +99,7 @@ app.include_router(appliance_components.router)
 app.include_router(host_load.router)
 app.include_router(root_backups.router)
 app.include_router(package_catalogue.router)
+app.include_router(registry_images.router)
 
 
 def adopt_restart_policy() -> None:
@@ -670,6 +672,7 @@ def create_sandbox(body: SandboxRequest) -> dict[str, Any]:
     network = ensure_network()
     if body.runtime == "openshell":
         return create_openshell_sandbox(body)
+    registry_images.ensure_image(client, body.image)
     name = container_name(body.name)
     try:
         return details(client.containers.get(name))

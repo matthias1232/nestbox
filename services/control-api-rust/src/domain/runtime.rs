@@ -485,3 +485,13 @@ mod tests {
         assert!(normalize_memory_limit("2000g").is_err());
     }
 }
+
+/// One tagged image on a node, as its runner reports it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct NodeImageFact {
+    pub image: String,
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub size: i64,
+}

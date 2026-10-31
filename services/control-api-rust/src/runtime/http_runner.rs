@@ -641,6 +641,20 @@ impl RuntimeAdapter for HttpRunner {
         Ok(answer.logs)
     }
 
+    async fn images(&self) -> Result<Vec<crate::domain::runtime::NodeImageFact>, RuntimeError> {
+        #[derive(Deserialize)]
+        struct Listing {
+            items: Vec<crate::domain::runtime::NodeImageFact>,
+        }
+        let listing: Listing = self.send(reqwest::Method::GET, "/v1/images", None).await?;
+        Ok(listing.items)
+    }
+
+    async fn pull_image(&self, image: &str) -> Result<crate::domain::runtime::NodeImageFact, RuntimeError> {
+        let body = serde_json::json!({ "image": image });
+        self.send(reqwest::Method::POST, "/v1/images/pull", Some(&body)).await
+    }
+
     async fn open_vnc(&self, name: &str) -> Result<super::VncStream, RuntimeError> {
         let url = format!("{}/v1/sandboxes/{}/vnc", self.ws_base_url(), name);
         let mut request = url

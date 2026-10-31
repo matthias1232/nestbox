@@ -62,6 +62,23 @@ async fn main() {
     let mut state = AppState::new(config.clone(), runtime, pool);
     state.services = state.services.clone().with_router(router.clone());
 
+    // Images: each joined node holds what it was assigned (ADR 0048).
+    {
+        let services = state.services.clone();
+        let router = router.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+            loop {
+                match nestbox_control_api::services::image_sync_service::reconcile(&services, &router).await {
+                    Ok(0) => {}
+                    Ok(pulled) => tracing::info!(pulled, "node images brought in step with the registry"),
+                    Err(error) => tracing::debug!(code = error.code.0, "image sync pass skipped"),
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            }
+        });
+    }
+
     // Joined nodes: load their runners into the router and look at each one.
     {
         let services = state.services.clone();

@@ -302,6 +302,12 @@ impl RuntimeAdapter for RuntimeRouter {
     async fn components(&self) -> Result<Vec<ComponentState>, RuntimeError> {
         self.local.components().await
     }
+    async fn images(&self) -> Result<Vec<crate::domain::runtime::NodeImageFact>, RuntimeError> {
+        self.local.images().await
+    }
+    async fn pull_image(&self, image: &str) -> Result<crate::domain::runtime::NodeImageFact, RuntimeError> {
+        self.local.pull_image(image).await
+    }
     async fn component_logs(&self, service: &str, tail: u32) -> Result<String, RuntimeError> {
         self.local.component_logs(service, tail).await
     }

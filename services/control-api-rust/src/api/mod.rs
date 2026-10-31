@@ -11,6 +11,7 @@ pub mod cluster;
 pub mod cudax;
 pub mod events;
 pub mod image_templates;
+pub mod images;
 pub mod inventory;
 pub mod jobs;
 pub mod mcp;
@@ -435,6 +436,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/models/{key}/metrics", get(models::metrics))
         // Nodes
         .route("/api/v1/nodes", get(nodes::list))
+        .route("/api/v1/registry/images", get(images::registry))
+        .route("/api/v1/images/matrix", get(images::matrix))
+        .route("/api/v1/image-assignments", post(images::assign))
+        .route("/api/v1/image-assignments/{id}", delete(images::unassign))
         .route("/api/v1/node-join-tokens", post(node_join::create_token))
         .route("/api/v1/join/{token}/script", get(node_join::script))
         .route("/api/v1/join/{token}", post(node_join::join))

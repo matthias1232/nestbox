@@ -32,6 +32,7 @@ import SkillsPage from './features/skills/SkillsPage.jsx';
 import CudaXPage from './features/cudax/CudaXPage.jsx';
 import SystemPage from './features/system/SystemPage.jsx';
 import AdminCenter from './features/sandboxes/AdminCenter.jsx';
+import ImagesPage from './features/images/ImagesPage.jsx';
 import TenantsPage from './features/tenants/TenantsPage.jsx';
 import ContextBar from './features/tenants/ContextBar.jsx';
 import { menuFor } from './navigation.js';
@@ -165,6 +166,7 @@ export default function App() {
                   <Show when={route() === 'persistent'}><PersistentPage /></Show>
                   <Show when={route() === 'operations'}><JobsPage /></Show>
                   <Show when={route() === 'users'}><UsersPage /></Show>
+                  <Show when={route() === 'images'}><ImagesPage role={session.identity()?.role} /></Show>
                   <Show when={route() === 'tenants'}><TenantsPage role={session.identity()?.role} /></Show>
                   <Show when={route() === 'mcp'}><McpPage role={session.identity()?.role} /></Show>
                   <Show when={route() === 'media'}><MediaPage role={session.identity()?.role} /></Show>

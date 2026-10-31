@@ -14,6 +14,7 @@ pub mod cudax_service;
 pub mod environment_service;
 pub mod gateway_service;
 pub mod geography_service;
+pub mod image_sync_service;
 pub mod inventory_service;
 pub mod job_service;
 pub mod mcp_service;
