@@ -569,6 +569,12 @@ fn prepare_traffic(
             "inspected".into(),
             serde_json::json!(channel == TrafficChannel::Inspected || entry.path.is_some()),
         );
+        if let Some(method) = entry.method.as_deref().filter(|value| !value.is_empty()) {
+            map.insert("method".into(), serde_json::json!(method));
+        }
+        if let Some(path) = entry.path.as_deref().filter(|value| !value.is_empty()) {
+            map.insert("path".into(), serde_json::json!(path));
+        }
         if let Some(reason) = entry.reason.as_deref().filter(|value| !value.is_empty()) {
             map.insert("reason".into(), serde_json::json!(reason));
         }
