@@ -48,6 +48,8 @@ supersedes the old one and note the supersession in both files.
 | [0038](0038-a-user-owns-their-sandboxes.md) | A user owns their sandboxes; an admin sees and sets everything shared | Accepted |
 | [0039](0039-media-rendering-is-a-governed-capability.md) | Media rendering is a governed capability, not a provider key in the sandbox | Accepted |
 | [0040](0040-a-media-release-is-per-person.md) | A media release is per person, not only per environment | Accepted |
+| [0041](0041-name-lookups-and-bounded-master-switches.md) | A name lookup is its own event, and a master switch is a bounded window | Accepted |
+| [0042](0042-model-traffic-is-routed-through-the-accounting-proxy-by-path.md) | Model traffic is routed through the accounting proxy, and the sandbox rides in the path | Accepted |
 
 ## Writing a new ADR
 
