@@ -302,6 +302,12 @@ static_resources:
       # inspector's ClientHello parse, and `%REQUESTED_SERVER_NAME%` reads it
       # from there. Without the inspector the log field is empty.
       listener_filters:
+        # Restores the sandbox's address from the broker's header. Loopback only,
+        # so nothing outside the container can claim an address.
+        - name: envoy.filters.listener.proxy_protocol
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.listener.proxy_protocol.v3.ProxyProtocol
+            rules: []
         - name: envoy.filters.listener.tls_inspector
           typed_config:
             "@type": type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector
@@ -446,6 +452,17 @@ static_resources:
     - name: tls_terminator
       connect_timeout: 2s
       type: STATIC
+      # The sandbox's address travels to the broker as a PROXY protocol header,
+      # because the decrypted request reaches the inner listener from loopback.
+      transport_socket:
+        name: envoy.transport_sockets.upstream_proxy_protocol
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.proxy_protocol.v3.ProxyProtocolUpstreamTransport
+          config: { version: V1 }
+          transport_socket:
+            name: envoy.transport_sockets.raw_buffer
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.raw_buffer.v3.RawBuffer
       load_assignment:
         cluster_name: tls_terminator
         endpoints:

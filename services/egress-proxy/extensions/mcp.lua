@@ -184,7 +184,10 @@ function envoy_on_request(handle)
   request_headers:remove("x-nestbox-node")
   request_headers:remove("x-nestbox-node-token")
   request_headers:remove("x-nestbox-source-ip")
-  local peer = handle:streamInfo():downstreamDirectRemoteAddress()
+  -- The restored address when a PROXY header gave one (the decrypted hop from
+  -- the certificate broker), the socket's own address otherwise.
+  local info = handle:streamInfo()
+  local peer = info:downstreamRemoteAddress() or info:downstreamDirectRemoteAddress()
   if peer then
     local address = string.match(peer, "^(.-):%d+$") or peer
     request_headers:add("x-nestbox-source-ip", address)
