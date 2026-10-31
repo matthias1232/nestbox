@@ -36,7 +36,7 @@ supersedes the old one and note the supersession in both files.
 | [0026](0026-mcp-calls-are-traffic-and-stdio-is-not-egress.md) | An MCP call over HTTP is traffic; a stdio server is not egress | Accepted |
 | [0027](0027-bodies-are-logged-fully-and-the-redactor-is-the-boundary.md) | Bodies are logged fully, and the redactor is the boundary | Accepted |
 | [0028](0028-model-serving.md) | An install serves one artefact from one pinned image | Accepted |
-| [0029](0029-a-node-is-a-row-plus-an-adapter.md) | A node is a row plus an adapter; multi-node is not a rename | Accepted |
+| [0029](0029-a-node-is-a-row-plus-an-adapter.md) | A node is a row plus an adapter; multi-node is not a rename | Superseded by 0047 |
 | [0030](0030-sandboxes-that-belong-together-are-linked-explicitly.md) | Sandboxes that belong together are linked explicitly, one level deep | Accepted |
 | [0031](0031-a-sandbox-is-reached-through-its-nodes-address.md) | A sandbox is reached through its node's address, never the container's | Accepted |
 | [0032](0032-the-stack-is-drawn-from-facts-and-helpers-link-themselves.md) | The stack diagram is arranged from facts, and a lone helper links itself | Accepted |
@@ -51,6 +51,13 @@ supersedes the old one and note the supersession in both files.
 | [0041](0041-name-lookups-and-bounded-master-switches.md) | A name lookup is its own event, and a master switch is a bounded window | Accepted |
 | [0042](0042-model-traffic-is-routed-through-the-accounting-proxy-by-path.md) | Model traffic is routed through the accounting proxy, and the sandbox rides in the path | Accepted |
 | [0043](0043-a-sandbox-can-have-a-desktop-and-is-watched-live.md) | A sandbox can have a desktop, and is watched live | Accepted |
+| [0044](0044-organisations-data-centers-and-sites-are-the-tenant-tree.md) | Organisations, data centers and sites are the tenant tree | Accepted |
+| [0045](0045-access-is-a-role-binding-with-a-scope.md) | Access is a role binding with a scope, and a sandbox can be delegated | Accepted |
+| [0046](0046-sign-in-through-an-identity-provider.md) | Sign-in through an identity provider, and who may register | Accepted |
+| [0047](0047-nodes-join-through-an-agent-and-an-overlay.md) | Nodes join through an agent and a WireGuard overlay; this replaces ADR 0029 | Accepted |
+| [0048](0048-images-are-synchronised-from-one-registry.md) | Images are synchronised from one registry, assigned by scope | Accepted |
+| [0049](0049-sandboxes-move-as-snapshots-and-roots-have-one-owner-node.md) | Sandboxes move as snapshots, and a root lives on one node at a time | Accepted |
+| [0050](0050-hosts-are-created-through-provider-drivers-with-a-budget.md) | Hosts are created through provider drivers, with a lifetime and a budget | Accepted |
 
 ## Writing a new ADR
 

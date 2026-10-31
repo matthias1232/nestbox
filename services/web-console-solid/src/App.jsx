@@ -32,6 +32,7 @@ import SkillsPage from './features/skills/SkillsPage.jsx';
 import CudaXPage from './features/cudax/CudaXPage.jsx';
 import SystemPage from './features/system/SystemPage.jsx';
 import AdminCenter from './features/sandboxes/AdminCenter.jsx';
+import { menuFor } from './navigation.js';
 
 // The Admin Center is the only view with an address of its own: an operator
 // pastes `/sandboxes/<id>` into a chat and expects the same screen. Everything
@@ -44,31 +45,6 @@ function adminFromLocation() {
   return match ? match[1] : null;
 }
 
-const ROUTES = [
-  { id: 'sandboxes', label: 'Sandboxes' },
-  { id: 'traffic', label: 'Live traffic' },
-  { id: 'logs', label: 'Live logs' },
-  { id: 'policies', label: 'Policies' },
-  { id: 'cluster', label: 'Cluster' },
-  { id: 'system', label: 'System containers' },
-  { id: 'nodes', label: 'Nodes' },
-  { id: 'providers', label: 'Providers' },
-  { id: 'proxies', label: 'Exit proxies' },
-  { id: 'mcp', label: 'MCP servers' },
-  { id: 'media', label: 'Media rendering' },
-  { id: 'privacy', label: 'Content privacy' },
-  { id: 'master', label: 'Master control' },
-  { id: 'live', label: 'Agent situation' },
-  { id: 'models', label: 'Models' },
-  { id: 'skills', label: 'Skills' },
-  { id: 'cudax', label: 'CUDA-X' },
-  { id: 'builder', label: 'Build image' },
-  { id: 'recipes', label: 'Recipes' },
-  { id: 'persistent', label: 'Persistent data' },
-  { id: 'operations', label: 'Operations' },
-  // Only an admin manages who may sign in; the page and the API both refuse anyone else.
-  { id: 'users', label: 'Users', adminOnly: true },
-];
 
 export default function App() {
   const session = useSession();
@@ -126,14 +102,21 @@ export default function App() {
             </div>
 
             <nav class="nav">
-              <For each={ROUTES.filter((item) => !item.adminOnly || session.identity()?.role === 'admin')}>
-                {(item) => (
-                  <button
-                    aria-current={route() === item.id ? 'page' : undefined}
-                    onClick={() => setRoute(item.id)}
-                  >
-                    {item.label}
-                  </button>
+              <For each={menuFor(session.identity()?.role)}>
+                {(group) => (
+                  <section class="nav-group">
+                    <h2 class="nav-heading">{group.label}</h2>
+                    <For each={group.routes}>
+                      {(item) => (
+                        <button
+                          aria-current={route() === item.id ? 'page' : undefined}
+                          onClick={() => setRoute(item.id)}
+                        >
+                          {item.label}
+                        </button>
+                      )}
+                    </For>
+                  </section>
                 )}
               </For>
             </nav>

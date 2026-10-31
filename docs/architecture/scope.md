@@ -35,10 +35,10 @@ These have a complete schema and API surface. The execution path is M2.
 
 | Capability | Reason |
 |---|---|
-| Kubernetes or Helm deployment | The target is an appliance on one machine; Kubernetes would contradict that |
-| Multi-region control planes | Postgres is the single store; regions would need replication, which is a different architecture |
+| Kubernetes or Helm deployment | The runner and bind-mount persistence are the contract (ADR 0021, 0047) |
+| Multi-region control planes | Postgres is the single store; regions would need replication. Multi-site is different and is in scope: one control plane, many sites and nodes (ADR 0044, 0047) |
 | A marketplace of third-party packs | Out of the current product statement |
-| Billing or metering | Not part of the product |
+| Billing or invoicing | Usage is recorded (ADR 0050 budget guards); invoices are not part of the product |
 
 ## Known environment limits
 
@@ -60,3 +60,12 @@ The structure. If the sandbox list arrives with server paging, facets,
 virtualisation, and bulk jobs without modifying an unrelated module, the layering
 holds and every later feature is cheaper. If it required touching everything, the
 structure was wrong and was corrected before continuing.
+
+## Multi-tenant and multi-node (planned, ADR 0044-0050)
+
+Organisation tree, data centers and sites, role bindings down to one sandbox,
+OpenID Connect sign-in, nodes that join over a WireGuard overlay, a synchronised
+image registry, snapshot-based migration and provider drivers. Status per phase
+is tracked in the project plan and in `phase1-review.md` once a phase is proven
+on the appliance. Until a phase says otherwise there, it is a decision, not a
+feature.

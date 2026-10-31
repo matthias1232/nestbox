@@ -16,6 +16,15 @@ that know nothing about the domain.
 | `state/` | Session and environment | screen logic |
 | `styles/` | Design tokens and layout | component-specific hacks |
 
+## The menu
+
+`navigation.js` is the menu as data: five groups (Status, Operations, Setup,
+Security, Administration) and the route list with a minimum role per entry.
+`App.jsx` only renders it. A new screen is one line there. `navigation.test.js`
+(`node --test src/navigation.test.js`) checks that every route is in exactly one
+group and that a role never sees an entry above it. Hiding is convenience; the
+API enforces the same rule.
+
 ## Rules
 
 1. No `fetch` outside `api/client.js`.
