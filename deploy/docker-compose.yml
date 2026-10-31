@@ -198,6 +198,10 @@ services:
       # read-only, and the runner never mounts this directory.
       - ./secrets/ssh:/secrets/ssh
       - ./secrets/node:/run/node:ro
+      # The deployment's egress CA directory, at the same path inside and out so
+      # a sandbox bind source is the path Docker resolves on the host. Read-only:
+      # the runner only passes the public certificate on.
+      - ${NESTBOX_EGRESS_CA_DIR:-/opt/nestbox/site/deploy/secrets/egress}:${NESTBOX_EGRESS_CA_DIR:-/opt/nestbox/site/deploy/secrets/egress}:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -279,6 +283,14 @@ services:
       NESTBOX_ENVIRONMENT_ID: ${NESTBOX_ENVIRONMENT_ID:-00000000-0000-0000-0000-000000000002}
       NESTBOX_FORWARD_RANGE: ${NESTBOX_FORWARD_RANGE:-22200-22299}
       NESTBOX_RUNNER_STATE: /var/lib/nestbox-runner
+      # Where a `direct` sandbox leaves the node: an ordinary bridge with a
+      # route out, separate from the stack's control network.
+      NESTBOX_DIRECT_NETWORK: ${COMPOSE_PROJECT_NAME:-nestbox}-sandbox-direct
+      # The deployment CA. Mounted into a sandbox only when that sandbox's
+      # egress mode reads TLS; the runner never reads its key. The path is the
+      # host path, and the same directory is mounted at the same path below, so
+      # the bind source the runner validates is the path Docker mounts.
+      NESTBOX_EGRESS_CA: ${NESTBOX_EGRESS_CA_DIR:-/opt/nestbox/site/deploy/secrets/egress}/ca.crt
       # OpenShell sandboxes (runtime "openshell") are driven through the gateway.
       OPENSHELL_GATEWAY: openshell
     volumes:
@@ -336,6 +348,12 @@ services:
       # A copy of the node token that only the proxy's user can read (made by
       # init-data). The proxy never sees the database URLs or the SSH keys.
       - ./secrets/proxy:/run/node:ro
+    secrets:
+      # The certificate broker mints one leaf per destination from this CA. It
+      # arrives as a Docker secret (0444, root) rather than a bind mount, because
+      # a bind mount keeps the host's 0600 and the proxy's user could not read it.
+      - egress_ca_cert
+      - egress_ca_key
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -469,6 +487,14 @@ secrets:
     file: ./secrets/database_url
   database_url_admin:
     file: ./secrets/database_url_admin
+  # The egress CA. The proxy's certificate broker signs every leaf with it; no
+  # sandbox image contains it (a CA in a registry is trusted by every sandbox
+  # built from it). Docker mounts these at /run/secrets/egress_ca.crt and
+  # /run/secrets/egress_ca.key.
+  egress_ca_cert:
+    file: ./secrets/egress/ca.crt
+  egress_ca_key:
+    file: ./secrets/egress/ca.key
 
 volumes:
   nestbox-postgres:

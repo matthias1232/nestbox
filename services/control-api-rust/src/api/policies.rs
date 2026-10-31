@@ -698,6 +698,14 @@ pub async fn internal_check(
         "x-nestbox-policy-hash",
         &response.policy_hash,
     );
+    // The proxy reads this to choose between a blind tunnel and TLS termination.
+    // Absent or unknown means tunnel, so a proxy that does not understand the
+    // value cannot start inspecting traffic.
+    insert_header(
+        &mut response_headers,
+        "x-nestbox-egress-mode",
+        &response.egress_mode,
+    );
     insert_header(
         &mut response_headers,
         "x-nestbox-cache-ttl",

@@ -1281,14 +1281,19 @@ pub struct DnsRule {
 
 /// How deeply one sandbox is observed on the way out.
 ///
-/// Three modes, because there are three real answers: the proxy sees the
-/// request and nothing more (`forward_proxy`), the proxy terminates TLS and
-/// reads the decrypted request (`transparent`), or both per port (`hybrid`).
-/// A mode is a per-sandbox row, not a global switch, so a sandbox that must
-/// not have its TLS read is not read.
+/// Four modes, because there are four real answers: no proxy at all
+/// (`direct`), the proxy sees the request and nothing more (`forward_proxy`),
+/// the proxy terminates TLS and reads the decrypted request (`transparent`), or
+/// both per port (`hybrid`).
+///
+/// A mode is a per-sandbox row, not a global switch, so a sandbox that must not
+/// have its TLS read is not read, and a sandbox that must not be proxied is not
+/// proxied. The mode is the *observation* answer; where traffic leaves the node
+/// is a separate choice (`sandboxes.proxy_id`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EgressMode {
+    Direct,
     ForwardProxy,
     Transparent,
     Hybrid,
@@ -1297,6 +1302,7 @@ pub enum EgressMode {
 impl EgressMode {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Direct => "direct",
             Self::ForwardProxy => "forward_proxy",
             Self::Transparent => "transparent",
             Self::Hybrid => "hybrid",
@@ -1305,11 +1311,23 @@ impl EgressMode {
 
     pub fn parse(value: &str) -> Option<Self> {
         Some(match value {
+            "direct" => Self::Direct,
             "forward_proxy" => Self::ForwardProxy,
             "transparent" => Self::Transparent,
             "hybrid" => Self::Hybrid,
             _ => return None,
         })
+    }
+
+    /// Whether this mode puts the node's egress proxy in the path at all.
+    pub fn uses_proxy(self) -> bool {
+        !matches!(self, Self::Direct)
+    }
+
+    /// Whether this mode may read the contents of a TLS connection, and
+    /// therefore needs the sandbox to trust the node's CA.
+    pub fn inspects_tls(self) -> bool {
+        matches!(self, Self::Transparent | Self::Hybrid)
     }
 }
 

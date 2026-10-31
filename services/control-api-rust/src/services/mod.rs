@@ -26,6 +26,7 @@ pub mod persist_service;
 pub mod policy_service;
 pub mod privacy_service;
 pub mod provider_service;
+pub mod proxy_service;
 pub mod sandbox_service;
 pub mod selection;
 pub mod session_service;

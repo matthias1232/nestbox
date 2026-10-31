@@ -110,6 +110,15 @@ REDIRECT_PORTS = (80, 443, 8080)
 # so `..` and symlinks cannot escape it. Empty disables mounts entirely.
 PERSISTENT_BASE = os.path.realpath(os.getenv("NESTBOX_PERSISTENT_BASE", "/var/lib/nestbox/persistent"))
 HOST_PROC = os.getenv("NESTBOX_HOST_PROC", "/proc")
+# The network a sandbox with `direct` egress joins: an ordinary bridge with a
+# default route, which is what "no proxy" means. It is separate from the stack's
+# `control` network on purpose — a sandbox must not reach the database or the
+# control API just because it may reach the internet.
+DIRECT_NETWORK = os.getenv("NESTBOX_DIRECT_NETWORK", "nestbox-sandbox-direct")
+# The deployment CA, as this container sees it. Mounted into a sandbox only when
+# that sandbox's egress mode reads TLS; the file itself is never in an image.
+EGRESS_CA_HOST = os.getenv("NESTBOX_EGRESS_CA", "/run/egress/ca.crt")
+EGRESS_CA_TARGET = "/run/secrets/egress-ca.crt"
 
 
 
@@ -156,6 +165,10 @@ class SandboxRequest(BaseModel):
     ports: dict[str, int] = Field(default_factory=dict)
     mounts: list[MountSpec] = Field(default_factory=list)
     gpu_count: int = Field(default=0, ge=0, le=8)
+    # `direct`, `forward_proxy`, `transparent` or `hybrid`. Two of them change
+    # how the container is placed: `direct` needs a route out, the TLS-reading
+    # ones need the node CA.
+    egress_mode: str = "forward_proxy"
 
 
 def container_name(name: str) -> str:
@@ -196,6 +209,29 @@ def ensure_network() -> Any:
             "with no default route; nothing on an open network is policed.",
         )
     return network
+
+
+def ensure_direct_network() -> Any:
+    """Return the bridge a `direct` sandbox leaves through, creating it once.
+
+    The sandbox network is `internal`: no gateway, no NAT, no external DNS. That
+    is what makes the egress proxy the only way out. A sandbox whose operator
+    chose `direct` is supposed to have a route of its own, so it gets this
+    second bridge instead — a normal one, with Docker's NAT and the node's
+    resolver — and is then attached to the sandbox network as well so it keeps
+    reaching its model and the MCP hub by name.
+
+    Deliberately not the stack's `control` network: a sandbox that may reach the
+    internet has no business reaching PostgreSQL.
+    """
+    try:
+        return client.networks.get(DIRECT_NETWORK)
+    except NotFound:
+        return client.networks.create(
+            DIRECT_NETWORK,
+            driver="bridge",
+            labels={"nestbox.managed": "true", "nestbox.egress": "direct"},
+        )
 
 
 def find_egress_proxy() -> Any | None:
@@ -581,6 +617,31 @@ def create_sandbox(body: SandboxRequest) -> dict[str, Any]:
     except NotFound:
         pass
     mounts = [validate_mount(m) for m in body.mounts]
+    direct = body.egress_mode == "direct"
+    inspects_tls = body.egress_mode in ("transparent", "hybrid")
+    if direct:
+        # Before the container exists: `network=` with a name Docker does not
+        # know is a create that fails with a message about a network.
+        ensure_direct_network()
+    if inspects_tls:
+        # Only a sandbox whose traffic is actually read is given the CA. The
+        # file is public, but trusting it is a decision, and the decision is the
+        # mode.
+        if os.path.exists(EGRESS_CA_HOST):
+            mounts.append(
+                {
+                    "type": "bind",
+                    "source": EGRESS_CA_HOST,
+                    "target": EGRESS_CA_TARGET,
+                    "read_only": True,
+                }
+            )
+        else:
+            logger.warning(
+                "egress mode %s needs the node CA, but %s does not exist",
+                body.egress_mode,
+                EGRESS_CA_HOST,
+            )
     extra: dict[str, Any] = {}
     if mounts:
         from docker.types import Mount as DockerMount
@@ -610,7 +671,10 @@ def create_sandbox(body: SandboxRequest) -> dict[str, Any]:
             body.command,
             name=name,
             detach=True,
-            network=NETWORK,
+            # The first network is the one Docker takes the default route from.
+            # A direct sandbox gets it from the bridge with NAT; every other
+            # sandbox is on the internal network, which has no gateway at all.
+            network=DIRECT_NETWORK if direct else NETWORK,
             hostname=body.name,
             environment=body.environment,
             mem_limit=body.memory_limit,
@@ -629,6 +693,13 @@ def create_sandbox(body: SandboxRequest) -> dict[str, Any]:
                 "nestbox.tool_profile": body.tool_profile,
             },
         )
+        if direct:
+            # Keep the internal network too: the model on this node and the MCP
+            # hub are only reachable there, and neither is egress.
+            try:
+                ensure_network().connect(container)
+            except DockerException as exc:
+                logger.warning("direct sandbox %s could not join %s: %s", body.name, NETWORK, exc)
         return details(container)
     except DockerException as exc:
         raise HTTPException(400, f"sandbox creation failed: {exc}") from exc

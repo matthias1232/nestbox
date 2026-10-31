@@ -25,6 +25,7 @@ pub mod policies;
 pub mod privacy;
 pub mod principal;
 pub mod providers;
+pub mod proxies;
 pub mod secrets;
 pub mod recipes;
 pub mod sandbox_agents;
@@ -372,6 +373,22 @@ pub fn router(state: AppState) -> Router {
         // Registered before `{id}` so a static path is never read as an id.
         .route("/api/v1/providers/probe-all", post(providers::probe_all))
         .route("/api/v1/providers/{id}/probe", post(providers::probe))
+        // Exit proxies: the catalogue, and which entry a sandbox or a provider
+        // leaves through. The exit is a separate question from the egress mode
+        // (how much is observed), which is why it is its own resource.
+        .route("/api/v1/proxies", get(proxies::list).post(proxies::create))
+        .route(
+            "/api/v1/proxies/{id}",
+            get(proxies::get).put(proxies::update).delete(proxies::delete),
+        )
+        .route(
+            "/api/v1/sandboxes/{id}/proxy",
+            get(proxies::get_sandbox_proxy).put(proxies::put_sandbox_proxy),
+        )
+        .route(
+            "/api/v1/providers/{id}/proxy",
+            put(proxies::put_provider_proxy),
+        )
         .route("/api/v1/secrets", get(secrets::list).post(secrets::put))
         .route("/api/v1/secrets/{id}", axum::routing::delete(secrets::delete))
         // Models

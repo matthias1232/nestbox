@@ -185,6 +185,7 @@ impl RuntimeAdapter for HttpRunner {
             "pids_limit": spec.pids_limit,
             "mounts": spec.mounts,
             "gpu_count": spec.gpu_count,
+            "egress_mode": spec.egress_mode,
         });
         let facts: RunnerSandbox = self
             .send(reqwest::Method::POST, "/v1/sandboxes", Some(&payload))

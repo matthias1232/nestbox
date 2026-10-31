@@ -103,8 +103,22 @@ pub struct CheckResponse {
     /// The hash of the rule set this decision came from, so the proxy can tell
     /// whether it is enforcing the current policy.
     pub policy_hash: String,
+    /// How deeply this sandbox's egress may be observed: `forward_proxy`,
+    /// `transparent` or `hybrid`. The proxy must know before it answers a
+    /// CONNECT, because that answer decides tunnel versus TLS termination.
+    #[serde(default = "default_egress_mode")]
+    pub egress_mode: String,
     /// How long the proxy may cache this answer for the same key.
     pub cache_ttl_seconds: u32,
+}
+
+/// The mode a response carries when the sandbox has no setting of its own.
+///
+/// `forward_proxy` is the safe default: the proxy sees the destination and
+/// nothing inside the tunnel, which is what the operator gets unless they
+/// deliberately asked for inspection.
+pub fn default_egress_mode() -> String {
+    "forward_proxy".to_string()
 }
 
 /// An open traffic window, as the decision function needs it.
@@ -270,6 +284,7 @@ pub fn decide(
         explanation,
         policy_hash: policy.hash.clone(),
         cache_ttl_seconds: 5,
+        egress_mode: default_egress_mode(),
     };
 
     // A window is scoped to a channel: a DNS window must not open the web. The

@@ -7,13 +7,31 @@
 
 import { For, Show, createResource, createSignal } from 'solid-js';
 import * as api from '../../api/policies.js';
+import * as proxyApi from '../../api/proxies.js';
 import StatusBadge from '../../components/StatusBadge.jsx';
 import { NetworkRuleForm, DnsRuleForm } from '../policies/RuleForms.jsx';
 
 const MODES = [
-  { value: 'forward_proxy', label: 'Forward proxy', note: 'The proxy sees which host and port a request goes to, not what is inside an encrypted connection.' },
-  { value: 'transparent', label: 'Transparent (reads TLS)', note: 'The proxy terminates TLS and reads the request, so methods and paths can be matched. Needs the trust CA inside the sandbox.' },
-  { value: 'hybrid', label: 'Hybrid', note: 'Reads TLS on the ports you choose and forwards the rest unread.' },
+  {
+    value: 'direct',
+    label: 'Direct — no proxy, no inspection',
+    note: 'The sandbox leaves on its own route: no proxy in the environment, no CA, nothing observed. Policy rules still exist, but this traffic does not pass the proxy that enforces them — choose it when the sandbox must not be observed at all.',
+  },
+  {
+    value: 'forward_proxy',
+    label: 'Forward proxy — sees host and port',
+    note: 'Every request goes through the node\'s egress proxy, which sees the destination and decides per request. It does not read inside an encrypted connection, so no CA is needed.',
+  },
+  {
+    value: 'transparent',
+    label: 'Transparent — reads TLS',
+    note: 'The proxy terminates TLS and reads the request, so methods and paths can be matched. The node CA is mounted into this sandbox only, and its tools are told to trust it.',
+  },
+  {
+    value: 'hybrid',
+    label: 'Hybrid — reads TLS, forwards the rest',
+    note: 'Reads TLS on the ports you choose and forwards the rest unread. The node CA is mounted into this sandbox only.',
+  },
 ];
 
 export default function PoliciesTab(props) {
@@ -22,6 +40,9 @@ export default function PoliciesTab(props) {
   const [assignment, { refetch: refetchAssignment }] = createResource(id, (value) => api.sandboxPolicy(value));
   const [rules, { refetch: refetchRules }] = createResource(id, (value) => api.sandboxRules(value));
   const [mode, { refetch: refetchMode }] = createResource(id, (value) => api.egressMode(value).catch(() => null));
+  const [exits] = createResource(() => proxyApi.list().catch(() => ({ items: [] })));
+  const [exit, { refetch: refetchExit }] = createResource(id, (value) =>
+    proxyApi.sandboxProxy(value).catch(() => null));
   const [chosen, setChosen] = createSignal('');
   const [message, setMessage] = createSignal(null);
   const [failure, setFailure] = createSignal(null);
@@ -43,6 +64,8 @@ export default function PoliciesTab(props) {
 
   const current = () => assignment()?.assignment;
   const currentModeValue = () => mode()?.mode || 'forward_proxy';
+  const currentExit = () => exit()?.proxy?.id || '';
+  const exitList = () => (exits()?.items || []).filter((item) => item.enabled);
 
   return (
     <section class="tab-panel">
@@ -71,11 +94,45 @@ export default function PoliciesTab(props) {
 
       <h3>How deeply is its egress observed?</h3>
       <div class="controls">
-        <select value={currentModeValue()} onChange={(e) => run(() => api.setEgressMode(id(), e.currentTarget.value), 'Egress mode saved.', refetchMode)}>
+        <select value={currentModeValue()} onChange={(e) => run(() => api.setEgressMode(id(), e.currentTarget.value), 'Egress mode saved. A running sandbox is recreated so the change applies.', refetchMode)}>
           <For each={MODES}>{(item) => <option value={item.value}>{item.label}</option>}</For>
         </select>
       </div>
       <p class="muted small">{MODES.find((item) => item.value === currentModeValue())?.note}</p>
+      <p class="muted small">
+        A mode is part of the container, not a rule the proxy reads per request: changing it
+        recreates the sandbox. Its persistent data survives; anything written outside a
+        persistent root does not.
+      </p>
+
+      <h3>Which exit does it leave through?</h3>
+      <div class="controls">
+        <select value={currentExit()} onChange={(e) => run(
+          () => proxyApi.setSandboxProxy(id(), e.currentTarget.value || null),
+          'Exit saved. A running sandbox is recreated so the change applies.',
+          refetchExit,
+        )}>
+          <option value="">Node's own route</option>
+          <For each={exitList()}>
+            {(item) => <option value={item.id}>{item.name}{item.country ? ` · ${item.country}` : ''}</option>}
+          </For>
+        </select>
+      </div>
+      <Show
+        when={currentModeValue() === 'direct'}
+        fallback={
+          <p class="muted small">
+            An exit applies to <b>Direct</b> egress. In the proxied modes the node's egress
+            proxy is the exit, because that is the point where rules are enforced; switch to
+            Direct to route this sandbox through the chosen exit.
+          </p>
+        }
+      >
+        <p class="muted small">
+          Direct with an exit sends the sandbox's traffic to that proxy and nothing else
+          inspects it. Without an exit it uses the node's own route.
+        </p>
+      </Show>
 
       <h3>Rules that apply to this sandbox</h3>
       <Show when={(rules()?.items || []).length > 0} fallback={<p class="muted small">No rule applies. With default deny, nothing leaves this sandbox.</p>}>

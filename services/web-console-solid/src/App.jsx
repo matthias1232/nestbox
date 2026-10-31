@@ -14,6 +14,7 @@ import TrafficPage from './features/traffic/TrafficPage.jsx';
 import PoliciesPage from './features/policies/PoliciesPage.jsx';
 import ClusterPage from './features/cluster/ClusterPage.jsx';
 import ProvidersPage from './features/providers/ProvidersPage.jsx';
+import ProxiesPage from './features/proxies/ProxiesPage.jsx';
 import ModelsPage from './features/models/ModelsPage.jsx';
 import NodesPage from './features/nodes/NodesPage.jsx';
 import RecipesPage from './features/recipes/RecipesPage.jsx';
@@ -52,6 +53,7 @@ const ROUTES = [
   { id: 'system', label: 'System containers' },
   { id: 'nodes', label: 'Nodes' },
   { id: 'providers', label: 'Providers' },
+  { id: 'proxies', label: 'Exit proxies' },
   { id: 'mcp', label: 'MCP servers' },
   { id: 'media', label: 'Media rendering' },
   { id: 'privacy', label: 'Content privacy' },
@@ -178,6 +180,7 @@ export default function App() {
                     <NodesPage onOpenSandbox={openAdmin} />
                   </Show>
                   <Show when={route() === 'providers'}><ProvidersPage /></Show>
+                  <Show when={route() === 'proxies'}><ProxiesPage role={session.identity()?.role} /></Show>
                   <Show when={route() === 'models'}><ModelsPage /></Show>
                   <Show when={route() === 'skills'}><SkillsPage /></Show>
                   <Show when={route() === 'cudax'}><CudaXPage /></Show>

@@ -83,6 +83,11 @@ pub struct SandboxSpec {
     pub mounts: Vec<crate::domain::persist::MountSpec>,
     /// GPUs to hand to the container. Zero on a node without `container_gpu`.
     pub gpu_count: u32,
+    /// How deeply this sandbox's egress is observed (`direct`,
+    /// `forward_proxy`, `transparent`, `hybrid`). The adapter needs it before
+    /// the container exists: `direct` puts the container on a network with a
+    /// route out, and the two TLS-reading modes need the node CA mounted.
+    pub egress_mode: String,
 }
 
 /// What the runner found on its own host, as raw text the control plane parses.

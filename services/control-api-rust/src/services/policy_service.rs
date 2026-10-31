@@ -820,6 +820,21 @@ pub async fn set_egress_mode(
     .await
     .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
+    // A mode is not a rule the proxy reads per request: it decides whether the
+    // sandbox has a proxy at all (`direct`) and whether it trusts the node CA
+    // (`transparent`, `hybrid`). Docker fixes both when the container is
+    // created, so a running sandbox is recreated — the same operation a mount
+    // change uses, with the same visible consequence (its non-persistent files
+    // are gone, its persistent roots survive).
+    if sandbox.status == crate::domain::sandbox::SandboxStatus::Running {
+        if let Err(error) = crate::services::sandbox_service::recreate(ctx, principal, sandbox.id).await {
+            tracing::warn!(
+                sandbox = %sandbox.name,
+                code = error.code.0,
+                "egress mode saved, but the sandbox could not be recreated to apply it"
+            );
+        }
+    }
     Ok(setting)
 }
 
@@ -1372,6 +1387,15 @@ pub async fn check(ctx: &ServiceContext, input: CheckInput) -> Result<CheckOutco
         windows,
     };
     let mut response = decide(&request, &policy, now);
+    // The proxy decides tunnel versus TLS termination from this answer, so the
+    // sandbox's own setting has to travel with it. Read through the same scope as
+    // the rules: a mode that belonged to another tenant would be a leak, and an
+    // unset sandbox keeps the `forward_proxy` default.
+    response.egress_mode = store::egress_mode_for_sandbox(&mut scope, sandbox_id)
+        .await
+        .map_err(ApiError::from)?
+        .map(|setting| setting.mode.as_str().to_string())
+        .unwrap_or_else(crate::domain::egress::default_egress_mode);
     // A rule compiled from a document has no row; a decision must not cite an id
     // that points at nothing.
     if response.rule_id == Some(Uuid::nil()) {
@@ -1454,6 +1478,7 @@ fn refusal(explanation: String) -> CheckResponse {
         explanation,
         policy_hash: String::new(),
         cache_ttl_seconds: 0,
+        egress_mode: crate::domain::egress::default_egress_mode(),
     }
 }
 

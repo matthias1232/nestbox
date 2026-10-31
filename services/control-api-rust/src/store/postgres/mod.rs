@@ -24,6 +24,7 @@ pub mod policies;
 pub mod privacy;
 pub mod backups;
 pub mod providers;
+pub mod proxies;
 pub mod vault;
 pub mod recipes;
 pub mod sandboxes;

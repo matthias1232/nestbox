@@ -150,6 +150,29 @@ static_resources:
                         # mode (`tls_terminator`, listener 2 below), not the
                         # default: a tunnel that cannot be read should be
                         # allowed or denied by name, not broken.
+                        # Inspection route: the Lua filter marks a CONNECT whose
+                        # sandbox is in `transparent` or `hybrid` mode. Anything
+                        # not marked stays on the tunnel route below, so an
+                        # unmarked connection can never be decrypted by accident.
+                        - match:
+                            connect_matcher: {}
+                            headers:
+                              - name: x-nestbox-inspect
+                                exact_match: "1"
+                          route:
+                            cluster: tls_terminator
+                            upgrade_configs:
+                              - upgrade_type: CONNECT
+                                connect_config: {}
+                            timeout: 0s
+                            idle_timeout: 300s
+                          typed_per_filter_config:
+                            envoy.filters.http.buffer:
+                              "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.BufferPerRoute
+                              disabled: true
+                            envoy.filters.http.ext_authz:
+                              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthzPerRoute
+                              disabled: true
                         - match: { connect_matcher: {} }
                           route:
                             cluster: dynamic_forward_proxy_cluster

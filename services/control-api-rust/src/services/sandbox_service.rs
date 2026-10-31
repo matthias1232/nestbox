@@ -578,6 +578,69 @@ pub fn egress_environment(proxy: &str) -> Vec<(String, String)> {
     values
 }
 
+/// Where a sandbox finds the node CA when its egress is inspected.
+///
+/// The runner mounts the deployment's CA here, read-only, and only for a
+/// sandbox in a TLS-reading mode. Nothing is baked into an image: a CA in a
+/// registry is a CA trusted by every sandbox built from it, whether or not that
+/// sandbox is supposed to be inspected.
+pub const EGRESS_CA_IN_SANDBOX: &str = "/run/secrets/egress-ca.crt";
+
+/// The trust variables that make a sandbox accept the node CA.
+///
+/// `NODE_EXTRA_CA_CERTS` adds to Node's store, so it is the one that cannot
+/// break an uninspected host. The others replace the bundle for their client,
+/// which is correct in `transparent` mode (every TLS connection is terminated by
+/// the proxy, so every certificate is ours) and is why the console says what a
+/// mode does before it is chosen.
+pub fn tls_trust_environment(ca_path: &str) -> Vec<(String, String)> {
+    [
+        "NODE_EXTRA_CA_CERTS",
+        "SSL_CERT_FILE",
+        "REQUESTS_CA_BUNDLE",
+        "CURL_CA_BUNDLE",
+        "GIT_SSL_CAINFO",
+        "AWS_CA_BUNDLE",
+    ]
+    .into_iter()
+    .map(|key| (key.to_string(), ca_path.to_string()))
+    .collect()
+}
+
+/// The proxy variables for a mode, given the proxy the sandbox will actually
+/// talk to.
+///
+/// `direct` with no exit has none: the sandbox reaches the internet on its own
+/// route, which is what "no proxy" means. `direct` with an exit points at that
+/// exit. The proxied modes point at the node's egress proxy and, when the mode
+/// reads TLS, also tell the sandbox to trust the node CA.
+pub fn egress_environment_for(
+    proxy: &str,
+    mode: crate::domain::policy::EgressMode,
+    ca_path: &str,
+) -> Vec<(String, String)> {
+    let mut values = egress_environment(proxy);
+    if mode.inspects_tls() {
+        values.extend(tls_trust_environment(ca_path));
+    }
+    values.sort();
+    values
+}
+
+/// The proxy URL a sandbox is given, and whether it is the node's egress proxy.
+///
+/// Returned as one value so the environment and the runtime spec cannot
+/// disagree about which mode a container was created in.
+pub fn sandbox_proxy_url(
+    mode: crate::domain::policy::EgressMode,
+    exit: Option<&crate::domain::proxy::Proxy>,
+) -> Option<String> {
+    match mode {
+        crate::domain::policy::EgressMode::Direct => exit.map(|proxy| proxy.url()),
+        _ => Some(egress_proxy_url()),
+    }
+}
+
 /// Create a sandbox: validate, place, persist, then ask the runtime.
 ///
 /// Order matters. The row is written first so a failed runtime call leaves a
@@ -915,6 +978,9 @@ pub async fn create(
         pids_limit: request.pids_limit,
         mounts,
         gpu_count: 0,
+        // A new sandbox has no mode row yet, so it starts on the default the
+        // proxy itself runs. Choosing another mode recreates the container.
+        egress_mode: "forward_proxy".to_string(),
     };
 
     let configured_environment: BTreeMap<String, String> =
@@ -1361,6 +1427,71 @@ mod tests {
     }
 
     #[test]
+    fn direct_egress_has_no_proxy_variable_at_all() {
+        // "No proxy" has to mean no proxy variable: a leftover `HTTP_PROXY` is a
+        // sandbox that still goes through the thing the operator switched off.
+        let values = egress_environment_for(
+            DEFAULT_EGRESS_PROXY,
+            crate::domain::policy::EgressMode::Direct,
+            EGRESS_CA_IN_SANDBOX,
+        );
+        // The helper is only called when there is a proxy (a direct sandbox with
+        // an exit). With no exit the caller adds nothing at all.
+        assert!(values.iter().any(|(key, _)| key == "HTTP_PROXY"));
+        assert!(!values.iter().any(|(key, _)| key == "NODE_EXTRA_CA_CERTS"));
+    }
+
+    #[test]
+    fn only_a_tls_reading_mode_trusts_the_node_ca() {
+        use crate::domain::policy::EgressMode;
+        for mode in [EgressMode::ForwardProxy, EgressMode::Direct] {
+            let values = egress_environment_for(DEFAULT_EGRESS_PROXY, mode, EGRESS_CA_IN_SANDBOX);
+            assert!(
+                !values.iter().any(|(key, _)| key == "NODE_EXTRA_CA_CERTS"),
+                "{mode:?} must not trust the CA"
+            );
+        }
+        for mode in [EgressMode::Transparent, EgressMode::Hybrid] {
+            let values = egress_environment_for(DEFAULT_EGRESS_PROXY, mode, EGRESS_CA_IN_SANDBOX);
+            let trust = values
+                .iter()
+                .find(|(key, _)| key == "NODE_EXTRA_CA_CERTS")
+                .map(|(_, value)| value.as_str());
+            assert_eq!(trust, Some(EGRESS_CA_IN_SANDBOX), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn a_direct_sandbox_with_an_exit_is_told_to_use_that_exit() {
+        let exit = crate::domain::proxy::Proxy {
+            id: uuid::Uuid::nil(),
+            environment_id: uuid::Uuid::nil(),
+            name: "DE".into(),
+            kind: crate::domain::proxy::ProxyKind::Http,
+            host: "192.168.55.1".into(),
+            port: 22541,
+            country: Some("DE".into()),
+            provider: None,
+            username: None,
+            password_configured: false,
+            password_ref: None,
+            enabled: true,
+            version: 1,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        let url = sandbox_proxy_url(crate::domain::policy::EgressMode::Direct, Some(&exit));
+        assert_eq!(url.as_deref(), Some("http://192.168.55.1:22541"));
+        // Without an exit, a direct sandbox is given no proxy.
+        assert_eq!(sandbox_proxy_url(crate::domain::policy::EgressMode::Direct, None), None);
+        // A proxied mode always points at the node's egress proxy.
+        assert_eq!(
+            sandbox_proxy_url(crate::domain::policy::EgressMode::ForwardProxy, Some(&exit)).as_deref(),
+            Some(DEFAULT_EGRESS_PROXY)
+        );
+    }
+
+    #[test]
     fn a_tool_is_not_told_to_reach_the_proxy_through_the_proxy() {
         let values = egress_environment("http://egress-proxy:3128");
         let bypass = values
@@ -1797,6 +1928,18 @@ pub async fn recreate(
     }
     let defaults = pack_service::pack_defaults(&mut scope, &sandbox.pack_key, None).await?;
     let mounts = crate::services::persist_service::mount_specs_for_sandbox(&mut scope, sandbox.id).await?;
+    // The two answers the container has to be created with. Read here, inside
+    // the transaction, because a recreate is exactly the moment they take
+    // effect: Docker fixes a container's environment when it is created.
+    let egress_mode = crate::store::postgres::policies::egress_mode_for_sandbox(&mut scope, sandbox.id)
+        .await
+        .map_err(ApiError::from)?
+        .map(|setting| setting.mode)
+        .unwrap_or(crate::domain::policy::EgressMode::ForwardProxy);
+    let egress_exit = crate::store::postgres::proxies::for_sandbox(&mut scope, sandbox.id)
+        .await
+        .map_err(ApiError::from)?
+        .filter(|proxy| proxy.enabled);
     let memory_limit = sandbox
         .spec
         .get("memory_limit")
@@ -1830,7 +1973,13 @@ pub async fn recreate(
         apply_login_choice(&mut values, sandbox.spec.get("login").and_then(|v| v.as_str()));
         values.into_iter().collect()
     };
-    environment.extend(egress_environment(&egress_proxy_url()));
+    if let Some(proxy) = sandbox_proxy_url(egress_mode, egress_exit.as_ref()) {
+        environment.extend(egress_environment_for(
+            &proxy,
+            egress_mode,
+            EGRESS_CA_IN_SANDBOX,
+        ));
+    }
     add_inference_bypass_vec(&mut environment);
     let configured: BTreeMap<String, String> = environment.iter().cloned().collect();
 
@@ -1849,6 +1998,7 @@ pub async fn recreate(
         pids_limit,
         mounts: mounts.clone(),
         gpu_count: 0,
+        egress_mode: egress_mode.as_str().to_string(),
     };
     match ctx.runtime.create(spec).await {
         Ok(facts) => {

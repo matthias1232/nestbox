@@ -155,6 +155,17 @@ local function check_tunnel(handle, authority, source_address)
       meta:set("envoy.filters.http.ext_authz", name, value)
     end
   end
+  -- `transparent` and `hybrid` mean this sandbox may have its TLS read. Mark the
+  -- request so the route with the terminating cluster matches; every other value
+  -- (including a proxy that does not know the header) stays a blind tunnel.
+  -- `replace`, not `add`: a client must not be able to force inspection on itself
+  -- by sending the header, because that would only break its own TLS.
+  local mode = response_headers["x-nestbox-egress-mode"]
+  if mode == "transparent" or mode == "hybrid" then
+    handle:headers():replace("x-nestbox-inspect", "1")
+  else
+    handle:headers():replace("x-nestbox-inspect", "0")
+  end
   if response_headers[":status"] ~= "200" then
     handle:respond(
       { [":status"] = "403", ["x-nestbox-decision"] = response_headers["x-nestbox-decision"] or "deny" },

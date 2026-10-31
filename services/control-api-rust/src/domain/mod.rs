@@ -30,6 +30,7 @@ pub mod persist;
 pub mod policy;
 pub mod privacy;
 pub mod provider;
+pub mod proxy;
 pub mod runtime;
 pub mod sandbox;
 pub mod ssh_access;

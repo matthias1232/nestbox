@@ -637,10 +637,14 @@ async fn call_provider(
     if let Some(seconds) = request.duration_seconds {
         body["duration"] = json!(seconds.clamp(1, 60));
     }
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(180))
-        .build()
-        .map_err(|error| format!("media client: {error}"))?;
+    // The provider's chosen exit applies here too: a media endpoint that must be
+    // reached from a particular country is the same problem as a sandbox.
+    let client = crate::services::provider_service::client_for(
+        ctx,
+        profile,
+        std::time::Duration::from_secs(180),
+    )
+    .await?;
     let mut call = client.post(&url).json(&body);
     if let Some(value) = credential.as_deref() {
         call = call.bearer_auth(value);

@@ -1003,6 +1003,7 @@ pub async fn instantiate(
         pids_limit: recipe.resources.pids_limit,
         mounts: runtime_mounts,
         gpu_count: recipe.resources.gpu_count,
+        egress_mode: "forward_proxy".to_string(),
     };
 
     match ctx.runtime.create(runtime_spec).await {

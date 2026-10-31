@@ -9,7 +9,7 @@ use crate::error::StoreError;
 
 const PROFILE_COLUMNS: &str = "id, environment_id, name, kind, endpoint, model, secret_ref, \
      credential_expiry, labels, version, created_at, updated_at, status, node_id, \
-     model_install_id, last_probed_at";
+     model_install_id, last_probed_at, proxy_id";
 
 fn row_to_profile(row: &sqlx::postgres::PgRow) -> Result<ProviderProfile, StoreError> {
     let kind_raw: String = row.try_get("kind")?;
@@ -35,6 +35,7 @@ fn row_to_profile(row: &sqlx::postgres::PgRow) -> Result<ProviderProfile, StoreE
         node_id: row.try_get("node_id")?,
         model_install_id: row.try_get("model_install_id")?,
         last_probed_at: row.try_get("last_probed_at")?,
+        proxy_id: row.try_get("proxy_id")?,
     })
 }
 

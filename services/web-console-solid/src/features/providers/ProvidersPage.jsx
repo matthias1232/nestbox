@@ -16,6 +16,7 @@ import { ApiError } from '../../api/client.js';
 import * as api from '../../api/providers.js';
 import * as vault from '../../api/secrets.js';
 import * as models from '../../api/models.js';
+import * as proxies from '../../api/proxies.js';
 import '../../styles/providers-status.css';
 
 // What an operator can register by hand. `local_openai_compatible` is absent on
@@ -115,16 +116,21 @@ export default function ProvidersPage() {
   // Stored keys (write-only: the list never carries a value) and the add/rotate form.
   const [keys, setKeys] = createSignal([]);
   const [keyForm, setKeyForm] = createSignal({ name: '', kind: 'api_key', value: '' });
+  // Exit proxies this profile may be called through. The choice is stored on the
+  // profile and used by the probe and by media rendering.
+  const [exitList, setExitList] = createSignal([]);
 
   onMount(load);
 
   async function load() {
     setError(null);
-    const [profiles, installList, keyList] = await Promise.allSettled([
+    const [profiles, installList, keyList, exits] = await Promise.allSettled([
       api.list(),
       models.installs(),
       vault.list(),
+      proxies.list(),
     ]);
+    setExitList(exits.status === 'fulfilled' ? exits.value?.items || [] : []);
     setKeys(keyList.status === 'fulfilled' ? keyList.value?.items || [] : []);
 
     if (profiles.status === 'fulfilled') {
@@ -285,6 +291,20 @@ export default function ProvidersPage() {
     }
   }
 
+  async function setExit(profile, proxyId) {
+    setError(null);
+    setNotice(null);
+    try {
+      await proxies.setProviderProxy(profile.id, proxyId || null);
+      setNotice(proxyId
+        ? `Calls to ${profile.name} leave through the chosen exit.`
+        : `Calls to ${profile.name} use the node's own route.`);
+      await load();
+    } catch (failure) {
+      setError(failure.message);
+    }
+  }
+
   async function probe(profile) {
     setError(null);
     setNotice(null);
@@ -406,6 +426,7 @@ export default function ProvidersPage() {
                 <th>Model</th>
                 <th>Credential</th>
                 <th>Status</th>
+                <th>Exit</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -486,6 +507,17 @@ export default function ProvidersPage() {
                           Last probed {relative(profile.last_probed_at)}
                         </div>
                       </Show>
+                    </td>
+                    <td class="small">
+                      <select
+                        value={profile.proxy_id || ''}
+                        onChange={(e) => setExit(profile, e.currentTarget.value)}
+                      >
+                        <option value="">Node route</option>
+                        <For each={exitList().filter((item) => item.enabled)}>
+                          {(exit) => <option value={exit.id}>{exit.name}</option>}
+                        </For>
+                      </select>
                     </td>
                     <td class="actions">
                       <button

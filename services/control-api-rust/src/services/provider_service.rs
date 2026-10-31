@@ -403,6 +403,38 @@ pub async fn probe_all(
 /// HTTP answer counts as reachable even when it is a 401: the server is up and
 /// the credential is the problem, which is a different fix from "nothing is
 /// listening".
+/// The exit a provider profile is called through, when one is chosen.
+///
+/// Resolved from the row, not from the caller: a probe and a media render both
+/// call a provider, and both must leave from the country the operator chose. A
+/// disabled exit is not used — an operator who switched it off expects traffic
+/// to stop going through it.
+pub async fn exit_url(ctx: &ServiceContext, profile: &ProviderProfile) -> Option<String> {
+    let mut scope = crate::store::TenantScope::begin(&ctx.pool, profile.environment_id)
+        .await
+        .ok()?;
+    let proxy = crate::store::postgres::proxies::for_provider(&mut scope, profile.id)
+        .await
+        .ok()
+        .flatten();
+    let _ = scope.commit().await;
+    proxy.filter(|proxy| proxy.enabled).map(|proxy| proxy.url())
+}
+
+/// A client that leaves through the profile's exit, when it has one.
+pub async fn client_for(
+    ctx: &ServiceContext,
+    profile: &ProviderProfile,
+    timeout: std::time::Duration,
+) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder().timeout(timeout);
+    if let Some(url) = exit_url(ctx, profile).await {
+        let proxy = reqwest::Proxy::all(&url).map_err(|error| format!("exit proxy: {error}"))?;
+        builder = builder.proxy(proxy);
+    }
+    builder.build().map_err(|error| format!("client: {error}"))
+}
+
 pub(crate) async fn measure(ctx: &ServiceContext, profile: &ProviderProfile) -> ProbeResult {
     let credential = match profile.secret_ref.as_deref() {
         Some(locator) => match crate::services::secret_service::credential(ctx, profile.environment_id, locator).await {
@@ -421,10 +453,7 @@ pub(crate) async fn measure(ctx: &ServiceContext, profile: &ProviderProfile) -> 
     };
 
     let url = format!("{}/models", profile.endpoint.trim_end_matches('/'));
-    let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-    {
+    let client = match client_for(ctx, profile, Duration::from_secs(10)).await {
         Ok(client) => client,
         Err(error) => {
             return ProbeResult {
@@ -753,6 +782,7 @@ mod tests {
             node_id: None,
             model_install_id: None,
             last_probed_at: None,
+        proxy_id: None,
         }
     }
 
