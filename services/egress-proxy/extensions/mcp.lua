@@ -64,7 +64,15 @@ local function record_body(handle, name, bytes)
     return
   end
   if #bytes > BODY_LIMIT then
-    bytes = string.sub(bytes, 1, BODY_LIMIT)
+    if name == "request_body" then
+      -- A long chat request carries the model and system prompt at the start
+      -- and the newest message at the end; the middle is history. Keep both
+      -- ends, so the console can still show what was asked just now.
+      local head = 8192
+      bytes = string.sub(bytes, 1, head) .. string.sub(bytes, -(BODY_LIMIT - head))
+    else
+      bytes = string.sub(bytes, 1, BODY_LIMIT)
+    end
   end
   set(handle, name, handle:base64Escape(bytes))
 end

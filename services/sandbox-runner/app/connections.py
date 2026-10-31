@@ -1,7 +1,7 @@
 """The sockets of one sandbox, with the process that owns each.
 
 `ps` answers "what runs", this answers "who is talking to whom". The probe is a
-fixed shell script run as root inside the container: it reads `/proc/net/*` and
+fixed shell script run inside the container as the sandbox's own user (root has no more reach: the sandbox drops the capability to read other users' descriptors, so processes of other users show without an owner): it reads `/proc/net/*` and
 maps each socket inode to the process whose file descriptor holds it. Nothing
 from the request reaches the script, and nothing is installed in the image
 (`sh`, `cat`, `readlink` and `sed` are enough, busybox included).
@@ -153,7 +153,7 @@ def connections(name: str) -> dict[str, Any]:
         item = get_container(client, name)
     except NotFound as exc:
         raise HTTPException(404, f"no such sandbox: {name}") from exc
-    result = item.exec_run(["sh", "-c", PROBE], user="0", stdout=True, stderr=False)
+    result = item.exec_run(["sh", "-c", PROBE], stdout=True, stderr=False)
     if result.exit_code not in (0, None):
         raise HTTPException(409, "the sandbox connection table is unavailable")
     answer = _parse((result.output or b"").decode(errors="replace"))

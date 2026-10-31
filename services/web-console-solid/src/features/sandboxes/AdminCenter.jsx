@@ -32,6 +32,7 @@ import '../../styles/sandbox-hierarchy.css';
 import PoliciesTab from './PoliciesTab.jsx';
 import ProcessesTab from './ProcessesTab.jsx';
 import ConnectionsTab from './ConnectionsTab.jsx';
+import ChatsTab from './ChatsTab.jsx';
 import InventoryTab from './InventoryTab.jsx';
 import LogsTab from './LogsTab.jsx';
 import MountsTab from './MountsTab.jsx';
@@ -39,6 +40,7 @@ import MountsTab from './MountsTab.jsx';
 const TABS = [
   { id: 'dashboard', label: 'Dashboard', component: DashboardTab },
   { id: 'traffic', label: 'Traffic', component: TrafficTab },
+  { id: 'chats', label: 'Chats', component: ChatsTab },
   { id: 'mcp', label: 'MCP', component: McpTab },
   { id: 'terminal', label: 'Terminal', component: TerminalTab },
   { id: 'access', label: 'Access', component: AccessTab },
