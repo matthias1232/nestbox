@@ -21,6 +21,7 @@ from app import inventory as inventory_probe
 from app import processes as process_table
 from app import connections as socket_table
 from app import vnc as desktop_stream
+from app import commands as command_feed
 from app import stats as resource_stats
 from app import terminal as terminal_transport
 from app import forwards as published_ports
@@ -57,6 +58,7 @@ app.include_router(resource_stats.router)
 app.include_router(process_table.router)
 app.include_router(socket_table.router)
 app.include_router(desktop_stream.router)
+app.include_router(command_feed.router)
 app.include_router(inventory_probe.router)
 app.include_router(terminal_transport.router)
 app.include_router(published_ports.router)

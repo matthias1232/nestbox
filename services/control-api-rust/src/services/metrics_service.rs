@@ -271,7 +271,7 @@ pub async fn live_view(
     kind: &str,
 ) -> Result<serde_json::Value, ApiError> {
     require(principal, Permission::SandboxRead)?;
-    if !["connections"].contains(&kind) {
+    if !["connections", "commands"].contains(&kind) {
         return Err(ApiError::validation("Unknown live view."));
     }
     let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;

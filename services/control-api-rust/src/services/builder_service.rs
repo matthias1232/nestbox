@@ -1017,7 +1017,22 @@ pub async fn instantiate(
     match ctx.runtime.create(runtime_spec).await {
         Ok(facts) => {
             let health = crate::services::sandbox_service::health_from_runtime(&facts);
-            settle(ctx, sandbox, SandboxStatus::Running, health).await
+            let has_desktop = recipe.agents.iter().any(|agent| agent.pack_key == "desktop");
+            let settled = settle(ctx, sandbox, SandboxStatus::Running, health).await?;
+            // A desktop comes with its browser: the MCP server is attached and
+            // the agents' files are written again so they start knowing it.
+            // Best effort, as for any sandbox: a failure is logged, not fatal.
+            if has_desktop {
+                match crate::services::mcp_service::attach(ctx, principal, settled.id, "chrome-browser", true).await {
+                    Ok(_) => {
+                        if let Err(error) = crate::services::sandbox_service::reconfigure_agent(ctx, principal, settled.id).await {
+                            tracing::warn!(sandbox = %settled.name, code = error.code.0, "could not write the browser into the agent config");
+                        }
+                    }
+                    Err(error) => tracing::warn!(sandbox = %settled.name, code = error.code.0, "could not attach the browser MCP"),
+                }
+            }
+            Ok(settled)
         }
         Err(error) => {
             tracing::error!(sandbox = %sandbox.name, error = %error, "runtime create failed");
@@ -1375,7 +1390,7 @@ fn prerequisites(kinds: &[InstallKind]) -> Vec<&'static str> {
             InstallKind::Pip => &["python3", "python3-pip"],
             InstallKind::Binary => &["curl", "ca-certificates"],
             InstallKind::Git => &["git"],
-            InstallKind::Desktop => &["ca-certificates", "curl", "gnupg"],
+            InstallKind::Desktop => &["ca-certificates", "curl"],
             InstallKind::Image | InstallKind::None => &[],
         };
         for key in needed {
