@@ -805,14 +805,28 @@ pub async fn ensure_supervisors(ctx: &ServiceContext) -> Result<u64, ApiError> {
         .execute(scope.connection())
         .await
         .map_err(|error| ApiError::from(StoreError::Database(error)))?;
-        let rows: Vec<(Uuid, String)> = sqlx::query_as(
-            "SELECT v.id, s.name FROM supervisors v JOIN sandboxes s ON s.id = v.sandbox_id",
+        let rows: Vec<(Uuid, String, bool)> = sqlx::query_as(
+            "SELECT v.id, s.name, v.reported IS NULL FROM supervisors v JOIN sandboxes s ON s.id = v.sandbox_id",
         )
         .fetch_all(scope.connection())
         .await
         .map_err(|error| ApiError::from(StoreError::Database(error)))?;
-        for (supervisor_id, sandbox_name) in rows {
-            let Some(fact) = on_gateway.get(&sandbox_name) else { continue };
+        for (supervisor_id, sandbox_name, never_reported) in rows {
+            let Some(fact) = on_gateway.get(&sandbox_name) else {
+                // Not on the gateway and never heard from: there is no
+                // supervisor to be "failed". Say so ("unknown") instead of
+                // leaving the red state a vanished gateway once wrote.
+                if never_reported {
+                    sqlx::query(
+                        "UPDATE supervisors SET status = 'unknown' WHERE id = $1 AND status = 'failed'",
+                    )
+                    .bind(supervisor_id)
+                    .execute(scope.connection())
+                    .await
+                    .map_err(|error| ApiError::from(StoreError::Database(error)))?;
+                }
+                continue;
+            };
             let status = match fact.supervisor_status.as_str() {
                 "running" | "degraded" | "stopped" | "starting" => fact.supervisor_status.as_str(),
                 "missing" => "failed",
@@ -860,13 +874,16 @@ pub async fn supervisor_view(
     let supervisor = store::supervisor_for_sandbox(&mut scope, sandbox_id).await.ok();
     scope.commit().await.map_err(ApiError::from)?;
 
-    let live = ctx
-        .runtime
-        .openshell_view(&sandbox.name)
-        .await
-        .map_err(|error| ApiError::conflict(ErrorCode::SANDBOX_INVALID_STATE, error.to_string()))?;
+    // A sandbox on the Docker runtime is not on the OpenShell gateway, which is a
+    // fact about where it runs and not an error: the page shows the supervisor
+    // row it has and says why there is no gateway view.
+    let (live, note) = match ctx.runtime.openshell_view(&sandbox.name).await {
+        Ok(view) => (Some(view), None),
+        Err(error) => (None, Some(error.to_string())),
+    };
     Ok(serde_json::json!({
         "supervisor": supervisor,
         "openshell": live,
+        "openshell_note": note.map(|_| "This sandbox runs on the Docker runtime, not on an OpenShell gateway, so there is no gateway view. Its own supervisor program, when its image has one, reports on the row above."),
     }))
 }

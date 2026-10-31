@@ -537,7 +537,9 @@ def set_openshell_policy(name: str, body: OpenShellPolicy) -> dict[str, Any]:
     except NotFound as exc:
         raise HTTPException(404, "sandbox not found") from exc
     if not openshell_name(container.name):
-        raise HTTPException(409, "this sandbox is not on the OpenShell gateway")
+        # Nothing to push: a Docker-runtime sandbox is governed by the egress
+        # proxy, not by a gateway policy. Answering 200 keeps the sync quiet.
+        return {"name": name, "applied": False, "reason": "not on the OpenShell gateway"}
     try:
         osh.set_policy(name, body.document)
     except osh.OpenShellError as exc:
