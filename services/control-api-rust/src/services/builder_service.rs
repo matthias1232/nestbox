@@ -1457,6 +1457,9 @@ fn pack_install(pack: &AgentPack) -> Result<PackInstall, String> {
 }
 
 /// The directories an agent's home needs, inside the container.
+/// Entries in a pack's `home_paths` that are files, not folders.
+const HOME_FILES: &[&str] = &[".claude.json", ".gitconfig", ".bash_history"];
+
 fn agent_directories(agent: &AgentSpec, pack: &AgentPack) -> Result<Vec<String>, String> {
     let home = validate_directory(&agent.home_mode.home_path(&agent.instance))?;
     let paths = if agent.home_paths.is_empty() {
@@ -1472,6 +1475,12 @@ fn agent_directories(agent: &AgentSpec, pack: &AgentPack) -> Result<Vec<String>,
         }
         if relative.split('/').any(|part| part == ".." || part.is_empty()) {
             return Err(format!("'{path}' is not a path inside the agent's home."));
+        }
+        // A pack lists files as well as folders (`.claude.json`, `.gitconfig`).
+        // Creating a file's path as a directory blocks the program that wants
+        // to write the file, so only its parent folder is made.
+        if HOME_FILES.contains(&relative) {
+            continue;
         }
         directories.push(validate_directory(&format!("{home}/{relative}"))?);
     }
@@ -2213,6 +2222,22 @@ async fn audit(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_file_in_a_pack_home_is_not_made_a_directory() {
+        let agent = AgentSpec {
+            pack_key: "claude-code".into(),
+            instance: "claude".into(),
+            home_mode: HomeMode::Shared,
+            persistence: crate::domain::builder::Persistence::Persistent,
+            home_paths: vec![".claude".into(), ".claude.json".into()],
+            port: None,
+        };
+        let pack = pack_of(InstallKind::None, None);
+        let directories = agent_directories(&agent, &pack).expect("directories");
+        assert!(directories.iter().any(|d| d.ends_with("/.claude")));
+        assert!(!directories.iter().any(|d| d.ends_with(".claude.json")), "{directories:?}");
+    }
+
     #[test]
     fn a_desktop_pack_installs_its_scripts_and_hashes_them() {
         let mut desktop = plan(PackageManager::Apt, &["vim"]);
