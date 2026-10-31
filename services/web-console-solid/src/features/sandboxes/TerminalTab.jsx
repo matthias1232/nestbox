@@ -12,6 +12,7 @@
 import { For, Show, createSignal, onCleanup, onMount } from 'solid-js';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 
 /**
@@ -83,6 +84,9 @@ export default function TerminalTab(props) {
   // Text the browser refused to copy by itself; shown so it can be copied by hand.
   const [copyFallback, setCopyFallback] = createSignal(null);
   const cleanups = [];
+  // On by default; remembered per browser.
+  const [selectMode, setSelectMode] = createSignal(localStorage.getItem('nestbox.terminal.select') !== 'off');
+  const toggleSelect = (on) => { setSelectMode(on); localStorage.setItem('nestbox.terminal.select', on ? 'on' : 'off'); };
   const [note, setNote] = createSignal(null);
   const [durable, setDurable] = createSignal(null);
   const [loading, setLoading] = createSignal(true);
@@ -216,6 +220,9 @@ export default function TerminalTab(props) {
       });
       fit = new FitAddon();
       term.loadAddon(fit);
+      // A URL the program prints (a login link, a pull request) is clickable,
+      // also when the terminal wrapped it over several lines.
+      term.loadAddon(new WebLinksAddon((_event, uri) => window.open(uri, '_blank', 'noopener,noreferrer')));
       term.open(host);
       fit.fit();
       term.onData((data) => socket?.readyState === WebSocket.OPEN && socket.send(data));
@@ -228,6 +235,22 @@ export default function TerminalTab(props) {
       // which runs after one on `host`. A zero timeout runs after both, and is
       // still inside the browser's short window in which a click counts as the
       // user's action (the copy command needs that).
+      // Full-screen programs (claude, vim, tmux with a mouse) ask the terminal
+      // to report the mouse to them, and then a drag selects nothing. xterm
+      // lets Shift override that, but nobody guesses it. With "select text" on
+      // (the default), a plain click-and-drag is turned into the Shift form
+      // before xterm sees it, so selecting and copying always work.
+      const onPress = (event) => {
+        if (!selectMode() || event.shiftKey || event.button !== 0 || event.isTrusted === false) return;
+        event.stopImmediatePropagation();
+        event.target.dispatchEvent(new MouseEvent('mousedown', {
+          bubbles: true, cancelable: true, view: window, shiftKey: true,
+          button: 0, buttons: event.buttons, clientX: event.clientX, clientY: event.clientY,
+          detail: event.detail, ctrlKey: event.ctrlKey, altKey: event.altKey, metaKey: event.metaKey,
+        }));
+      };
+      host.addEventListener('mousedown', onPress, true);
+      cleanups.push(() => host.removeEventListener('mousedown', onPress, true));
       const onRelease = () => setTimeout(() => {
         if (term?.hasSelection()) copyText(term.getSelection(), setCopyFallback);
       }, 0);
@@ -299,6 +322,9 @@ export default function TerminalTab(props) {
         <Show when={state() === 'closed'}>
           <button class="primary tiny" onClick={() => connect()}>Reconnect</button>
         </Show>
+        <label class="small" title="Drag with the mouse to select and copy, even inside claude, vim or tmux. Turn off to let those programs use the mouse.">
+          <input type="checkbox" checked={selectMode()} onChange={(e) => toggleSelect(e.currentTarget.checked)} /> select text
+        </label>
         <span class="muted small">
           Tabs are stored on the server, so a reload or another machine reopens the same shells.
           Closing the browser detaches; × ends only that terminal.
