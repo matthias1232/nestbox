@@ -965,6 +965,11 @@ pub async fn create(
     // environment is a convenience for tools, not a permission.
     environment.extend(egress_environment(&egress_proxy));
     add_inference_bypass_vec(&mut environment);
+    // The hub and the media server sit on the runtime network. Sent through the
+    // egress proxy they are an external destination and are denied, which an
+    // agent sees as "hub error".
+    add_env_url_bypass_vec(&mut environment, "NESTBOX_MCP_URL");
+    add_env_url_bypass_vec(&mut environment, "NESTBOX_MEDIA_MCP_URL");
 
     let runtime_spec = SandboxSpec {
         name: sandbox.name.clone(),
@@ -1981,6 +1986,11 @@ pub async fn recreate(
         ));
     }
     add_inference_bypass_vec(&mut environment);
+    // The hub and the media server sit on the runtime network. Sent through the
+    // egress proxy they are an external destination and are denied, which an
+    // agent sees as "hub error".
+    add_env_url_bypass_vec(&mut environment, "NESTBOX_MCP_URL");
+    add_env_url_bypass_vec(&mut environment, "NESTBOX_MEDIA_MCP_URL");
     let configured: BTreeMap<String, String> = environment.iter().cloned().collect();
 
     if let Err(error) = ctx.runtime.remove(&sandbox.name).await {
