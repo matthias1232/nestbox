@@ -775,6 +775,14 @@ pub async fn ensure_supervisors(ctx: &ServiceContext) -> Result<u64, ApiError> {
         .filter(|fact| fact.container_name.starts_with("openshell-default--"))
         .map(|fact| (fact.name.clone(), fact))
         .collect();
+    // With the Docker runtime there is no gateway to ask. A leftover OpenShell
+    // container with the same name must not turn a healthy sandbox's supervisor
+    // red every thirty seconds.
+    let on_gateway = if crate::services::sandbox_service::openshell_runtime() {
+        on_gateway
+    } else {
+        std::collections::HashMap::new()
+    };
     let environments: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM environments")
         .fetch_all(&ctx.pool)
         .await
