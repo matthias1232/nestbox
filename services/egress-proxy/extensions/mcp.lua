@@ -234,6 +234,8 @@ function envoy_on_request(handle)
     if seen and buffered ~= nil and buffered:length() > 0 then
       record_body(handle, "request_body", buffered:getBytes(0, buffered:length()))
     end
+    -- Reading the body yields; the header object from before it is stale.
+    headers = handle:headers()
   end
 
   if not json(headers) then
