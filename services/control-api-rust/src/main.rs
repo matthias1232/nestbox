@@ -62,6 +62,12 @@ async fn main() {
     let mut state = AppState::new(config.clone(), runtime, pool);
     state.services = state.services.clone().with_router(router.clone());
 
+    match nestbox_control_api::services::move_service::settle_interrupted(&state.services).await {
+        Ok(0) => {}
+        Ok(settled) => tracing::info!(settled, "marked moves interrupted by a restart as failed"),
+        Err(error) => tracing::warn!(code = error.code.0, "could not settle interrupted moves"),
+    }
+
     // Images: each joined node holds what it was assigned (ADR 0048).
     {
         let services = state.services.clone();

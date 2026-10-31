@@ -436,6 +436,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/models/{key}/metrics", get(models::metrics))
         // Nodes
         .route("/api/v1/nodes", get(nodes::list))
+        .route("/api/v1/sandboxes/{id}/move", post(node_join::move_sandbox))
+        .route("/api/v1/sandbox-moves", get(node_join::moves))
+        .route("/api/v1/sandbox-moves/{id}", get(node_join::get_move))
         .route("/api/v1/registry/images", get(images::registry))
         .route("/api/v1/images/matrix", get(images::matrix))
         .route("/api/v1/image-assignments", post(images::assign))

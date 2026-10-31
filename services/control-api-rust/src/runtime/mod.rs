@@ -19,7 +19,7 @@ use crate::domain::runtime::{
     ComponentLimits,
     BuildRequest, BuildResult, CatalogueAnswer, CatalogueRequest, ComponentState, ExecResult,
     ForwardRequest, HardwareReport, ImageVerification, ModelDownload, ModelDownloadResult,
-    ModelServe, ModelServeResult, NodeImageFact, RuntimeFacts, SandboxSpec, SshCredential, VerificationAnswer,
+    ModelServe, ModelServeResult, NodeImageFact, SnapshotFact, RuntimeFacts, SandboxSpec, SshCredential, VerificationAnswer,
 };
 
 /// Fehler aus der Ausführungsschicht.
@@ -299,6 +299,27 @@ pub trait RuntimeAdapter: Send + Sync {
     /// The appliance's own containers: state and health.
     async fn components(&self) -> Result<Vec<ComponentState>, RuntimeError> {
         Err(RuntimeError::Unavailable("this runtime does not report components".into()))
+    }
+    /// Snapshot one directory of this node into a restic repository (ADR 0049).
+    async fn snapshot_backup(
+        &self,
+        _repo: &str,
+        _password: &str,
+        _path: &str,
+        _tags: &[String],
+    ) -> Result<SnapshotFact, RuntimeError> {
+        Err(RuntimeError::Unavailable("this runtime cannot take snapshots".into()))
+    }
+    /// Put a snapshot's directory at `path` on this node.
+    async fn snapshot_restore(
+        &self,
+        _repo: &str,
+        _password: &str,
+        _snapshot: &str,
+        _source_path: &str,
+        _path: &str,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        Err(RuntimeError::Unavailable("this runtime cannot restore snapshots".into()))
     }
     /// The tagged images this node holds.
     async fn images(&self) -> Result<Vec<NodeImageFact>, RuntimeError> {

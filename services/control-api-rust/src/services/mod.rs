@@ -18,6 +18,7 @@ pub mod image_sync_service;
 pub mod inventory_service;
 pub mod job_service;
 pub mod mcp_service;
+pub mod move_service;
 pub mod node_join_service;
 pub mod oidc_service;
 pub mod media_service;

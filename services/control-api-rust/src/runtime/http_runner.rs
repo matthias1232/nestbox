@@ -641,6 +641,31 @@ impl RuntimeAdapter for HttpRunner {
         Ok(answer.logs)
     }
 
+    async fn snapshot_backup(
+        &self,
+        repo: &str,
+        password: &str,
+        path: &str,
+        tags: &[String],
+    ) -> Result<crate::domain::runtime::SnapshotFact, RuntimeError> {
+        let body = serde_json::json!({ "repo": repo, "password": password, "path": path, "tags": tags });
+        self.send(reqwest::Method::POST, "/v1/snapshots/backup", Some(&body)).await
+    }
+
+    async fn snapshot_restore(
+        &self,
+        repo: &str,
+        password: &str,
+        snapshot: &str,
+        source_path: &str,
+        path: &str,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        let body = serde_json::json!({
+            "repo": repo, "password": password, "snapshot": snapshot, "source_path": source_path, "path": path
+        });
+        self.send(reqwest::Method::POST, "/v1/snapshots/restore", Some(&body)).await
+    }
+
     async fn images(&self) -> Result<Vec<crate::domain::runtime::NodeImageFact>, RuntimeError> {
         #[derive(Deserialize)]
         struct Listing {

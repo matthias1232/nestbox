@@ -495,3 +495,17 @@ pub struct NodeImageFact {
     #[serde(default)]
     pub size: i64,
 }
+
+/// What a snapshot of a persistent root produced.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct SnapshotFact {
+    pub snapshot: String,
+    #[serde(default)]
+    pub bytes_added: i64,
+    #[serde(default)]
+    pub bytes_total: i64,
+    #[serde(default)]
+    pub files: i64,
+    #[serde(default)]
+    pub seconds: f64,
+}

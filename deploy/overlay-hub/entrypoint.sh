@@ -36,11 +36,12 @@ iptables -C FORWARD -i "$IFACE" -o "$IFACE" -j DROP 2>/dev/null || iptables -I F
 iptables -t nat -C POSTROUTING -o "$IFACE" -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
 # Allow the overlay's UDP port in, in case the host filters it.
 iptables -C INPUT -p udp --dport "$PORT" -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p udp --dport "$PORT" -j ACCEPT
-# A node reaches the control API (8000) and the registry (5000) at the hub address only. Port
+# A node reaches the control API (8000), the registry (5000) and the snapshot server (8500) at
+# the hub address only. Port
 # 8000 is the API itself, not the console's nginx: the egress proxy asks it about CONNECT requests,
 # which nginx refuses.
-iptables -C INPUT -i "$IFACE" -p tcp -m multiport --dports 8000,5000 -j ACCEPT 2>/dev/null \
-  || iptables -I INPUT 1 -i "$IFACE" -p tcp -m multiport --dports 8000,5000 -j ACCEPT
+iptables -C INPUT -i "$IFACE" -p tcp -m multiport --dports 8000,5000,8500 -j ACCEPT 2>/dev/null \
+  || iptables -I INPUT 1 -i "$IFACE" -p tcp -m multiport --dports 8000,5000,8500 -j ACCEPT
 
 # The registry listens on the host's loopback (Docker treats that as insecure-allowed, so the
 # host can push without a daemon change); nodes pull it at the hub address.

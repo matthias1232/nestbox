@@ -88,3 +88,31 @@ pub async fn compose(State(state): State<AppState>, headers: HeaderMap) -> Resul
     out.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     Ok((StatusCode::OK, out, text))
 }
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct MoveRequest {
+    /// The name of the node to move the sandbox to.
+    pub node: String,
+}
+
+/// Move a sandbox and its persistent folders to another node. Returns at once.
+pub async fn move_sandbox(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<MoveRequest>,
+) -> Result<(StatusCode, Json<crate::services::move_service::MoveView>), ApiError> {
+    let started = crate::services::move_service::start(&state.services, &state.config, &auth.principal, id, &body.node).await?;
+    Ok((StatusCode::ACCEPTED, Json(started)))
+}
+
+/// The recent moves of this data center.
+pub async fn moves(State(state): State<AppState>, auth: Auth) -> Result<Json<serde_json::Value>, ApiError> {
+    let items = crate::services::move_service::list(&state.services, &auth.principal).await?;
+    Ok(Json(serde_json::json!({ "items": items })))
+}
+
+/// One move with its step log.
+pub async fn get_move(State(state): State<AppState>, auth: Auth, Path(id): Path<Uuid>) -> Result<Json<crate::services::move_service::MoveView>, ApiError> {
+    Ok(Json(crate::services::move_service::get(&state.services, &auth.principal, id).await?))
+}

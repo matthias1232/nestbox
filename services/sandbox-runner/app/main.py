@@ -31,6 +31,7 @@ from app import host as host_load
 from app import backups as root_backups
 from app import catalogue as package_catalogue
 from app import registry_images
+from app import snapshots as root_snapshots
 from app.model_metrics import parse_prometheus
 from app import openshell_backend as osh
 from app.images import image_allowed
@@ -100,6 +101,7 @@ app.include_router(host_load.router)
 app.include_router(root_backups.router)
 app.include_router(package_catalogue.router)
 app.include_router(registry_images.router)
+app.include_router(root_snapshots.router)
 
 
 def adopt_restart_policy() -> None:

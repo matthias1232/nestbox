@@ -265,6 +265,17 @@ services:
     volumes:
       - ./data/registry:/var/lib/registry
 
+  # Where snapshots of persistent folders are kept (ADR 0049): a restic REST server, listening on
+  # the overlay address only. Append-only: a node can add snapshots and never delete one, and the
+  # data is encrypted with a password per data center that the server never sees.
+  restic-server:
+    image: restic/rest-server:0.13.0
+    restart: unless-stopped
+    network_mode: host
+    command: ["--path", "/data", "--listen", "${NESTBOX_OVERLAY_HUB_IP:-10.77.0.1}:8500", "--append-only", "--no-auth"]
+    volumes:
+      - ./data/restic:/data
+
   web-console:
     build:
       context: ../services/web-console-solid
