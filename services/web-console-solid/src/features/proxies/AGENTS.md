@@ -4,7 +4,7 @@ One screen, one job: keep the list of places traffic can leave from, and say
 which one is enabled.
 
 - A row is data. The firewall's exits (DE, CH, US, AT, Tor) are seeded by
-  migration `0047_egress_proxies.sql`; an operator edits them here.
+  migration `0059_egress_proxies.sql`; an operator edits them here.
 - A password is never typed here. An exit that needs one gets a locator
   (`file:///…`) and the value stays on the host (ADR 0005).
 - The screen does not claim a country is verified. `country` is what the
