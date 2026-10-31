@@ -1026,8 +1026,13 @@ pub async fn instantiate(
             if has_desktop {
                 match crate::services::mcp_service::attach(ctx, principal, settled.id, "chrome-browser", true).await {
                     Ok(_) => {
-                        if let Err(error) = crate::services::sandbox_service::reconfigure_agent(ctx, principal, settled.id).await {
-                            tracing::warn!(sandbox = %settled.name, code = error.code.0, "could not write the browser into the agent config");
+                        // Every agent the recipe holds, not only the first.
+                        let mut packs: Vec<&str> = recipe.agents.iter().map(|agent| agent.pack_key.as_str()).collect();
+                        packs.dedup();
+                        for pack in packs {
+                            if let Err(error) = crate::services::sandbox_service::reconfigure_pack(ctx, principal, settled.id, Some(pack)).await {
+                                tracing::warn!(sandbox = %settled.name, pack, code = error.code.0, "could not write the browser into the agent config");
+                            }
                         }
                     }
                     Err(error) => tracing::warn!(sandbox = %settled.name, code = error.code.0, "could not attach the browser MCP"),

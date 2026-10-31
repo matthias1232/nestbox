@@ -16,8 +16,7 @@ apt-get install -y --no-install-recommends \
   tigervnc-standalone-server tigervnc-common \
   xfce4 xfce4-terminal dbus-x11 x11-utils xauth xdg-utils \
   libnss3-tools \
-  fonts-dejavu-core fonts-liberation fonts-noto-color-emoji \
-  nodejs npm
+  fonts-dejavu-core fonts-liberation fonts-noto-color-emoji xz-utils
 
 # Google Chrome comes from Google's own repository: Ubuntu's chromium is a snap,
 # and a snap does not run in a container.
@@ -27,6 +26,22 @@ echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://d
   > /etc/apt/sources.list.d/google-chrome.list
 apt-get update
 apt-get install -y --no-install-recommends google-chrome-stable
+
+# Node 22 LTS from nodejs.org: chrome-devtools-mcp refuses Node 18, which is what
+# Ubuntu 24.04 ships. The archive is checked against the checksum list served
+# next to it, so a truncated or corrupted download fails the build.
+case "$(uname -m)" in
+  x86_64) NODE_ARCH=x64 ;;
+  aarch64) NODE_ARCH=arm64 ;;
+  *) echo "unsupported architecture $(uname -m)" >&2; exit 1 ;;
+esac
+NODE_BASE=https://nodejs.org/dist/latest-v22.x
+curl -fsSL --proto '=https' --tlsv1.2 -o /tmp/SHASUMS256.txt "$NODE_BASE/SHASUMS256.txt"
+NODE_FILE=$(grep "linux-$NODE_ARCH.tar.xz" /tmp/SHASUMS256.txt | awk '{print $2}')
+curl -fsSL --proto '=https' --tlsv1.2 -o "/tmp/$NODE_FILE" "$NODE_BASE/$NODE_FILE"
+(cd /tmp && grep " $NODE_FILE\$" SHASUMS256.txt | sha256sum -c -)
+tar -xJf "/tmp/$NODE_FILE" -C /usr/local --strip-components=1 --exclude='*.md' --exclude=LICENSE
+rm -f "/tmp/$NODE_FILE" /tmp/SHASUMS256.txt
 
 # The MCP server agents use to open pages, click, type and take screenshots. It
 # attaches to the Chrome that `nestbox-desktop` starts (remote debugging on
