@@ -147,6 +147,16 @@ pub trait RuntimeAdapter: Send + Sync {
     /// runner starts a fixed shell with a PTY, and this side only moves bytes.
     async fn processes(&self, name: &str) -> Result<ProcessTable, RuntimeError>;
 
+    /// A live, read-only view of the sandbox: `connections` today.
+    ///
+    /// One verb with a closed set of kinds rather than one method per view, so
+    /// a new view is a runner route and a console tab, not a change to every
+    /// runtime adapter. The default answers "unsupported" for adapters that
+    /// have no way to look inside.
+    async fn live_view(&self, _name: &str, kind: &str) -> Result<serde_json::Value, RuntimeError> {
+        Err(RuntimeError::Rejected(format!("this runtime has no {kind} view")))
+    }
+
     async fn process_action(&self, name: &str, pid: i64, action: &str, nice: Option<i8>) -> Result<(), RuntimeError>;
 
     /// A fresh inventory snapshot, taken by the container's fixed probe script.

@@ -234,6 +234,29 @@ pub async fn processes(
         .map_err(runner_error)
 }
 
+/// A live view of one sandbox, read through the runner.
+///
+/// The set of kinds is closed here: the kind becomes part of a runner URL, so
+/// only a name this function knows may pass.
+pub async fn live_view(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+    kind: &str,
+) -> Result<serde_json::Value, ApiError> {
+    require(principal, Permission::SandboxRead)?;
+    if !["connections"].contains(&kind) {
+        return Err(ApiError::validation("Unknown live view."));
+    }
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
+    let sandbox = sandbox_store::get(&mut scope, sandbox_id).await.map_err(|error| match error {
+        StoreError::NotFound => ApiError::not_found(ErrorCode::SANDBOX_NOT_FOUND, "No such sandbox."),
+        other => ApiError::from(other),
+    })?;
+    scope.commit().await.map_err(ApiError::from)?;
+    ctx.runtime.live_view(&sandbox.name, kind).await.map_err(runner_error)
+}
+
 pub async fn process_action(
     ctx: &ServiceContext, principal: &Principal, sandbox_id: Uuid, pid: i64, action: String, nice: Option<i8>,
 ) -> Result<serde_json::Value, ApiError> {

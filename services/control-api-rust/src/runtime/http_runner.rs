@@ -300,6 +300,15 @@ impl RuntimeAdapter for HttpRunner {
             .await
     }
 
+    async fn live_view(&self, name: &str, kind: &str) -> Result<serde_json::Value, RuntimeError> {
+        self.send(
+            reqwest::Method::GET,
+            &format!("/v1/sandboxes/{name}/live/{kind}"),
+            None,
+        )
+        .await
+    }
+
     async fn processes(&self, name: &str) -> Result<ProcessTable, RuntimeError> {
         self.send(
             reqwest::Method::GET,

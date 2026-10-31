@@ -31,6 +31,7 @@ import SessionsTab from './SessionsTab.jsx';
 import '../../styles/sandbox-hierarchy.css';
 import PoliciesTab from './PoliciesTab.jsx';
 import ProcessesTab from './ProcessesTab.jsx';
+import ConnectionsTab from './ConnectionsTab.jsx';
 import InventoryTab from './InventoryTab.jsx';
 import LogsTab from './LogsTab.jsx';
 import MountsTab from './MountsTab.jsx';
@@ -47,6 +48,7 @@ const TABS = [
   { id: 'sessions', label: 'Sessions', component: SessionsTab },
   { id: 'policies', label: 'Policies & DNS', component: PoliciesTab },
   { id: 'processes', label: 'Processes', component: ProcessesTab },
+  { id: 'connections', label: 'Connections', component: ConnectionsTab },
   { id: 'inventory', label: 'Inventory', component: InventoryTab },
   { id: 'logs', label: 'Logs', component: LogsTab },
 ];
