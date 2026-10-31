@@ -14,15 +14,16 @@ REGISTRY="${NESTBOX_PUSH_REGISTRY:-localhost:5000}"
 
 if [ "$#" -eq 0 ]; then
   docker compose build sandbox-runner egress-proxy
-  set -- "$(docker compose images -q sandbox-runner | head -1)=nestbox-sandbox-runner:latest" \
-         "$(docker compose images -q egress-proxy | head -1)=nestbox-egress-proxy:latest"
+  project="${COMPOSE_PROJECT_NAME:-nestbox}"
+  set -- "${project}-sandbox-runner=nestbox-sandbox-runner:latest" \
+         "${project}-egress-proxy=nestbox-egress-proxy:latest"
 fi
 
 for item in "$@"; do
   source_image="${item%%=*}"
   target="${item#*=}"
-  [ "$source_image" = "$item" ] && target="${item//[:\/]/-}"
-  [ "$source_image" = "$item" ] && target="${source_image%%:*}:${source_image##*:}"
+  # A bare image name keeps its name and tag in the registry.
+  [ "$source_image" = "$item" ] && target="$source_image"
   echo "==> $source_image -> $REGISTRY/$target"
   docker tag "$source_image" "$REGISTRY/$target"
   docker push "$REGISTRY/$target"
