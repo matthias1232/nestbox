@@ -18,6 +18,7 @@ pub mod media;
 pub mod metrics;
 pub mod models;
 pub mod nodes;
+pub mod oidc;
 pub mod packs;
 pub mod backups;
 pub mod persistent_roots;
@@ -35,6 +36,7 @@ pub mod sandboxes_terminal;
 pub mod sandboxes_vnc;
 pub mod system;
 pub mod telemetry;
+pub mod tenancy;
 pub mod stack;
 pub mod topology;
 pub mod traffic;
@@ -66,11 +68,27 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/auth/logout", post(auth::logout))
         .route("/api/v1/auth/me", get(auth::me))
         .route("/api/v1/auth/csrf", post(auth::csrf))
+        // Identity providers and invitations
+        .route("/api/v1/auth/options", get(oidc::options))
+        .route("/api/v1/auth/oidc/{provider}/start", get(oidc::start))
+        .route("/api/v1/auth/oidc/{provider}/callback", get(oidc::callback))
+        .route("/api/v1/auth/invitations/{token}", get(tenancy::preview_invitation))
+        // Customers, data centers, sites, grants, invitations
+        .route("/api/v1/organizations", get(tenancy::organizations).post(tenancy::create_customer))
+        .route("/api/v1/sites", get(tenancy::list_sites).post(tenancy::create_site))
+        .route("/api/v1/sites/{id}", delete(tenancy::delete_site))
+        .route("/api/v1/sandboxes/{id}/grants", get(tenancy::list_grants))
+        .route(
+            "/api/v1/sandboxes/{id}/grants/{user_id}",
+            put(tenancy::grant).delete(tenancy::revoke),
+        )
+        .route("/api/v1/invitations", get(tenancy::list_invitations).post(tenancy::invite))
+        .route("/api/v1/invitations/{id}", delete(tenancy::revoke_invitation))
         // Environments
         .route("/api/v1/users", get(users::list).post(users::create))
         .route("/api/v1/users/{id}", axum::routing::put(users::update).delete(users::remove))
         .route("/api/v1/users/{id}/password", post(users::set_password))
-        .route("/api/v1/environments", get(system::environments))
+        .route("/api/v1/environments", get(system::environments).post(tenancy::create_data_center))
         .route("/api/v1/environments/current", get(system::current_environment))
         // Sandboxes
         .route(

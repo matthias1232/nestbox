@@ -98,6 +98,9 @@ fn config(secret_dir: PathBuf) -> Config {
         body_limit_bytes: 1_048_576,
         rate_limit_per_minute: 600,
         terminal_idle_seconds: 30 * 60,
+        deploy_mode: nestbox_control_api::config::DeployMode::SelfHosted,
+        public_url: String::new(),
+        oidc: Vec::new(),
     }
 }
 

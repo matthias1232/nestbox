@@ -663,6 +663,22 @@ pub async fn create(
         .await
         .map_err(ApiError::from)?;
 
+    // The name is the runtime's name too (container, agent home, SSH alias), so it is unique
+    // across the installation: another data center's sandbox with this name would collide on
+    // a shared node and be ambiguous to the dispatcher. Migration 0062.
+    let taken: bool = sqlx::query_scalar("SELECT nb_sandbox_name_taken($1, $2)")
+        .bind(name.as_str())
+        .bind(principal.environment_id)
+        .fetch_one(scope.connection())
+        .await
+        .map_err(|e| ApiError::from(crate::store::map_sqlx_error(e)))?;
+    if taken {
+        return Err(ApiError::conflict(
+            ErrorCode::SANDBOX_NAME_TAKEN,
+            "This name is used by another data center on this installation. Pick another name.",
+        ));
+    }
+
     // The image and command come from `agent_packs`, not from a `match`: an
     // unknown pack is a 404 and a disabled or misspelled one cannot silently
     // become the default shell (ADR 0020). A plain sandbox records no baseline,
@@ -706,7 +722,13 @@ pub async fn create(
             })?,
         None => crate::store::postgres::nodes::local(&mut scope)
             .await
-            .map_err(ApiError::from)?,
+            .map_err(|error| match error {
+                crate::error::StoreError::NotFound => ApiError::not_found(
+                    ErrorCode::NODE_NOT_FOUND,
+                    "This data center has no node to run a sandbox on. Add a node first, or name one.",
+                ),
+                other => ApiError::from(other),
+            })?,
     };
     if !node.kind.is_operable() {
         return Err(ApiError::conflict(

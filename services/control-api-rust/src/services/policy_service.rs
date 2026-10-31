@@ -324,18 +324,65 @@ pub async fn list_rules(
     Ok(rules)
 }
 
+/// What a caller may change about a sandbox's own rules, windows and egress mode.
+///
+/// An operator or admin may change anything (`PolicyWrite`). A member holds only
+/// `SandboxPolicy`, and only for a sandbox they can see: the lookup runs under row-level
+/// security, so a sandbox that is not theirs is a plain not-found, not a refusal that
+/// confirms it exists. Anything not tied to one sandbox (a shared policy, an
+/// environment-wide window) stays `PolicyWrite`.
+async fn require_sandbox_scope(
+    scope: &mut TenantScope<'_>,
+    principal: &Principal,
+    sandbox_id: Option<Uuid>,
+) -> Result<(), ApiError> {
+    if principal.can(Permission::PolicyWrite) {
+        return Ok(());
+    }
+    match sandbox_id {
+        Some(id) if principal.can(Permission::SandboxPolicy) => {
+            sandbox_store::get(scope, id).await.map_err(ApiError::from)?;
+            Ok(())
+        }
+        _ => Err(ApiError::forbidden(Permission::PolicyWrite.code())),
+    }
+}
+
+/// The sandbox a stored row belongs to, or `None` for a shared one. The table name is a
+/// constant chosen by the caller, never user input.
+async fn sandbox_of_row(
+    scope: &mut TenantScope<'_>,
+    table: &'static str,
+    id: Uuid,
+) -> Result<Option<Uuid>, ApiError> {
+    // A draft names its target by type and id; every other table has a `sandbox_id`.
+    let column = if table == "rule_drafts" {
+        "CASE WHEN target_type = 'sandbox' THEN target_id END"
+    } else {
+        "sandbox_id"
+    };
+    let sql = format!("SELECT {column} FROM {table} WHERE id = $1");
+    let found: Option<Option<Uuid>> = sqlx::query_scalar(&sql)
+        .bind(id)
+        .fetch_optional(scope.connection())
+        .await
+        .map_err(|e| ApiError::from(crate::store::map_sqlx_error(e)))?;
+    Ok(found.flatten())
+}
+
 /// Create a network rule.
 pub async fn create_rule(
     ctx: &ServiceContext,
     principal: &Principal,
     rule: NetworkRule,
 ) -> Result<NetworkRule, ApiError> {
-    require(principal, Permission::PolicyWrite)?;
+    
     validate_rule(&rule)?;
 
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
+    require_sandbox_scope(&mut scope, principal, if rule.policy_id.is_some() { None } else { rule.sandbox_id }).await?;
     let created = store::insert_rule(&mut scope, &rule)
         .await
         .map_err(ApiError::from)?;
@@ -349,10 +396,11 @@ pub async fn delete_rule(
     principal: &Principal,
     id: Uuid,
 ) -> Result<(), ApiError> {
-    require(principal, Permission::PolicyWrite)?;
+    
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
+    { let owner = sandbox_of_row(&mut scope, "network_rules", id).await?; require_sandbox_scope(&mut scope, principal, owner).await?; }
     store::delete_rule(&mut scope, id).await.map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
     Ok(())
@@ -394,7 +442,7 @@ pub async fn draft_from_event(
     event: &serde_json::Value,
     sandbox_id: Option<Uuid>,
 ) -> Result<serde_json::Value, ApiError> {
-    require(principal, Permission::PolicyWrite)?;
+    
 
     let draft = serde_json::json!({
         "action": draft_action_for(event),
@@ -416,6 +464,7 @@ pub async fn draft_from_event(
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
+    require_sandbox_scope(&mut scope, principal, sandbox_id).await?;
 
     let id = store::insert_draft(
         &mut scope,
@@ -452,7 +501,7 @@ pub async fn allow_destination(
     port: Option<i32>,
     protocol: Option<&str>,
 ) -> Result<NetworkRule, ApiError> {
-    require(principal, Permission::PolicyWrite)?;
+    
     let host = host.trim().to_ascii_lowercase();
     if host.is_empty() || host.contains(' ') || host.contains('/') {
         return Err(ApiError::validation("A destination needs a plain host name."));
@@ -466,6 +515,7 @@ pub async fn allow_destination(
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
+    require_sandbox_scope(&mut scope, principal, Some(sandbox_id)).await?;
     // The caller must be able to see the sandbox: another user's sandbox is not
     // theirs to open, whatever their policy permission.
     sandbox_store::get(&mut scope, sandbox_id).await.map_err(ApiError::from)?;
@@ -560,11 +610,12 @@ pub async fn decide_draft(
     approve: bool,
     reason: Option<&str>,
 ) -> Result<serde_json::Value, ApiError> {
-    require(principal, Permission::PolicyWrite)?;
+    
 
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
+    { let owner = sandbox_of_row(&mut scope, "rule_drafts", id).await?; require_sandbox_scope(&mut scope, principal, owner).await?; }
 
     let decided = store::decide_draft(
         &mut scope,
@@ -659,7 +710,7 @@ pub async fn open_window(
     channel: &str,
     reason: &str,
 ) -> Result<serde_json::Value, ApiError> {
-    require(principal, Permission::PolicyWrite)?;
+    
     if !(1..=1440).contains(&minutes) {
         return Err(ApiError::validation(
             "The window must last between 1 and 1440 minutes.",
@@ -685,6 +736,7 @@ pub async fn open_window(
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
+    require_sandbox_scope(&mut scope, principal, sandbox_id).await?;
     let (id, expires_at) = store::open_window(
         &mut scope,
         sandbox_id,
@@ -732,10 +784,11 @@ pub async fn close_window(
     principal: &Principal,
     id: Uuid,
 ) -> Result<(), ApiError> {
-    require(principal, Permission::PolicyWrite)?;
+    
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
+    { let owner = sandbox_of_row(&mut scope, "traffic_windows", id).await?; require_sandbox_scope(&mut scope, principal, owner).await?; }
     store::revoke_window(&mut scope, id)
         .await
         .map_err(ApiError::from)?;
@@ -815,7 +868,7 @@ pub async fn create_dns_rule(
     principal: &Principal,
     rule: DnsRule,
 ) -> Result<DnsRule, ApiError> {
-    require(principal, Permission::PolicyWrite)?;
+    
 
     let pattern = rule.pattern.trim().to_string();
     if pattern.is_empty() {
@@ -833,6 +886,7 @@ pub async fn create_dns_rule(
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
+    require_sandbox_scope(&mut scope, principal, if rule.policy_id.is_some() { None } else { rule.sandbox_id }).await?;
     let created = store::insert_dns_rule(
         &mut scope,
         &DnsRule { pattern, ..rule },
@@ -849,10 +903,11 @@ pub async fn delete_dns_rule(
     principal: &Principal,
     id: Uuid,
 ) -> Result<(), ApiError> {
-    require(principal, Permission::PolicyWrite)?;
+    
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
+    { let owner = sandbox_of_row(&mut scope, "dns_rules", id).await?; require_sandbox_scope(&mut scope, principal, owner).await?; }
     store::delete_dns_rule(&mut scope, id)
         .await
         .map_err(ApiError::from)?;
@@ -895,10 +950,11 @@ pub async fn set_egress_mode(
     mode: EgressMode,
     trust_ca_ref: Option<String>,
 ) -> Result<EgressModeSetting, ApiError> {
-    require(principal, Permission::PolicyWrite)?;
+    
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
+    require_sandbox_scope(&mut scope, principal, Some(sandbox_id)).await?;
     let sandbox = sandbox_store::get(&mut scope, sandbox_id)
         .await
         .map_err(ApiError::from)?;

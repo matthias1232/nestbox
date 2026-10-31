@@ -32,6 +32,7 @@ pub mod privacy;
 pub mod provider;
 pub mod proxy;
 pub mod runtime;
+pub mod tenancy;
 pub mod sandbox;
 pub mod ssh_access;
 pub mod stack_topology;
