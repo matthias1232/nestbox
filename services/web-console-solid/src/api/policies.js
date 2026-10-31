@@ -42,6 +42,10 @@ export function drafts() {
   return request('rule-drafts');
 }
 
+export function allowDestination(sandboxId, body) {
+  return request(`sandboxes/${sandboxId}/allow`, { method: 'POST', body });
+}
+
 export function draftFromEvent(event, sandboxId) {
   return request('rule-drafts', {
     method: 'POST',

@@ -10,6 +10,9 @@ use thiserror::Error;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
+/// The upgraded WebSocket to a sandbox's desktop.
+pub type VncStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+
 use crate::domain::metrics::{InventoryProbe, ProcessTable};
 use crate::domain::pack_access::ForwardState;
 use crate::domain::runtime::{
@@ -146,6 +149,14 @@ pub trait RuntimeAdapter: Send + Sync {
     /// shell is a conversation. No request field reaches a command line: the
     /// runner starts a fixed shell with a PTY, and this side only moves bytes.
     async fn processes(&self, name: &str) -> Result<ProcessTable, RuntimeError>;
+
+    /// Open the sandbox's desktop stream (VNC bytes) through the runner.
+    ///
+    /// Returned as the upgraded WebSocket itself: the API moves frames between
+    /// it and the browser and reads none of them.
+    async fn open_vnc(&self, _name: &str) -> Result<VncStream, RuntimeError> {
+        Err(RuntimeError::Rejected("this runtime has no desktop".into()))
+    }
 
     /// A live, read-only view of the sandbox: `connections` today.
     ///

@@ -147,7 +147,7 @@ pub async fn terminal(
 ///   no ambient credential for a foreign page to ride on. A session request
 ///   without an `Origin` is the case where a non-browser is trying to use the
 ///   browser's cookie, and it is refused.
-fn refuse_foreign_origin(
+pub(crate) fn refuse_foreign_origin(
     state: &AppState,
     auth: &Auth,
     headers: &HeaderMap,

@@ -173,6 +173,32 @@ pub async fn sandbox_rules(
     Ok(Json(serde_json::json!({ "items": rules })))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct AllowRequest {
+    pub host: String,
+    pub port: Option<i32>,
+    pub protocol: Option<String>,
+}
+
+/// Let one destination through for one sandbox, in one step.
+pub async fn allow_destination(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<AllowRequest>,
+) -> Result<Json<crate::domain::policy::NetworkRule>, ApiError> {
+    let rule = policy_service::allow_destination(
+        &state.services,
+        &auth.principal,
+        id,
+        &body.host,
+        body.port,
+        body.protocol.as_deref(),
+    )
+    .await?;
+    Ok(Json(rule))
+}
+
 /// Create a network rule.
 pub async fn create_rule(
     State(state): State<AppState>,

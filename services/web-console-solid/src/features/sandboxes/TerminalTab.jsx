@@ -21,13 +21,15 @@ import '@xterm/xterm/css/xterm.css';
  * console is reached by IP over HTTP, so the fallback is a hidden textarea and
  * `execCommand('copy')`, which works from a user gesture anywhere.
  */
-function copyText(text) {
+function copyText(text, onFailure) {
   if (!text) return;
   if (window.isSecureContext && navigator.clipboard?.writeText) {
-    navigator.clipboard.writeText(text).catch(() => legacyCopy(text));
+    navigator.clipboard.writeText(text).catch(() => {
+      if (!legacyCopy(text)) onFailure?.(text);
+    });
     return;
   }
-  legacyCopy(text);
+  if (!legacyCopy(text)) onFailure?.(text);
 }
 
 function legacyCopy(text) {
@@ -38,12 +40,16 @@ function legacyCopy(text) {
   document.body.appendChild(area);
   const focused = document.activeElement;
   area.select();
+  let done = false;
   try {
-    document.execCommand('copy');
+    done = document.execCommand('copy');
+  } catch {
+    done = false;
   } finally {
     document.body.removeChild(area);
     focused?.focus?.();
   }
+  return done;
 }
 import * as api from '../../api/sandboxes.js';
 import '../../styles/deck.css';
@@ -74,6 +80,9 @@ export default function TerminalTab(props) {
   const [tabs, setTabs] = createSignal([]);
   const [active, setActive] = createSignal(null);
   const [state, setState] = createSignal('connecting');
+  // Text the browser refused to copy by itself; shown so it can be copied by hand.
+  const [copyFallback, setCopyFallback] = createSignal(null);
+  const cleanups = [];
   const [note, setNote] = createSignal(null);
   const [durable, setDurable] = createSignal(null);
   const [loading, setLoading] = createSignal(true);
@@ -215,9 +224,15 @@ export default function TerminalTab(props) {
       // clipboard path needs on plain HTTP) and on Ctrl+Shift+C / Ctrl+Insert /
       // Ctrl+C while something is selected. Paste (Ctrl+V, Ctrl+Shift+V,
       // Shift+Insert, middle-click) already arrives through the browser.
-      host.addEventListener('mouseup', () => {
-        if (term?.hasSelection()) copyText(term.getSelection());
-      });
+      // xterm finishes the selection in its own document-level mouseup handler,
+      // which runs after one on `host`. A zero timeout runs after both, and is
+      // still inside the browser's short window in which a click counts as the
+      // user's action (the copy command needs that).
+      const onRelease = () => setTimeout(() => {
+        if (term?.hasSelection()) copyText(term.getSelection(), setCopyFallback);
+      }, 0);
+      document.addEventListener('mouseup', onRelease);
+      cleanups.push(() => document.removeEventListener('mouseup', onRelease));
       term.attachCustomKeyEventHandler((event) => {
         if (event.type !== 'keydown' || !term.hasSelection()) return true;
         const key = event.key.toLowerCase();
@@ -226,7 +241,7 @@ export default function TerminalTab(props) {
           (event.ctrlKey && event.key === 'Insert') ||
           (event.ctrlKey && !event.shiftKey && key === 'c');
         if (!copy) return true;
-        copyText(term.getSelection());
+        copyText(term.getSelection(), setCopyFallback);
         return false;
       });
       observer = new ResizeObserver(() => {
@@ -246,6 +261,7 @@ export default function TerminalTab(props) {
   });
 
   onCleanup(() => {
+    cleanups.forEach((undo) => undo());
     observer?.disconnect();
     closeSocket();
     term?.dispose();
@@ -297,6 +313,19 @@ export default function TerminalTab(props) {
       </Show>
       <Show when={note()}>
         <p class="notice">{note()}</p>
+      </Show>
+      <Show when={copyFallback()}>
+        <div class="notice">
+          <span class="small">The browser did not allow copying automatically. The text is selected below: press Ctrl+C.</span>
+          <textarea
+            readonly
+            rows="3"
+            style="width:100%;font-family:var(--font-mono, monospace)"
+            ref={(el) => setTimeout(() => { el.focus(); el.select(); }, 0)}
+            onBlur={() => setCopyFallback(null)}
+            value={copyFallback()}
+          />
+        </div>
       </Show>
       <div class="term-wrap">
         <div ref={host} style="height:100%" />

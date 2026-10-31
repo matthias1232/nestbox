@@ -398,7 +398,14 @@ pub async fn draft_from_event(
 
     let draft = serde_json::json!({
         "action": draft_action_for(event),
-        "host": event.get("destination").and_then(|v| v.as_str()).unwrap_or_default(),
+        // The traffic table names the destination `host`; older callers say
+        // `destination`. Reading only the second one produced a draft with no
+        // host, which an approval turned into a rule that matched nothing.
+        "host": event
+            .get("host")
+            .or_else(|| event.get("destination"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default(),
         "port": event.get("port"),
         "protocol": event.get("protocol").and_then(|v| v.as_str()).unwrap_or("rest"),
         "enforcement": "enforced",
@@ -425,6 +432,91 @@ pub async fn draft_from_event(
     scope.commit().await.map_err(ApiError::from)?;
 
     Ok(serde_json::json!({ "id": id, "draft": draft, "status": "pending" }))
+}
+
+/// Let one destination through for one sandbox, right now.
+///
+/// This is the one-click release: the operator saw a blocked request and wants
+/// it through, so the rule is created enabled in a single step instead of
+/// going through a draft that someone has to find and approve. It is still a
+/// normal stored rule: it shows in the sandbox's rule list, can be deleted, and
+/// is read by the decider and the OpenShell sync like any other.
+///
+/// Idempotent: allowing the same host and port again returns the rule that is
+/// already there, so a double click does not stack copies.
+pub async fn allow_destination(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+    host: &str,
+    port: Option<i32>,
+    protocol: Option<&str>,
+) -> Result<NetworkRule, ApiError> {
+    require(principal, Permission::PolicyWrite)?;
+    let host = host.trim().to_ascii_lowercase();
+    if host.is_empty() || host.contains(' ') || host.contains('/') {
+        return Err(ApiError::validation("A destination needs a plain host name."));
+    }
+    if let Some(port) = port {
+        if !(1..=65535).contains(&port) {
+            return Err(ApiError::validation("A port is between 1 and 65535."));
+        }
+    }
+
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
+        .await
+        .map_err(ApiError::from)?;
+    // The caller must be able to see the sandbox: another user's sandbox is not
+    // theirs to open, whatever their policy permission.
+    sandbox_store::get(&mut scope, sandbox_id).await.map_err(ApiError::from)?;
+
+    let existing = store::list_rules(&mut scope).await.map_err(ApiError::from)?;
+    if let Some(rule) = existing.into_iter().find(|rule| {
+        rule.sandbox_id == Some(sandbox_id)
+            && rule.enabled
+            && rule.action == crate::domain::policy::RuleAction::Allow
+            && rule.host.eq_ignore_ascii_case(&host)
+            && rule.port == port
+    }) {
+        scope.commit().await.map_err(ApiError::from)?;
+        return Ok(rule);
+    }
+
+    let mut matchers = vec![crate::domain::policy::Matcher {
+        kind: crate::domain::policy::MatcherKind::Host,
+        value: Some(host.clone()),
+    }];
+    if let Some(port) = port {
+        matchers.push(crate::domain::policy::Matcher {
+            kind: crate::domain::policy::MatcherKind::Port,
+            value: Some(port.to_string()),
+        });
+    }
+    let rule = NetworkRule {
+        id: Uuid::nil(),
+        environment_id: principal.environment_id,
+        policy_id: None,
+        sandbox_id: Some(sandbox_id),
+        name: match port {
+            Some(port) => format!("allow {host}:{port}"),
+            None => format!("allow {host}"),
+        },
+        action: crate::domain::policy::RuleAction::Allow,
+        host,
+        port,
+        protocol: protocol_from(protocol),
+        methods: Vec::new(),
+        matchers,
+        binaries: Vec::new(),
+        enforcement: crate::domain::policy::Enforcement::Enforced,
+        priority: 100,
+        enabled: true,
+        version: 1,
+    };
+    validate_rule(&rule)?;
+    let created = store::insert_rule(&mut scope, &rule).await.map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(created)
 }
 
 /// Pending drafts.

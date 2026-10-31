@@ -621,6 +621,41 @@ impl RuntimeAdapter for HttpRunner {
         Ok(answer.logs)
     }
 
+    async fn open_vnc(&self, name: &str) -> Result<super::VncStream, RuntimeError> {
+        let url = format!("{}/v1/sandboxes/{}/vnc", self.ws_base_url(), name);
+        let mut request = url
+            .as_str()
+            .into_client_request()
+            .map_err(|error| RuntimeError::Rejected(format!("invalid desktop URL: {error}")))?;
+        // Same rule as the terminal: the node token rides in the subprotocol
+        // header, never in a URL that a log would keep.
+        let protocol = match read_node_token() {
+            Some(token) => format!("nestbox-vnc, {token}"),
+            None => "nestbox-vnc".to_string(),
+        };
+        request.headers_mut().insert(
+            "sec-websocket-protocol",
+            reqwest::header::HeaderValue::from_str(&protocol).map_err(|_| {
+                RuntimeError::Rejected("the node token is not a valid header value".to_string())
+            })?,
+        );
+        let upgrade = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            tokio_tungstenite::connect_async(request),
+        )
+        .await
+        .map_err(|_| RuntimeError::Unavailable("the runner did not answer the upgrade".into()))?
+        .map_err(|error| match error {
+            tokio_tungstenite::tungstenite::Error::Http(response) => match response.status().as_u16() {
+                404 => RuntimeError::NotFound(name.to_string()),
+                401 | 403 => RuntimeError::Rejected("the runner refused the node token".to_string()),
+                status => RuntimeError::Rejected(format!("the runner refused the desktop ({status})")),
+            },
+            other => RuntimeError::Unavailable(other.to_string()),
+        })?;
+        Ok(upgrade.0)
+    }
+
     async fn open_terminal(&self, name: &str, tab_id: &str) -> Result<BoxTerminal, RuntimeError> {
         // `tab_id` is validated to ASCII alphanumerics, `_`, and `-` before it
         // reaches the runtime, so it is already safe as this path's query value.

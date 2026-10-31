@@ -32,6 +32,7 @@ pub mod sandbox_agents;
 pub mod sandboxes;
 pub mod sandboxes_settings;
 pub mod sandboxes_terminal;
+pub mod sandboxes_vnc;
 pub mod system;
 pub mod telemetry;
 pub mod stack;
@@ -85,6 +86,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/sandboxes/{id}/exec", post(sandboxes::exec))
         .route("/api/v1/sandboxes/{id}/inference", get(telemetry::sandbox_inference))
         .route("/api/v1/sandboxes/{id}/rules", get(policies::sandbox_rules))
+        .route("/api/v1/sandboxes/{id}/allow", post(policies::allow_destination))
         // Which sandboxes belong together.
         .route("/api/v1/sandboxes/{id}/stack", put(sandboxes::put_stack))
         .route("/api/v1/sandboxes/{id}/resources", put(sandboxes::put_resources))
@@ -108,6 +110,7 @@ pub fn router(state: AppState) -> Router {
             post(inventory::refresh),
         )
         // Admin Center: terminal, SSH, ports, sessions
+        .route("/api/v1/sandboxes/{id}/desktop", get(sandboxes_vnc::desktop))
         .route(
             "/api/v1/sandboxes/{id}/terminal",
             get(sandboxes_terminal::terminal),

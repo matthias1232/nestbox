@@ -234,6 +234,32 @@ pub async fn processes(
         .map_err(runner_error)
 }
 
+/// The sandbox a desktop session may attach to, checked before the upgrade.
+///
+/// A desktop is as powerful as a terminal (it can open one), so it needs the
+/// same permission, and it needs a running sandbox. Returning the name rather
+/// than a ticket is enough: nothing here is counted or limited yet.
+pub async fn desktop_target(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+) -> Result<String, ApiError> {
+    require(principal, Permission::SandboxExec)?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
+    let sandbox = sandbox_store::get(&mut scope, sandbox_id).await.map_err(|error| match error {
+        StoreError::NotFound => ApiError::not_found(ErrorCode::SANDBOX_NOT_FOUND, "No such sandbox."),
+        other => ApiError::from(other),
+    })?;
+    scope.commit().await.map_err(ApiError::from)?;
+    if sandbox.status != crate::domain::sandbox::SandboxStatus::Running {
+        return Err(ApiError::conflict(
+            ErrorCode::SANDBOX_INVALID_STATE,
+            format!("A desktop needs a running sandbox; this one is '{}'.", sandbox.status.as_str()),
+        ));
+    }
+    Ok(sandbox.name)
+}
+
 /// A live view of one sandbox, read through the runner.
 ///
 /// The set of kinds is closed here: the kind becomes part of a runner URL, so
