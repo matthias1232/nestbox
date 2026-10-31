@@ -8,10 +8,12 @@
 
 import { For, Show, createSignal, onMount } from 'solid-js';
 import * as api from '../../api/users.js';
+import AccessSection from './AccessSection.jsx';
 
 const ROLES = [
   ['admin', 'Admin — everything, including users, providers, keys and global policy'],
   ['operator', 'Operator — manages their own sandboxes from start to end'],
+  ['member', 'Member — works in the sandboxes they own or were given, nothing else'],
   ['viewer', 'Viewer — read-only on their own and shared sandboxes'],
 ];
 
@@ -175,6 +177,8 @@ export default function UsersPage() {
         </div>
         <div class="actions"><button type="submit" disabled={busy()}>Create user</button></div>
       </form>
+
+      <AccessSection users={items()} />
     </section>
   );
 }

@@ -32,6 +32,8 @@ import SkillsPage from './features/skills/SkillsPage.jsx';
 import CudaXPage from './features/cudax/CudaXPage.jsx';
 import SystemPage from './features/system/SystemPage.jsx';
 import AdminCenter from './features/sandboxes/AdminCenter.jsx';
+import TenantsPage from './features/tenants/TenantsPage.jsx';
+import ContextBar from './features/tenants/ContextBar.jsx';
 import { menuFor } from './navigation.js';
 
 // The Admin Center is the only view with an address of its own: an operator
@@ -101,6 +103,8 @@ export default function App() {
               <span>control</span>
             </div>
 
+            <ContextBar />
+
             <nav class="nav">
               <For each={menuFor(session.identity()?.role)}>
                 {(group) => (
@@ -122,20 +126,6 @@ export default function App() {
             </nav>
 
             <footer>
-              <Show when={session.environments().length > 1}>
-                <div class="env-picker">
-                  <label for="env">Environment</label>
-                  <select
-                    id="env"
-                    value={session.activeEnvironment()}
-                    onChange={(event) => session.switchEnvironment(event.currentTarget.value)}
-                  >
-                    <For each={session.environments()}>
-                      {(env) => <option value={env.id}>{env.name} ({env.role})</option>}
-                    </For>
-                  </select>
-                </div>
-              </Show>
 
               <p class="muted small">
                 {session.identity()?.display_name} · {session.identity()?.role}
@@ -145,6 +135,9 @@ export default function App() {
           </aside>
 
           <main>
+            {/* Keyed: choosing another data center remounts the page, so every screen reloads its data. */}
+            <Show when={session.activeEnvironment()} keyed>
+              {() => (
             <Show
               when={adminId()}
               fallback={
@@ -172,6 +165,7 @@ export default function App() {
                   <Show when={route() === 'persistent'}><PersistentPage /></Show>
                   <Show when={route() === 'operations'}><JobsPage /></Show>
                   <Show when={route() === 'users'}><UsersPage /></Show>
+                  <Show when={route() === 'tenants'}><TenantsPage role={session.identity()?.role} /></Show>
                   <Show when={route() === 'mcp'}><McpPage role={session.identity()?.role} /></Show>
                   <Show when={route() === 'media'}><MediaPage role={session.identity()?.role} /></Show>
                   <Show when={route() === 'privacy'}><PrivacyPage role={session.identity()?.role} /></Show>
@@ -182,6 +176,8 @@ export default function App() {
               }
             >
               <AdminCenter sandboxId={adminId()} onClose={closeAdmin} />
+            </Show>
+              )}
             </Show>
           </main>
         </div>

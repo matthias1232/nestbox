@@ -36,6 +36,7 @@ export const ROUTES = [
   { id: 'models', label: 'Models', group: 'operate' },
   { id: 'operations', label: 'Jobs & schedules', group: 'operate' },
 
+  { id: 'tenants', label: 'Data centers & sites', group: 'setup' },
   { id: 'nodes', label: 'Nodes', group: 'setup' },
   { id: 'cluster', label: 'Cluster', group: 'setup' },
   { id: 'providers', label: 'Providers & keys', group: 'setup', minRole: 'operator' },

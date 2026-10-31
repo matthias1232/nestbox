@@ -1,0 +1,13 @@
+# features/tenants
+
+Customers, data centers and sites (ADR 0044). One page, `TenantsPage.jsx`:
+
+* the organisation tree the caller reaches, with each data center's counts;
+* **Add a customer** - only shown to a platform or partner administrator; the API refuses anyone else;
+* **Add a data center** in the caller's organisation;
+* the **sites** of the active data center, with *Add site* and *Remove* (an empty site only).
+
+`ContextBar.jsx` is the switcher at the top of the sidebar: organisation, data center. It reads
+the same tree, so it never offers a data center the caller cannot open.
+
+Nothing here decides who may do what: the buttons are shown by role, and the API repeats the check.
