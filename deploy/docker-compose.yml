@@ -198,10 +198,6 @@ services:
       # read-only, and the runner never mounts this directory.
       - ./secrets/ssh:/secrets/ssh
       - ./secrets/node:/run/node:ro
-      # The deployment's egress CA directory, at the same path inside and out so
-      # a sandbox bind source is the path Docker resolves on the host. Read-only:
-      # the runner only passes the public certificate on.
-      - ${NESTBOX_EGRESS_CA_DIR:-/opt/nestbox/site/deploy/secrets/egress}:${NESTBOX_EGRESS_CA_DIR:-/opt/nestbox/site/deploy/secrets/egress}:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -307,6 +303,10 @@ services:
       - /var/lib/nestbox/backups:/var/lib/nestbox/backups
       - /proc:/host/proc:ro
       - ./secrets/node:/run/node:ro
+      # The deployment's egress CA directory, at the same path inside and out so
+      # a sandbox bind source is the path Docker resolves on the host. Read-only:
+      # the runner only passes the public certificate on.
+      - ${NESTBOX_EGRESS_CA_DIR:-/opt/nestbox/site/deploy/secrets/egress}:${NESTBOX_EGRESS_CA_DIR:-/opt/nestbox/site/deploy/secrets/egress}:ro
       # The client bundle for the OpenShell gateway on the host (written by
       # deploy/openshell/install-openshell.sh): CA certificate, client certificate
       # and key. Writable only because the CLI keeps its "last sandbox" note there.
