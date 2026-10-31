@@ -18,7 +18,6 @@ use crate::domain::telemetry::{
     Decision, Direction, DnsEvent, EventKind, LiveEvent, NetworkEvent, TelemetryEvent,
 };
 use crate::error::{ApiError, ErrorCode};
-use crate::security::{secrets, session};
 use crate::store::postgres::telemetry as store;
 use crate::store::postgres::traffic_bodies;
 use crate::store::TenantScope;
@@ -348,26 +347,10 @@ async fn authenticate_node(
         refused()
     })?;
 
-    let expected = secrets::resolve(locator, &ctx.secret_dir).map_err(|error| {
-        tracing::warn!(
-            node = %node.name,
-            reason = error.message(),
-            "telemetry batch refused: node token cannot be resolved"
-        );
-        refused()
-    })?;
-    let expected = expected.trim();
-    if expected.is_empty() {
-        tracing::warn!(node = %node.name, "telemetry batch refused: node token file is empty");
-        return Err(refused());
-    }
-
-    let equal = session::hashes_equal(
-        &session::hash_token(presented),
-        &session::hash_token(expected),
-    );
-    if !equal {
-        tracing::warn!(node = %node.name, "telemetry batch refused: node token mismatch");
+    // One rule for every node call: file locators (the appliance) and digest locators (a node
+    // that joined over the overlay) are verified in the same place, in constant time.
+    if let Err(error) = crate::security::node_token::verify(locator, &ctx.secret_dir, presented) {
+        tracing::warn!(node = %node.name, reason = ?error, "telemetry batch refused: node token");
         return Err(refused());
     }
 
