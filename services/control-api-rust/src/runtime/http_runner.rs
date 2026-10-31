@@ -241,9 +241,11 @@ impl RuntimeAdapter for HttpRunner {
 
     async fn remove(&self, name: &str) -> Result<(), RuntimeError> {
         let url = format!("{}/v1/sandboxes/{name}/remove", self.base_url);
-        let response = self
-            .client
-            .post(url)
+        let mut request = self.client.post(url);
+        if let Some(token) = &self.token {
+            request = request.bearer_auth(token);
+        }
+        let response = request
             .send()
             .await
             .map_err(|error| RuntimeError::Unavailable(error.to_string()))?;

@@ -652,7 +652,7 @@ pub async fn internal_check(
     // accepted only when no source address was reported, which is how the tests
     // and a hand-made check speak.
     let sandbox_id = match header_value(&headers, "x-nestbox-source-ip") {
-        Some(address) => resolve_source(&state, &address).await,
+        Some(address) => resolve_source(&state, node_id, &address).await,
         None => header_value(&headers, "x-nestbox-sandbox")
             .or_else(|| header_value(&headers, "x-nestbox-sandbox-id"))
             .and_then(|value| Uuid::parse_str(value.trim()).ok()),
@@ -860,11 +860,13 @@ fn original_path(headers: &HeaderMap, original: &axum::http::Uri) -> String {
 /// that matches is looked up by name. An address nobody holds, or a runner that
 /// cannot answer, is `None`: the check then refuses with "no sandbox identified",
 /// which is the honest fail-closed answer.
-async fn resolve_source(state: &AppState, address: &str) -> Option<Uuid> {
+async fn resolve_source(state: &AppState, node_id: Uuid, address: &str) -> Option<Uuid> {
     let address = address.trim();
+    // Only the node that asked: every node's Docker hands out the same private addresses, so the
+    // merged list of all nodes would name the wrong sandbox for an address held on another one.
     let facts = tokio::time::timeout(
         std::time::Duration::from_secs(2),
-        state.services.runtime.list(),
+        state.services.runtime_for(node_id).list(),
     )
     .await
     .ok()?
