@@ -66,6 +66,7 @@ on it.
 | `McpTab.jsx` | Servers, tools, calls, visibility per transport (`feat/console-mcp`) |
 | `TerminalTab.jsx` | xterm.js over the terminal WebSocket; the tab list is read from and written to the server, so a reload reopens the same shells (`feat/console-terminal`) |
 | `DesktopTab.jsx` | noVNC over the desktop WebSocket; only a sandbox built with the desktop pack has one. Offers to attach the `chrome-browser` MCP server |
+| `CommandsTab.jsx` | New processes with their way in (terminal, ssh, inside), polled every 2 s while open |
 | `ConnectionsTab.jsx` | Sockets and owning processes, filtered by where they go (internet, SSH, name lookups), polled every 2.5 s |
 | `ChatsTab.jsx`, `chats.js` | Model conversations read from the recorded bodies (Anthropic, OpenAI chat, OpenAI responses; SSE stitched back). Needs an inspecting egress mode |
 | `AccessTab.jsx` | Ports, SSH key, remote snippets (`feat/console-access`) |
