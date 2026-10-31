@@ -1,4 +1,4 @@
--- 0047 — the exit proxy catalogue, and a fourth egress mode.
+-- 0059 — the exit proxy catalogue, and a fourth egress mode.
 --
 -- Two things the operator asked for, and one thing they must be able to see:
 --
