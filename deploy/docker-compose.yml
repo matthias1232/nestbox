@@ -303,6 +303,8 @@ services:
       - /var/lib/nestbox/backups:/var/lib/nestbox/backups
       - /proc:/host/proc:ro
       - ./secrets/node:/run/node:ro
+      # The public CA copy the runner writes for sandboxes; same path in and out.
+      - /var/lib/nestbox/egress:/var/lib/nestbox/egress
       # The deployment's egress CA directory, at the same path inside and out so
       # a sandbox bind source is the path Docker resolves on the host. Read-only:
       # the runner only passes the public certificate on.

@@ -211,6 +211,27 @@ def ensure_network() -> Any:
     return network
 
 
+EGRESS_CA_PUBLIC_DIR = os.getenv("NESTBOX_EGRESS_CA_PUBLIC", "/var/lib/nestbox/egress")
+
+
+def publish_egress_ca() -> str | None:
+    """Copy the public CA to a world-readable file a sandbox can bind-mount.
+
+    The deployment keeps `secrets/` at 0600 for its own user, which a sandbox
+    user cannot read, and a deploy resets that mode. The certificate is public;
+    the key is never copied. The same path inside and out, like every bind
+    source the runner hands to Docker.
+    """
+    if not os.path.exists(EGRESS_CA_HOST):
+        return None
+    os.makedirs(EGRESS_CA_PUBLIC_DIR, mode=0o755, exist_ok=True)
+    target = os.path.join(EGRESS_CA_PUBLIC_DIR, "ca.crt")
+    with open(EGRESS_CA_HOST, "rb") as source, open(target, "wb") as out:
+        out.write(source.read())
+    os.chmod(target, 0o644)
+    return target
+
+
 def ensure_direct_network() -> Any:
     """Return the bridge a `direct` sandbox leaves through, creating it once.
 
@@ -627,11 +648,12 @@ def create_sandbox(body: SandboxRequest) -> dict[str, Any]:
         # Only a sandbox whose traffic is actually read is given the CA. The
         # file is public, but trusting it is a decision, and the decision is the
         # mode.
-        if os.path.exists(EGRESS_CA_HOST):
+        public_ca = publish_egress_ca()
+        if public_ca:
             mounts.append(
                 {
                     "type": "bind",
-                    "source": EGRESS_CA_HOST,
+                    "source": public_ca,
                     "target": EGRESS_CA_TARGET,
                     "read_only": True,
                 }
