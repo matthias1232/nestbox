@@ -958,6 +958,15 @@ pub async fn set_egress_mode(
     let sandbox = sandbox_store::get(&mut scope, sandbox_id)
         .await
         .map_err(ApiError::from)?;
+    // A sandbox built from a recipe cannot be recreated (its entrypoint is
+    // generated at build time), so a new mode would be stored but never reach
+    // the container. Say so instead of saving a setting that is not true.
+    if sandbox.image.starts_with("nestbox-recipe/") {
+        return Err(ApiError::conflict(
+            ErrorCode::SANDBOX_INVALID_STATE,
+            "This sandbox was built from a recipe and its mode is fixed when it is created. Create it again from the recipe with the mode you want (instantiate takes `egress_mode`).",
+        ));
+    }
     let setting = store::set_egress_mode(
         &mut scope,
         sandbox.id,

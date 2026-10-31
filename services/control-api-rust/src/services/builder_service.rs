@@ -715,6 +715,7 @@ pub async fn instantiate(
     principal: &Principal,
     id: Uuid,
     name: &str,
+    egress_mode: Option<&str>,
 ) -> Result<Sandbox, ApiError> {
     require(principal, Permission::RecipeWrite)?;
     require(principal, Permission::SandboxWrite)?;
@@ -724,6 +725,17 @@ pub async fn instantiate(
         .await
         .map_err(ApiError::from)?;
     let recipe = store::get(&mut scope, id).await.map_err(recipe_error)?;
+    // The mode is decided once, here, and written down with the sandbox: the
+    // container's environment and the stored row must say the same thing, or
+    // the proxy reads TLS the sandbox does not trust.
+    let mode = match egress_mode {
+        Some(value) => crate::domain::policy::EgressMode::parse(value)
+            .ok_or_else(|| ApiError::validation("egress_mode is direct, forward_proxy, transparent or hybrid."))?,
+        None if recipe.agents.iter().any(|agent| agent.pack_key == "desktop") => {
+            crate::domain::policy::EgressMode::Transparent
+        }
+        None => crate::domain::policy::EgressMode::ForwardProxy,
+    };
     let Some(image) = recipe.image_ref.clone() else {
         return Err(ApiError::conflict(
             ErrorCode::RECIPE_NOT_BUILT,
@@ -960,9 +972,13 @@ pub async fn instantiate(
     // Same rule as `sandbox_service::create`: a recipe sandbox also has no route
     // out, so the proxy is the only address it can use. The two paths must send
     // the same shape to the runtime or a recipe sandbox is a silent special case.
-    environment.extend(crate::services::sandbox_service::egress_environment(
-        &crate::services::sandbox_service::egress_proxy_url(),
-    ));
+    if let Some(proxy) = crate::services::sandbox_service::sandbox_proxy_url(mode, None) {
+        environment.extend(crate::services::sandbox_service::egress_environment_for(
+            &proxy,
+            mode,
+            crate::services::sandbox_service::EGRESS_CA_IN_SANDBOX,
+        ));
+    }
     // The model on this node is on the runtime network; proxying it would turn
     // a local call into a denied egress request.
     crate::services::sandbox_service::add_inference_bypass_vec(&mut environment);
