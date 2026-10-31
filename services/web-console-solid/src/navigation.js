@@ -33,6 +33,7 @@ export const ROUTES = [
 
   { id: 'sandboxes', label: 'Sandboxes', group: 'operate' },
   { id: 'persistent', label: 'Persistent data', group: 'operate' },
+  { id: 'moves', label: 'Moves between nodes', group: 'operate' },
   { id: 'models', label: 'Models', group: 'operate' },
   { id: 'operations', label: 'Jobs & schedules', group: 'operate' },
 
