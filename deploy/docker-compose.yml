@@ -80,9 +80,18 @@ services:
         # readable by it alone: the proxy mounts nothing else from secrets/.
         mkdir -p /secrets/proxy
         cp /secrets/node/token /secrets/proxy/node-token
+        # The certificate broker runs in the same container and signs leaf
+        # certificates with the egress CA, so it needs the key. A Docker secret
+        # keeps the host file's owner and mode (0600, another uid), so the broker
+        # could not read it and exited; the copy below is owned by the proxy user.
+        if [ -s /secrets/egress/ca.crt ] && [ -s /secrets/egress/ca.key ]; then
+          cp /secrets/egress/ca.crt /secrets/proxy/egress-ca.crt
+          cp /secrets/egress/ca.key /secrets/proxy/egress-ca.key
+        fi
         chown -R 101:101 /secrets/proxy
         chmod 0500 /secrets/proxy
         chmod 0400 /secrets/proxy/node-token
+        chmod 0400 /secrets/proxy/egress-ca.crt /secrets/proxy/egress-ca.key 2>/dev/null || true
         chmod 0700 /secrets
         find /secrets -type f -exec chmod 0600 {} + 2>/dev/null || true
         echo "data and secret directories prepared"
@@ -346,16 +355,12 @@ services:
       # every request is denied. The id is the seeded local node.
       NESTBOX_NODE_ID: ${NESTBOX_NODE_ID:-00000000-0000-0000-0000-000000000003}
       NESTBOX_NODE_TOKEN_FILE: /run/node/node-token
+      NESTBOX_EGRESS_CA_CERT: /run/node/egress-ca.crt
+      NESTBOX_EGRESS_CA_KEY: /run/node/egress-ca.key
     volumes:
       # A copy of the node token that only the proxy's user can read (made by
       # init-data). The proxy never sees the database URLs or the SSH keys.
       - ./secrets/proxy:/run/node:ro
-    secrets:
-      # The certificate broker mints one leaf per destination from this CA. It
-      # arrives as a Docker secret (0444, root) rather than a bind mount, because
-      # a bind mount keeps the host's 0600 and the proxy's user could not read it.
-      - egress_ca_cert
-      - egress_ca_key
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -489,14 +494,6 @@ secrets:
     file: ./secrets/database_url
   database_url_admin:
     file: ./secrets/database_url_admin
-  # The egress CA. The proxy's certificate broker signs every leaf with it; no
-  # sandbox image contains it (a CA in a registry is trusted by every sandbox
-  # built from it). Docker mounts these at /run/secrets/egress_ca.crt and
-  # /run/secrets/egress_ca.key.
-  egress_ca_cert:
-    file: ./secrets/egress/ca.crt
-  egress_ca_key:
-    file: ./secrets/egress/ca.key
 
 volumes:
   nestbox-postgres:

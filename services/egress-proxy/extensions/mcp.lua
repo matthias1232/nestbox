@@ -202,6 +202,8 @@ function envoy_on_request(handle)
     set(handle, "connect", "true")
     check_tunnel(handle, headers:get(":authority"), request_headers:get("x-nestbox-source-ip"))
     set(handle, "sni", host)
+    -- httpCall yields; header objects fetched before it are invalid after it.
+    headers = handle:headers()
   end
 
   set(handle, "mcp_session_id", headers:get("mcp-session-id"))
