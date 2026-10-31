@@ -443,6 +443,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/node-join-tokens", post(node_join::create_token))
         .route("/api/v1/join/{token}/script", get(node_join::script))
         .route("/api/v1/join/{token}", post(node_join::join))
+        .route("/api/v1/node/compose", get(node_join::compose))
         .route("/api/v1/nodes/{id}", get(nodes::get).delete(node_join::remove))
         .route("/api/v1/nodes/{id}/sandboxes", get(nodes::sandboxes))
         .route("/api/v1/nodes/{id}/display", put(nodes::update_display))

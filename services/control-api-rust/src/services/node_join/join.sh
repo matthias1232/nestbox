@@ -123,6 +123,43 @@ cat > "$DIR/docker-compose.yml" <<'COMPOSE'
 __COMPOSE__
 COMPOSE
 
+say "Installing the sync timer (the node follows the control plane's version)"
+cat > /usr/local/bin/nestbox-node-sync <<SYNC
+#!/usr/bin/env bash
+# Fetch the current node package from the control plane; if it changed, or a newer image exists,
+# recreate the node's containers. Safe to run by hand.
+set -euo pipefail
+cd $DIR
+. ./.env
+TMP=\$(mktemp)
+if curl -fsS -m 20 -H "Authorization: Bearer \$(cat secrets/node-token)" -H "x-nestbox-node: \$NODE_ID" "\$CONTROL_OVERLAY/api/v1/node/compose" -o "\$TMP" && [ -s "\$TMP" ]; then
+  if ! cmp -s "\$TMP" docker-compose.yml; then cp "\$TMP" docker-compose.yml; echo "node package updated"; fi
+fi
+rm -f "\$TMP"
+docker compose --env-file .env pull -q
+docker compose --env-file .env up -d
+SYNC
+chmod 755 /usr/local/bin/nestbox-node-sync
+cat > /etc/systemd/system/nestbox-node-sync.service <<UNIT
+[Unit]
+Description=Bring this Nestbox node in step with its control plane
+After=network-online.target docker.service wg-quick@nb0.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/nestbox-node-sync
+UNIT
+cat > /etc/systemd/system/nestbox-node-sync.timer <<UNIT
+[Unit]
+Description=Nestbox node sync every five minutes
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+[Install]
+WantedBy=timers.target
+UNIT
+systemctl daemon-reload
+systemctl enable --now nestbox-node-sync.timer >/dev/null 2>&1 || true
+
 say "Pulling and starting the runner and the egress proxy"
 cd "$DIR"
 docker compose --env-file .env pull

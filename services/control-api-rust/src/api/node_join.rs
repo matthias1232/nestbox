@@ -67,3 +67,24 @@ pub async fn remove(State(state): State<AppState>, auth: Auth, Path(id): Path<Uu
     node_join_service::remove(&state.services, &state.config, &auth.principal, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
+
+/// The node package as it should be now. The node proves itself with its token.
+pub async fn compose(State(state): State<AppState>, headers: HeaderMap) -> Result<impl IntoResponse, ApiError> {
+    let token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let node = headers
+        .get("x-nestbox-node")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| Uuid::parse_str(v.trim()).ok())
+        .ok_or_else(|| ApiError::unauthenticated("The node token was refused."))?;
+    let text = node_join_service::compose_for(&state.services, node, &token).await?;
+    let mut out = HeaderMap::new();
+    out.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/yaml; charset=utf-8"));
+    out.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok((StatusCode::OK, out, text))
+}

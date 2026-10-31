@@ -304,6 +304,23 @@ pub async fn join(
     })
 }
 
+/// The current node package, for a node that asks with its own token. This is how a node
+/// follows the control plane's version: its sync timer fetches this, and if it differs from
+/// what the node runs, pulls and recreates. Authenticated like every node call (ADR 0034).
+pub async fn compose_for(ctx: &ServiceContext, node_id: Uuid, presented: &str) -> Result<String, ApiError> {
+    let locator: Option<String> = sqlx::query_scalar("SELECT node_token_ref FROM nodes WHERE id = $1 AND wg_public_key IS NOT NULL")
+        .bind(node_id)
+        .fetch_optional(&ctx.pool)
+        .await
+        .map_err(db)?
+        .flatten();
+    let Some(locator) = locator else {
+        return Err(node_token::NodeTokenError::NotConfigured.to_api());
+    };
+    node_token::verify(&locator, &ctx.secret_dir, presented).map_err(|e| e.to_api())?;
+    Ok(format!("{}\n", COMPOSE.trim_end()))
+}
+
 /// Rewrite the hub's peer list from the nodes table. Atomic: written beside and renamed, so the
 /// hub never reads half a file.
 pub async fn write_peers(pool: &sqlx::PgPool, dir: &Path) -> Result<(), ApiError> {
