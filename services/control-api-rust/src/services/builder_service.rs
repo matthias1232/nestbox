@@ -1375,7 +1375,7 @@ fn prerequisites(kinds: &[InstallKind]) -> Vec<&'static str> {
             InstallKind::Pip => &["python3", "python3-pip"],
             InstallKind::Binary => &["curl", "ca-certificates"],
             InstallKind::Git => &["git"],
-            InstallKind::Desktop => &["ca-certificates", "curl", "gnupg"],
+            InstallKind::Desktop => &["ca-certificates", "curl"],
             InstallKind::Image | InstallKind::None => &[],
         };
         for key in needed {
