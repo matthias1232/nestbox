@@ -414,14 +414,15 @@ pub async fn remove(ctx: &ServiceContext, config: &Config, principal: &Principal
     }
     let busy: i64 = sqlx::query_scalar(
         "SELECT (SELECT count(*) FROM sandboxes WHERE node_id = $1 AND status <> 'deleted')
-              + (SELECT count(*) FROM model_installs WHERE node_id = $1)",
+              + (SELECT count(*) FROM model_installs WHERE node_id = $1)
+              + (SELECT count(*) FROM persistent_roots WHERE node_id = $1 AND archived_at IS NULL)",
     )
     .bind(node_id)
     .fetch_one(scope.connection())
     .await
     .map_err(db)?;
     if busy > 0 {
-        return Err(ApiError::conflict(ErrorCode::SANDBOX_INVALID_STATE, "Sandboxes or models still run on this node. Move or remove them first."));
+        return Err(ApiError::conflict(ErrorCode::SANDBOX_INVALID_STATE, "Sandboxes, models or persistent folders still live on this node. Move them to another node first: a machine is only deleted once its data has a home."));
     }
     sqlx::query("DELETE FROM nodes WHERE id = $1").bind(node_id).execute(scope.connection()).await.map_err(db)?;
     sqlx::query("DELETE FROM stored_secrets WHERE name = $1 AND environment_id = $2")
