@@ -106,10 +106,14 @@ async fn main() {
     {
         let services = state.services.clone();
         let router = router.clone();
+        let config = state.config.clone();
         tokio::spawn(async move {
             loop {
                 if let Err(error) = nestbox_control_api::services::node_join_service::sync(&services, &router).await {
                     tracing::debug!(code = error.code.0, "node sync pass skipped");
+                }
+                if !config.overlay.dir.as_os_str().is_empty() {
+                    let _ = nestbox_control_api::services::node_join_service::write_peers(&services.pool, &config.overlay.dir).await;
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(15)).await;
             }

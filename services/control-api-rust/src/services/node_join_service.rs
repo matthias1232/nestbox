@@ -365,6 +365,10 @@ pub async fn write_peers(pool: &sqlx::PgPool, dir: &Path) -> Result<(), ApiError
     .await
     .map_err(db)?;
     let text = render_peers(&rows);
+    // Unchanged is not rewritten: the hub applies a changed file, and the loop calls this often.
+    if std::fs::read_to_string(dir.join("peers.conf")).is_ok_and(|current| current == text) {
+        return Ok(());
+    }
     let temp = dir.join("peers.conf.tmp");
     std::fs::write(&temp, text).map_err(|e| ApiError::internal(format!("cannot write the peer list: {e}")))?;
     std::fs::rename(&temp, dir.join("peers.conf")).map_err(|e| ApiError::internal(format!("cannot replace the peer list: {e}")))?;

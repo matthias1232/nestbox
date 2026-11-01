@@ -39,6 +39,7 @@ export const ROUTES = [
 
   { id: 'tenants', label: 'Data centers & sites', group: 'setup' },
   { id: 'nodes', label: 'Nodes', group: 'setup' },
+  { id: 'hosting', label: 'Rented machines', group: 'setup', minRole: 'operator' },
   { id: 'cluster', label: 'Cluster', group: 'setup' },
   { id: 'images', label: 'Image registry & sync', group: 'setup' },
   { id: 'providers', label: 'Providers & keys', group: 'setup', minRole: 'operator' },
