@@ -307,3 +307,9 @@ uses to find it.
 | `node_connect_service` | joining a machine by address, tunnels, the egress lock |
 | `rule_bulk_service` | turning observation into rule drafts |
 | `control_service` | the one summary the workbox and the admin list read |
+
+`agent_launch_service` installs the launcher with one `sh -c` per sandbox: the scripts arrive
+base64-encoded, so no shell quoting of the payload is needed, and every file is written beside its
+target and moved into place, so a shell never sources half a script. A mode change does not
+reinstall anything: the launcher reads `.nestbox/mode/<agent>` at start, and `write_mode` writes
+that one line.
