@@ -113,6 +113,10 @@ func main() {
 		},
 	}
 
+	// The hop that leaves for the internet, verified here (see upstream.go).
+	go serveUpstream(envOr("NESTBOX_EGRESS_UPSTREAM_LISTEN", defaultUpstream),
+		loadRoots(envOr("NESTBOX_UPSTREAM_ROOTS", "/etc/envoy/mozilla-ca.pem")))
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {

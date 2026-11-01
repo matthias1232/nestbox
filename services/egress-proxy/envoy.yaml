@@ -380,7 +380,7 @@ static_resources:
                       routes:
                         - match: { prefix: "/" }
                           route:
-                            cluster: dynamic_forward_proxy_cluster_tls
+                            cluster: egress_reencrypt
                             timeout: 300s
                             idle_timeout: 60s
                 http_filters:
@@ -430,12 +430,6 @@ static_resources:
                               - exact: x-nestbox-rule-id
                               - exact: x-nestbox-sandbox
                       failure_mode_allow: false
-                  - name: envoy.filters.http.dynamic_forward_proxy
-                    typed_config:
-                      "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig
-                      dns_cache_config:
-                        name: dynamic_forward_proxy_cache
-                        dns_lookup_family: V4_ONLY
                   - name: envoy.filters.http.router
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
@@ -451,36 +445,25 @@ static_resources:
           dns_cache_config:
             name: dynamic_forward_proxy_cache
             dns_lookup_family: V4_ONLY
-    # What the terminated hop leaves through. The broker hands Envoy a decrypted
-    # request; this cluster encrypts it again towards the real server, with the
-    # SNI the client asked for and the server's certificate checked against the
-    # system roots. Without this the request would reach the internet in clear
-    # text, which is the opposite of what an inspecting proxy is for.
-    - name: dynamic_forward_proxy_cluster_tls
-      connect_timeout: 5s
-      lb_policy: CLUSTER_PROVIDED
-      cluster_type:
-        name: envoy.clusters.dynamic_forward_proxy
-        typed_config:
-          "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
-          dns_cache_config:
-            name: dynamic_forward_proxy_cache
-            dns_lookup_family: V4_ONLY
-      transport_socket:
-        name: envoy.transport_sockets.tls
-        typed_config:
-          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
-          common_tls_context:
-            validation_context:
-              trusted_ca: { filename: /etc/envoy/mozilla-ca.pem }
+    # What the terminated hop leaves through: the certificate broker's second
+    # port, which encrypts the request again towards the host it names and
+    # checks that server's certificate (mitm/upstream.go). A plain HTTP/1.1 hop on
+    # loopback; the broker being down is a 503, never an unverified request.
+    - name: egress_reencrypt
+      connect_timeout: 2s
+      type: STATIC
       typed_extension_protocol_options:
         envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
           "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
-          upstream_http_protocol_options:
-            auto_sni: true
-            auto_san_validation: true
           explicit_http_config:
             http_protocol_options: {}
+      load_assignment:
+        cluster_name: egress_reencrypt
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: 127.0.0.1, port_value: 10002 }
     # The certificate broker. An endpoint that is down here is an HTTPS request
     # that fails closed: the client gets a 503 instead of an unverified tunnel.
     - name: tls_terminator
