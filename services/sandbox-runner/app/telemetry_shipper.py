@@ -137,6 +137,7 @@ def record_from_line(line: str) -> dict[str, Any] | None:
         "llm_auth": _text(raw.get("llm_auth")),
         "request_id": _text(raw.get("request_id")),
         "decision": _text(raw.get("decision")),
+        "would_deny": _text(raw.get("would_deny")),
         "reason": _text(raw.get("reason")),
         "rule_id": _uuid(raw.get("rule_id")),
         "mcp_session_id": _text(raw.get("mcp_session_id")),

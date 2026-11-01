@@ -90,6 +90,14 @@ class RecordTest(unittest.TestCase):
         self.assertNotIn("reason", record)
         self.assertNotIn("path", record)
 
+    def test_the_would_deny_verdict_is_carried_through(self) -> None:
+        # The authz answer is "1" when the rules said deny even though a window
+        # let the request through; a dash means the filter never ran.
+        self.assertEqual(ship.record_from_line(line(would_deny="1"))["would_deny"], "1")
+        self.assertEqual(ship.record_from_line(line(would_deny="0"))["would_deny"], "0")
+        self.assertNotIn("would_deny", ship.record_from_line(line(would_deny="-")))
+        self.assertNotIn("would_deny", ship.record_from_line(line()))
+
     def test_a_line_that_is_not_an_access_record_is_skipped(self) -> None:
         self.assertIsNone(ship.record_from_line("[2026-10-29 01:00:00][1][info][main] starting"))
         self.assertIsNone(ship.record_from_line("2026-10-29T01:00:00Z {not json"))

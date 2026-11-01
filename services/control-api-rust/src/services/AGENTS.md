@@ -72,7 +72,7 @@ that push (ADR 0053).
 | `provider_service.rs` | Provider profiles with their probe status, the pending profile an install creates (by container name locally, by overlay address on a joined node), the in-use check on delete, and the reachable-only inference environment a sandbox receives |
 | `agent_service.rs` | Agents inside a sandbox: which packs may join, homes and their persistence, the supervisor command |
 | `policy_service.rs` | Validation, diff, scope rules, global override, and the egress decider (`check`: windows, rules, one evidence row; `authenticate_node`; `deployment`) |
-| `telemetry_service.rs` | Ingest (one event, and the proxy's access-log batch with bodies and MCP calls), live publish, history queries |
+| `telemetry_service.rs` | Ingest (one event, and the proxy's access-log batch with bodies and MCP calls, including the `would_deny` verdict), live publish, history queries |
 | `traffic_service.rs` | Traffic rows with window counts, per sandbox and for the whole environment (the Live traffic page), the map, one body, MCP calls, effective rules with the deployment comparison, live edges for the cluster graph (`feat/live-traffic`) |
 | `geography_service.rs` | RDAP lookup per destination host, cached; runs after a traffic read and never blocks it |
 | `model_service.rs` | Hardware probing through a node's runner (CPU, RAM, GPU, unified pool), fit against a node's free budget, facets, catalog filters, installs and their reservations (fetched and served on the install's own node, profile corrected to the published address), editing an install (reserved RAM, on/off; off frees the memory) |
@@ -308,6 +308,8 @@ uses to find it.
 | `model_readiness_service` | starting and warming those models before they are used |
 | `node_connect_service` | joining a machine by address (prepare, join, apply over SSH, credentials never stored), tunnels from the hub's `status.tsv`, the egress lock |
 | `rule_bulk_service` | turning observation into rule drafts |
+| `node_connect_service` | joining a machine by address, tunnels, the egress lock |
+| `rule_bulk_service` | turning observation into rule drafts (one allow draft per denied or would-deny destination) |
 | `control_service` | the one summary the workbox and the admin list read |
 
 `agent_launch_service` installs the launcher with one `sh -c` per sandbox: the scripts arrive

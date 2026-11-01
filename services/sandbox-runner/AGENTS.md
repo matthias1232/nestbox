@@ -187,6 +187,9 @@ seconds instead of half an hour.
 | `tests/test_vnc.py` | The view-only RFB filter: what passes, what is dropped, what makes the stream close |
 | `tests/test_remote_ssh.py` | `env_prefix` quoting and which environment keys are refused, without a machine to reach |
 | `tests/test_model_publish.py` | The model publish port: which range a joined node publishes in, the first free port, and the address read back from a running container |
+| `app/telemetry_shipper.py` | Reads the egress proxy's JSON access log from its container output and posts it as batches; the field map is pure, including the `would_deny` verdict |
+| `tests/test_terminal.py` | The pump and the frame rules, without FastAPI and without Docker (`python3 -m unittest discover -s tests -t .`) |
+| `tests/test_telemetry_shipper.py` | The access-log field map, the batch size cut, and the ship/drop/retry rule, without Docker |
 | `Dockerfile` | Image build |
 
 ## Samples, processes, inventory

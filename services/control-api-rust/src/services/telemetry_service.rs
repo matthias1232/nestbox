@@ -84,6 +84,11 @@ pub struct ProxyTrafficEntry {
     pub request_id: Option<String>,
     /// `allow`, `deny`, or `audit`. Anything else is read as a deny.
     pub decision: Option<String>,
+    /// The rules' verdict when the request was let through anyway: `1` or
+    /// `true` when the destination would have been denied. Envoy writes it as
+    /// text, so it is read as a string and normalised below.
+    #[serde(default)]
+    pub would_deny: Option<String>,
     pub reason: Option<String>,
     pub rule_id: Option<Uuid>,
     pub mcp_session_id: Option<String>,
@@ -573,6 +578,13 @@ fn prepare_traffic(
             "inspected".into(),
             serde_json::json!(channel == TrafficChannel::Inspected || entry.path.is_some()),
         );
+        // The rules still ran when a window or an "allow everything" mode let
+        // the request through. Recording their verdict is what makes a target
+        // that "would have been blocked" visible in the decisions view.
+        map.insert(
+            "would_deny".into(),
+            serde_json::json!(would_deny_flag(entry.would_deny.as_deref())),
+        );
         if let Some(method) = entry.method.as_deref().filter(|value| !value.is_empty()) {
             map.insert("method".into(), serde_json::json!(method));
         }
@@ -820,6 +832,19 @@ fn truthy(raw: Option<&str>) -> bool {
     )
 }
 
+/// Whether the rules would have denied a request the proxy let through.
+///
+/// The egress proxy's access log carries the ext_authz answer's `would_deny`
+/// as text: `1` when the rules said deny, `0` when they said allow, and a dash
+/// when the filter did not run at all. Only an explicit yes counts, so a line
+/// from a proxy version without the field is not turned into a claim.
+fn would_deny_flag(value: Option<&str>) -> bool {
+    matches!(
+        value.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        Some("1") | Some("true")
+    )
+}
+
 fn parse_decision(raw: Option<&str>) -> Decision {
     raw.map(str::trim)
         .and_then(Decision::parse)
@@ -1026,6 +1051,7 @@ mod tests {
             user_agent: Some("hermes/0.22".into()),
             request_id: Some("req-1".into()),
             decision: Some("allow".into()),
+            would_deny: None,
             reason: Some("rule".into()),
             rule_id: None,
             mcp_session_id: Some("sess-1".into()),
@@ -1100,6 +1126,32 @@ mod tests {
         assert_eq!(parse_decision(Some("nonsense")), Decision::Deny);
         assert_eq!(parse_decision(Some("allow")), Decision::Allow);
         assert_eq!(parse_decision(Some("audit")), Decision::Audit);
+    }
+
+    #[test]
+    fn only_an_explicit_would_deny_is_a_would_deny() {
+        // The proxy writes text: "1" for a rule verdict of deny, "0" for allow,
+        // "-" when the authz filter never ran. A dash is not a claim.
+        assert!(would_deny_flag(Some("1")));
+        assert!(would_deny_flag(Some("true")));
+        assert!(would_deny_flag(Some(" TRUE ")));
+        assert!(!would_deny_flag(Some("0")));
+        assert!(!would_deny_flag(Some("-")));
+        assert!(!would_deny_flag(Some("")));
+        assert!(!would_deny_flag(None));
+    }
+
+    #[test]
+    fn a_would_deny_line_is_stored_as_a_boolean_in_the_detail() {
+        let mut entry = traffic_entry();
+        entry.decision = Some("allow".into());
+        entry.would_deny = Some("1".into());
+        let prepared = prepare_traffic(&entry, Uuid::nil(), Utc::now()).expect("built");
+        assert_eq!(prepared.detail["would_deny"], true);
+
+        entry.would_deny = None;
+        let prepared = prepare_traffic(&entry, Uuid::nil(), Utc::now()).expect("built");
+        assert_eq!(prepared.detail["would_deny"], false);
     }
 
     #[test]
@@ -1372,6 +1424,7 @@ pub async fn pull_openshell_events(ctx: &ServiceContext) -> Result<u64, ApiError
                 user_agent: None,
                 request_id: Some(request_id),
                 decision: Some(decision.to_string()),
+                would_deny: None,
                 reason: if reason.is_empty() { None } else { Some(reason) },
                 rule_id: None,
                 mcp_session_id: None,

@@ -179,7 +179,8 @@ fn base_scoped() -> String {
 fn base_environment() -> String {
     format!(
         "WITH base AS (
-    SELECT {columns}, s.name AS sandbox_name, s.node_id AS node_id
+    SELECT {columns}, s.name AS sandbox_name, s.node_id AS node_id,
+           COALESCE((e.detail->>'would_deny')::boolean, false) AS would_deny
       FROM telemetry_events e
       LEFT JOIN host_geography g
              ON g.host = {HOST_EXPR}
@@ -719,7 +720,8 @@ pub async fn summary(
     Ok(summary)
 }
 
-/// One destination that was denied, grouped, as the decisions view lists it.
+/// One destination that was denied — or that only got through — grouped, as the
+/// decisions view lists it.
 ///
 /// Grouped rather than one row per request: an operator decides about a
 /// destination, not about the four hundred attempts it made. The counts and the
@@ -737,14 +739,21 @@ pub struct DeniedTarget {
     pub last_seen: DateTime<Utc>,
     /// The enforcement's own words for the most recent refusal.
     pub reason: Option<String>,
+    /// True when nothing in the group was ever really refused: the target was
+    /// only ever let through while the rules said it would be denied.
+    pub observed_only: bool,
 }
 
 /// The destinations that were denied in one window, worst first.
 ///
-/// This is the read behind the decisions view: only what was stopped, grouped by
-/// the thing a person can allow, so the list is short enough to act on. The
-/// informational view is the plain traffic list; this one exists because "what
-/// must I decide" is a different question from "what happened".
+/// This is the read behind the decisions view: what was stopped, grouped by the
+/// thing a person can allow, so the list is short enough to act on. A target
+/// that a suspended rule set let through is listed too, flagged
+/// `observed_only`: the question "may this host be reached" was answered
+/// "would have been no", and an operator who only sees hard denials loses the
+/// list the moment somebody opens an evaluation window. The informational view
+/// is the plain traffic list; this one exists because "what must I decide" is a
+/// different question from "what happened".
 pub async fn denied_targets(
     scope: &mut TenantScope<'_>,
     since: DateTime<Utc>,
@@ -758,9 +767,10 @@ pub async fn denied_targets(
                 COUNT(*) AS denials,
                 MIN(ts) AS first_seen,
                 MAX(ts) AS last_seen,
-                (array_agg(reason_text ORDER BY ts DESC))[1] AS reason
+                (array_agg(reason_text ORDER BY ts DESC))[1] AS reason,
+                bool_and(decision <> 'deny') AS observed_only
            FROM base
-          WHERE decision = 'deny'
+          WHERE (decision = 'deny' OR would_deny)
             AND ($4::uuid IS NULL OR sandbox_id = $4::uuid)
           GROUP BY sandbox_id, sandbox_name, host, port, protocol, channel
           ORDER BY denials DESC, last_seen DESC
@@ -790,6 +800,7 @@ pub async fn denied_targets(
             first_seen: row.try_get("first_seen")?,
             last_seen: row.try_get("last_seen")?,
             reason: row.try_get("reason")?,
+            observed_only: row.try_get("observed_only")?,
         });
     }
     Ok(out)

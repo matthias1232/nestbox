@@ -49,7 +49,7 @@ the codebase where SQL appears.
 | `recipes.rs` | Recipes, the build outcome, applying a template, and the link from a sandbox to its recipe |
 | `image_templates.rs` | Saved builder selections, their sharing rule and the one default per environment |
 | `audit.rs` | Append-only audit writes |
-| `traffic.rs` | Traffic rows for one sandbox and for a whole environment, window counts, map and live edges, one body read, MCP calls, effective rules, the two hashes behind "deployed" |
+| `traffic.rs` | Traffic rows for one sandbox and for a whole environment, window counts, map and live edges, one body read, MCP calls, effective rules, the two hashes behind "deployed", and the denied-or-would-deny decisions list |
 | `geography.rs` | `host_geography`: the cached country and AS per destination host (global table, pool not scope) |
 | `terminal_sessions.rs` | Terminal sessions in `sandbox_sessions`: open, count for the limits, close. Never content (ADR 0023) |
 | `terminal_tabs.rs` | The named terminal tabs one user keeps in one sandbox: list, replace. Never content |
@@ -59,7 +59,7 @@ the codebase where SQL appears.
 
 `traffic.rs` reads the proxy's access log out of `telemetry_events.detail` instead
 of a column per field, because the fields are the proxy's and they gain one at a
-time. Three consequences, all deliberate:
+time. Four consequences, all deliberate:
 
 1. **A malformed value is a `NULL`, not a failed page.** Every numeric field is
    guarded by a regex in SQL before its cast, so one bad line cannot blank a
@@ -73,6 +73,10 @@ time. Three consequences, all deliberate:
 3. **A row without a decision is not traffic.** `decide` answers in three words,
    and the first column of the table is that answer; inventing one would make the
    table an opinion.
+4. **A destination the rules would have denied is listed too.** A window or an
+   allow-all mode lets traffic through while the rules still answer deny; the
+   ingest stores that verdict as `detail.would_deny`, and the decisions view
+   groups those rows with real denials, flagged `observed_only`.
 
 Counts and edges are grouped in SQL, never assembled from returned rows: a
 five-minute window at ten thousand events a minute is a number the browser must
