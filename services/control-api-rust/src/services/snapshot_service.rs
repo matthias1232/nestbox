@@ -42,18 +42,11 @@ pub fn due(last: Option<DateTime<Utc>>, now: DateTime<Utc>, interval_minutes: i6
 /// due. A failing node is skipped and tried again next pass.
 pub async fn tick(ctx: &ServiceContext, config: &Config, interval_minutes: i64) -> Result<usize, ApiError> {
     let Some(router) = ctx.router.clone() else { return Ok(0) };
-    let rows: Vec<(Uuid, Uuid, Uuid, String, Option<DateTime<Utc>>)> = sqlx::query_as(
-        "SELECT DISTINCT r.id, r.environment_id, r.node_id, r.host_path,
-                (SELECT max(taken_at) FROM root_snapshots s WHERE s.root_id = r.id)
-           FROM persistent_roots r
-           JOIN nodes n ON n.id = r.node_id AND n.wg_public_key IS NOT NULL AND n.status = 'online'
-           JOIN mounts m ON m.root_id = r.id AND m.status = 'mounted'
-          WHERE r.archived_at IS NULL
-            AND nb_sandbox_running(m.sandbox_id)",
-    )
-    .fetch_all(&ctx.pool)
-    .await
-    .map_err(db)?;
+    let rows: Vec<(Uuid, Uuid, Uuid, String, Option<DateTime<Utc>>)> =
+        sqlx::query_as("SELECT root_id, environment_id, node_id, host_path, last_snapshot FROM nb_snapshot_candidates()")
+            .fetch_all(&ctx.pool)
+            .await
+            .map_err(db)?;
     let now = Utc::now();
     let mut taken = 0;
     for (root, environment_id, node_id, path, last) in rows {
