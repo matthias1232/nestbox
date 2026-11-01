@@ -477,3 +477,125 @@ async fn an_image_is_assigned_once_per_scope_and_the_matrix_lists_it() {
     image_sync_service::unassign(&ctx, &admin, first.id).await.expect("unassign");
     assert_eq!(image_sync_service::matrix(&ctx, &admin).await.expect("matrix").assignments.len(), 1);
 }
+
+/// A tiny identity provider: discovery, a token endpoint that checks PKCE, and a userinfo endpoint.
+async fn mock_provider(expected_challenge: std::sync::Arc<std::sync::Mutex<String>>) -> String {
+    use axum::routing::{get, post};
+    use axum::{Form, Json, Router};
+    use std::collections::HashMap;
+    use sha2::{Digest, Sha256};
+    use base64::Engine;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let base = format!("http://{}", listener.local_addr().expect("addr"));
+    let discovery_base = base.clone();
+    let app = Router::new()
+        .route(
+            "/.well-known/openid-configuration",
+            get(move || {
+                let base = discovery_base.clone();
+                async move {
+                    Json(serde_json::json!({
+                        "authorization_endpoint": format!("{base}/authorize"),
+                        "token_endpoint": format!("{base}/token"),
+                        "userinfo_endpoint": format!("{base}/userinfo"),
+                    }))
+                }
+            }),
+        )
+        .route(
+            "/token",
+            post(move |Form(form): Form<HashMap<String, String>>| {
+                let expected = expected_challenge.clone();
+                async move {
+                    let verifier = form.get("code_verifier").cloned().unwrap_or_default();
+                    let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+                    let ok = form.get("grant_type").map(String::as_str) == Some("authorization_code")
+                        && form.get("code").map(String::as_str) == Some("good-code")
+                        && form.get("client_secret").map(String::as_str) == Some("secret")
+                        && challenge == *expected.lock().expect("lock");
+                    if ok {
+                        (axum::http::StatusCode::OK, Json(serde_json::json!({"access_token": "at-1", "token_type": "Bearer"})))
+                    } else {
+                        (axum::http::StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid_grant"})))
+                    }
+                }
+            }),
+        )
+        .route(
+            "/userinfo",
+            get(|headers: axum::http::HeaderMap| async move {
+                if headers.get("authorization").and_then(|v| v.to_str().ok()) == Some("Bearer at-1") {
+                    (axum::http::StatusCode::OK, Json(serde_json::json!({"sub": "mock-42", "email": "Mock.User@Example.test", "email_verified": true, "name": "Mock User"})))
+                } else {
+                    (axum::http::StatusCode::UNAUTHORIZED, Json(serde_json::json!({})))
+                }
+            }),
+        );
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    base
+}
+
+#[tokio::test]
+async fn the_whole_sign_in_flow_runs_against_a_provider_with_pkce_and_a_single_use_state() {
+    let Some(owner) = connect().await else {
+        eprintln!("skipping: TEST_DATABASE_URL is not set");
+        return;
+    };
+    let pool = app_pool().await;
+    let ctx = context(&pool);
+    let challenge = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let issuer = mock_provider(challenge.clone()).await;
+    let mut cfg = config(DeployMode::Saas);
+    cfg.oidc[0].issuer = issuer;
+
+    // start: the browser is sent to the authorise address with state and a S256 challenge.
+    let url = oidc_service::start(&ctx, &cfg, "google", None).await.expect("start");
+    let parsed = reqwest::Url::parse(&url).expect("url");
+    let query: std::collections::HashMap<String, String> = parsed.query_pairs().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    assert_eq!(query["response_type"], "code");
+    assert_eq!(query["code_challenge_method"], "S256");
+    assert_eq!(query["redirect_uri"], "http://nestbox.test/api/v1/auth/oidc/google/callback");
+    assert_eq!(query["client_id"], "client");
+    *challenge.lock().expect("lock") = query["code_challenge"].clone();
+    let state = query["state"].clone();
+
+    // A wrong state, a wrong code and an unknown provider are refused.
+    assert!(oidc_service::complete(&ctx, &cfg, "google", "good-code", "not-the-state").await.is_err());
+    assert!(oidc_service::start(&ctx, &cfg, "nonexistent", None).await.is_err());
+    // A bad code consumes the state (it is single use) and fails.
+    let bad = oidc_service::start(&ctx, &cfg, "google", None).await.expect("second start");
+    let bad_state = reqwest::Url::parse(&bad).expect("url").query_pairs().find(|(k, _)| k == "state").map(|(_, v)| v.to_string()).expect("state");
+    assert!(oidc_service::complete(&ctx, &cfg, "google", "bad-code", &bad_state).await.is_err());
+    assert!(oidc_service::complete(&ctx, &cfg, "google", "good-code", &bad_state).await.is_err(), "a used state does not work twice");
+
+    // The real one: code exchanged with the verifier, profile read, a workspace created.
+    let (user_id, name) = oidc_service::complete(&ctx, &cfg, "google", "good-code", &state).await.expect("complete");
+    assert_eq!(name, "Mock User");
+    let email: String = sqlx::query_scalar("SELECT email FROM users WHERE id = $1").bind(user_id).fetch_one(&owner).await.expect("email");
+    assert_eq!(email, "mock.user@example.test");
+    let reach: i64 = sqlx::query_scalar("SELECT count(*) FROM nb_user_environments($1)").bind(user_id).fetch_one(&owner).await.expect("reach");
+    assert_eq!(reach, 1);
+    // The state is gone: replaying the callback finds nothing.
+    assert!(oidc_service::complete(&ctx, &cfg, "google", "good-code", &state).await.is_err());
+
+    // And a session can be opened for the person.
+    let session = auth_service::start_session(&owner, user_id, name, 3600, 7200).await.expect("session");
+    assert_eq!(session.role.as_str(), "admin");
+
+    // Self-hosted: the same provider does not register a second stranger.
+    let hosted = {
+        let mut c = config(DeployMode::SelfHosted);
+        c.oidc[0].issuer = cfg.oidc[0].issuer.clone();
+        c
+    };
+    let again = oidc_service::start(&ctx, &hosted, "google", None).await.expect("start");
+    let st = reqwest::Url::parse(&again).expect("url").query_pairs().find(|(k, _)| k == "state").map(|(_, v)| v.to_string()).expect("state");
+    let ch = reqwest::Url::parse(&again).expect("url").query_pairs().find(|(k, _)| k == "code_challenge").map(|(_, v)| v.to_string()).expect("challenge");
+    *challenge.lock().expect("lock") = ch;
+    // The identity is known already, so this one is the same person signing in again.
+    let (same, _) = oidc_service::complete(&ctx, &hosted, "google", "good-code", &st).await.expect("known identity");
+    assert_eq!(same, user_id);
+}
