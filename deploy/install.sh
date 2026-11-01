@@ -70,6 +70,22 @@ else
   say "deploy/.env exists; keeping it"
 fi
 
+# Secrets are files, not environment variables (ADR 0005). Made once; never overwritten.
+if [ ! -f secrets/postgres_password ]; then
+  say "Generating the database secrets"
+  umask 077
+  mkdir -p secrets/node
+  password="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  printf '%s' "$password" > secrets/postgres_password
+  # The API connects as the least-privilege role, so row-level security applies to it;
+  # migrations connect as the schema owner.
+  printf '%s' "postgres://nestbox_app:${password}@postgres:5432/nestbox" > secrets/database_url
+  printf '%s' "postgres://nestbox:${password}@postgres:5432/nestbox" > secrets/database_url_admin
+  head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' > secrets/node/token
+  chmod 0755 secrets/node
+  chmod 0644 secrets/node/token
+fi
+
 compose=(docker compose)
 up_args=(up -d)
 if [ "${NESTBOX_IMAGES:-}" = ghcr ]; then
