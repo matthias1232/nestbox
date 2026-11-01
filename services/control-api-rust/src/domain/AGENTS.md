@@ -63,6 +63,7 @@ microseconds is that it has none.
 | `stack_topology.rs` | The stack diagram in nine layers, arranged from facts; the status vocabulary |
 | `mcp.rs` | MCP server definition, sandbox attachment, tool call, JSON-RPC recognition |
 | `media.rs` | Media kind, target, the sandbox-over-environment rule, the allow-list refusal |
+| `agent_config.rs` | The startup files an agent gets (`settings.json`, `opencode.json`), the gateway environment, and the model-router base URLs; a granted model list beats a single profile model |
 
 ## Extending this module
 
