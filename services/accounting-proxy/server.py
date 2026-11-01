@@ -27,6 +27,14 @@ A body that is not inspectable JSON (binary uploads, pre-encoded streams) is
 forwarded unchanged and marked `not_inspectable` — the honest label, because
 "we did not look" and "we looked and it was clean" are different facts.
 
+One path carries its own routing: `/s/<sandbox>/r/…` is the sandbox's **model
+router**. The control plane grants models per sandbox, several of them may live
+on different upstreams (a gateway, a local llama.cpp on a node, a provider), and
+the agent names one model. The router therefore picks the upstream and the
+credential from the grant named in the request body, instead of from the path
+family or the caller's headers. `GET /s/<sandbox>/r/v1/models` answers the
+granted list in the OpenAI shape, so an agent's model picker can ask for it.
+
 Standard library only, for the same reason as `services/tool-images/mcp-hub`:
 this image has no package manager step, so a registry outage or a hijacked
 dependency cannot change what ships.
@@ -38,12 +46,13 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass
 from http.client import HTTPConnection, HTTPSConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 # Path families. A path that is in none of them still goes to the default
 # upstream, because an agent may use a provider we have not heard of yet.
@@ -55,6 +64,13 @@ GEMINI_PREFIX = "/v1beta/models/"
 
 INSPECT_PATH = "/api/v1/internal/privacy/inspect"
 ACCOUNT_PATH = "/api/v1/internal/accounting/record"
+# The per-sandbox model grants the router routes by. The sandbox name is
+# appended, already checked against `_SANDBOX_SEGMENT`.
+MODELS_PATH = "/api/v1/internal/accounting/models/"
+
+# The model list an agent asks for, and the path segment that marks the router.
+ROUTER_MODELS = "/v1/models"
+ROUTER_SEGMENT = "r"
 
 UPSTREAM_HEADER = "x-nestbox-upstream"
 
@@ -173,12 +189,19 @@ _SANDBOX_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _UPSTREAM_HOST = re.compile(r"^[A-Za-z0-9.-]+(:[0-9]{1,5})?$")
 
 
-def split_identity(raw_path: str) -> tuple[str, str | None, str] | None:
-    """Read `/s/<sandbox>[/u/<scheme>/<host>]/rest` off a request path.
+def split_identity(raw_path: str) -> tuple[str, str | None, str, bool] | None:
+    """Read `/s/<sandbox>[/u/<scheme>/<host>][/r]/rest` off a request path.
 
-    Returns `(sandbox, upstream_or_None, remaining_path_with_query)`, or `None`
-    when the path carries no identity prefix. A malformed prefix is treated as
-    no prefix at all, so it can never smuggle a value into a row or an upstream.
+    Returns `(sandbox, upstream_or_None, remaining_path_with_query, router)`,
+    or `None` when the path carries no identity prefix. A malformed prefix is
+    treated as no prefix at all, so it can never smuggle a value into a row or
+    an upstream.
+
+    `router` is True for `/s/<sandbox>/r/…`: that path asks this service to pick
+    the upstream from the sandbox's model grants instead of from the path family
+    or the caller's headers. The `/u/` form keeps its meaning and is still
+    parsed in front of `/r/`, but a router request ignores it: the grant, not the
+    caller, names the upstream there.
     """
     parts = urlsplit(raw_path)
     segments = parts.path.split("/")
@@ -196,10 +219,14 @@ def split_identity(raw_path: str) -> tuple[str, str | None, str] | None:
     ):
         upstream = f"{rest[1]}://{rest[2]}"
         rest = rest[3:]
+    router = False
+    if rest and rest[0] == ROUTER_SEGMENT:
+        router = True
+        rest = rest[1:]
     remaining = "/" + "/".join(rest)
     if parts.query:
         remaining += "?" + parts.query
-    return sandbox, upstream, remaining
+    return sandbox, upstream, remaining, router
 
 
 def dialect_of(path: str) -> str:
@@ -243,6 +270,104 @@ def upstream_for(config: Config, path: str, override: str | None) -> str:
     raise UpstreamUnavailable(
         "no default upstream is configured", "upstream.unconfigured"
     )
+
+
+# -- the model router ------------------------------------------------------
+
+
+def route_base(entry: dict[str, Any]) -> str:
+    """The upstream base URL of one granted model, validated.
+
+    A grant is written by an operator through the control API, but it is still
+    not trusted here: only `http` and `https` are forwarded, so a grant can
+    never turn this proxy into a `file://` reader.
+    """
+    base = str(entry.get("upstream_base") or "").strip().rstrip("/")
+    parts = urlsplit(base)
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        raise UpstreamUnavailable(
+            "the granted model has no usable upstream_base", "upstream.invalid"
+        )
+    return base
+
+
+def route_authorization(entry: dict[str, Any]) -> str | None:
+    """The grant's own `Authorization` value, or None to keep the caller's.
+
+    A value here belongs to the gateway that serves the model (an OmniRoute key,
+    a shared local server): the sandbox gets the model without holding the key.
+    """
+    value = entry.get("authorization")
+    return value if isinstance(value, str) and value else None
+
+
+def requested_model(routes: dict[str, Any], body: Any) -> Any:
+    """The model name a request asks for, else the sandbox's default."""
+    if isinstance(body, dict):
+        value = body.get("model")
+        if isinstance(value, str) and value:
+            return value
+    return routes.get("default")
+
+
+def choose_route(
+    routes: dict[str, Any], body: Any
+) -> tuple[dict[str, Any] | None, Any]:
+    """Pick the granted model a request names, and the body to forward.
+
+    Returns `(entry, new_body)`. `entry` is None when the sandbox has no grant
+    for that name — the caller answers 404 rather than forwarding, because a
+    model that is not granted must not be reachable by guessing its name. When
+    the grant renames the model (`fast` is `qwen3:1.7b` on the node), `new_body`
+    carries the upstream's own name; otherwise it is the body unchanged.
+    """
+    unchanged = body if isinstance(body, dict) else {}
+    name = requested_model(routes, body)
+    if not isinstance(name, str) or not name:
+        return None, unchanged
+    for entry in routes.get("models") or []:
+        if not isinstance(entry, dict) or entry.get("model_name") != name:
+            continue
+        upstream_model = entry.get("upstream_model")
+        if (
+            isinstance(upstream_model, str)
+            and upstream_model
+            and upstream_model != name
+            and isinstance(body, dict)
+        ):
+            renamed = dict(body)
+            renamed["model"] = upstream_model
+            return entry, renamed
+        return entry, unchanged
+    return None, unchanged
+
+
+def model_list(routes: dict[str, Any]) -> dict[str, Any]:
+    """The sandbox's granted models in the OpenAI list format.
+
+    An agent asks for this list when it starts and builds its model picker from
+    it, so the ids are the *granted* names — the ones an agent may ask for — not
+    the upstream's internal names.
+    """
+    data: list[dict[str, Any]] = []
+    for entry in routes.get("models") or []:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("model_name")
+        if isinstance(name, str) and name:
+            data.append({"id": name, "object": "model", "owned_by": "nestbox"})
+    return {"object": "list", "data": data}
+
+
+def not_granted_error(name: Any) -> dict[str, Any]:
+    """The 404 body for a model this sandbox has no grant for."""
+    label = name if isinstance(name, str) and name else "unknown"
+    return {
+        "error": {
+            "type": "model_not_granted",
+            "message": f"Model {label} is not granted to this sandbox.",
+        }
+    }
 
 
 # -- reading the text out of a request -------------------------------------
@@ -362,20 +487,20 @@ def _connection(base: str, timeout: float) -> HTTPConnection:
     return HTTPConnection(host, port, timeout=timeout)
 
 
-def control_post(
-    config: Config, path: str, payload: dict[str, Any]
+def _control_call(
+    config: Config, method: str, path: str, payload: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """One JSON POST to the control API, or `ControlError`.
+    """One JSON call to the control API, or `ControlError`.
 
     The token is `NESTBOX_ACCOUNTING_TOKEN`, a node token for the *internal*
     endpoints — it is not a provider credential and never leaves this container
     except to the control API.
     """
-    body = json.dumps(payload).encode()
-    headers = {
-        "Content-Type": "application/json",
-        "Content-Length": str(len(body)),
-    }
+    body = b"" if payload is None else json.dumps(payload).encode()
+    headers: dict[str, str] = {}
+    if body:
+        headers["Content-Type"] = "application/json"
+        headers["Content-Length"] = str(len(body))
     if config.accounting_token:
         headers["Authorization"] = f"Bearer {config.accounting_token}"
     base = urlsplit(config.control_api)
@@ -383,7 +508,7 @@ def control_post(
     connection = None
     try:
         connection = _connection(config.control_api, config.control_timeout)
-        connection.request("POST", target, body=body, headers=headers)
+        connection.request(method, target, body=body or None, headers=headers)
         response = connection.getresponse()
         data = response.read()
         status = response.status
@@ -404,6 +529,60 @@ def control_post(
     if not isinstance(answer, dict):
         raise ControlError(f"{path} answered a non-object")
     return answer
+
+
+def control_post(
+    config: Config, path: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """One JSON POST to the control API, or `ControlError`."""
+    return _control_call(config, "POST", path, payload)
+
+
+def control_get(config: Config, path: str) -> dict[str, Any]:
+    """One JSON GET from the control API, or `ControlError`."""
+    return _control_call(config, "GET", path)
+
+
+# -- the model grants of one sandbox ---------------------------------------
+
+# Fetched per sandbox and kept for a few seconds: the router asks on every
+# request, but a grant changes only when an operator edits one. Each entry is
+# `(monotonic_fetch_time, routes_document)`.
+_ROUTES: dict[str, tuple[float, dict[str, Any]]] = {}
+_ROUTES_LOCK = threading.Lock()
+ROUTES_TTL = 10.0
+
+
+def routes_for(sandbox: str) -> dict[str, Any]:
+    """The sandbox's granted models from the control API, cached for 10 s.
+
+    A failure does not lose a working route: a cached answer is used even when it
+    is old, because a short control API outage must not take every running agent
+    down. With nothing cached the answer is an empty grant list, and every model
+    request then gets the honest 404 from `not_granted_error`.
+
+    The document carries upstream `Authorization` values, so neither it nor any
+    field of it is ever logged.
+    """
+    now = time.monotonic()
+    cached = _ROUTES.get(sandbox)
+    if cached is not None and now - cached[0] < ROUTES_TTL:
+        return cached[1]
+    try:
+        answer = control_get(CONFIG, MODELS_PATH + quote(sandbox, safe=""))
+    except ControlError:
+        if cached is not None:
+            print(f"routes for {sandbox} unavailable, using cached", flush=True)
+            return cached[1]
+        return {"default": None, "models": []}
+    models = answer.get("models")
+    routes = {
+        "default": answer.get("default"),
+        "models": models if isinstance(models, list) else [],
+    }
+    with _ROUTES_LOCK:
+        _ROUTES[sandbox] = (now, routes)
+    return routes
 
 
 def inspect_payload(config: Config, content: str, destination: str) -> dict[str, Any]:
@@ -704,9 +883,10 @@ class Handler(BaseHTTPRequestHandler):
         # the upstream (the gateway an agent is configured for). Both are
         # stripped before the request is forwarded.
         path_upstream: str | None = None
+        router = False
         identity = split_identity(self.path)
         if identity is not None:
-            sandbox_name, path_upstream, rest = identity
+            sandbox_name, path_upstream, rest, router = identity
             config = dataclasses.replace(config, sandbox=sandbox_name)
             self.path = rest
             clean = urlsplit(self.path).path
@@ -719,22 +899,51 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
-        dialect = dialect_of(self.path)
-        try:
-            base = upstream_for(
-                config, self.path, self.headers.get(UPSTREAM_HEADER) or path_upstream
-            )
-        except UpstreamUnavailable as exc:
-            self._send_json(
-                502 if exc.code == "upstream.unconfigured" else 400,
-                {"error": {"code": exc.code, "message": str(exc)}},
-            )
-            return
-
         try:
             parsed_body: Any = json.loads(body) if body else None
         except (ValueError, UnicodeDecodeError):
             parsed_body = None
+
+        dialect = dialect_of(self.path)
+        authorization: str | None = None
+        if router:
+            # `/s/<sandbox>/r/…`: the grant named in the body decides the
+            # upstream and the credential, not the path family or the headers.
+            routes = routes_for(config.sandbox)
+            if self.command == "GET" and urlsplit(self.path).path == ROUTER_MODELS:
+                self._send_json(200, model_list(routes))
+                return
+            entry, routed_body = choose_route(routes, parsed_body)
+            if entry is None:
+                name = requested_model(routes, parsed_body)
+                self._send_json(404, not_granted_error(name))
+                return
+            try:
+                base = route_base(entry)
+            except UpstreamUnavailable as exc:
+                self._send_json(
+                    400, {"error": {"code": exc.code, "message": str(exc)}}
+                )
+                return
+            authorization = route_authorization(entry)
+            if routed_body is not parsed_body and routed_body:
+                # A grant may rename the model (`fast` is `qwen3:1.7b` on the
+                # node). The rewrite happens before inspection so the bytes that
+                # are inspected are the bytes that are forwarded.
+                body = _dump(routed_body)
+            parsed_body = routed_body
+        else:
+            try:
+                base = upstream_for(
+                    config, self.path, self.headers.get(UPSTREAM_HEADER) or path_upstream
+                )
+            except UpstreamUnavailable as exc:
+                self._send_json(
+                    502 if exc.code == "upstream.unconfigured" else 400,
+                    {"error": {"code": exc.code, "message": str(exc)}},
+                )
+                return
+
         destination = urlsplit(base).hostname or base
 
         # 1. Inspection, before anything leaves this process.
@@ -788,7 +997,9 @@ class Handler(BaseHTTPRequestHandler):
 
         # 2. Forwarding, with the inspect verdict applied to the body.
         streaming = wants_stream(parsed_body, self.path)
-        status, usage, model = self._forward(base, outcome.body, streaming)
+        status, usage, model = self._forward(
+            base, outcome.body, streaming, authorization
+        )
         latency_ms = int((time.monotonic() - started) * 1000)
 
         # 3. Accounting, after the client has its answer.
@@ -805,23 +1016,36 @@ class Handler(BaseHTTPRequestHandler):
             privacy_detector=outcome.detector,
         )
 
-    def _upstream_headers(self, body: bytes) -> dict[str, str]:
+    def _upstream_headers(
+        self, body: bytes, authorization: str | None = None
+    ) -> dict[str, str]:
         """The client's headers, minus what belongs to this hop.
 
-        `Authorization` and `x-api-key` are copied as they arrived: this service
-        has no credential of its own to substitute.
+        `Authorization` and `x-api-key` are copied as they arrived, because this
+        service has no credential of its own to substitute. The one exception is
+        a granted model that carries its own `Authorization` (`authorization`):
+        then that value replaces the caller's, since the grant is what the
+        upstream accepts and the sandbox is not supposed to hold it.
         """
         headers: dict[str, str] = {}
         for name, value in self.headers.items():
             lower = name.lower()
             if lower in REQUEST_DROP:
                 continue
+            if authorization is not None and lower == "authorization":
+                continue
             headers[name] = value
+        if authorization is not None:
+            headers["Authorization"] = authorization
         headers["Content-Length"] = str(len(body))
         return headers
 
     def _forward(
-        self, base: str, body: bytes, streaming: bool
+        self,
+        base: str,
+        body: bytes,
+        streaming: bool,
+        authorization: str | None = None,
     ) -> tuple[int, dict[str, int | None] | None, str | None]:
         """Send the request on, relay the answer, return (status, usage, model)."""
         config = CONFIG
@@ -845,7 +1069,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.command,
                 target,
                 body=body if body else None,
-                headers=self._upstream_headers(body),
+                headers=self._upstream_headers(body, authorization),
             )
             response = connection.getresponse()
         except (OSError, ValueError):
