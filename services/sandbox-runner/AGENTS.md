@@ -163,12 +163,13 @@ seconds instead of half an hour.
 | `app/ssh_gateway.py` | The SSH door: key auth, no SFTP, no tunnels. A login lands in the tmux tab `nestbox-ssh` (`attach <tab>` joins a browser tab) and a dropped client only detaches; gateway sandboxes go through `GatewayPty.open_command` |
 | `tests/test_ssh_gateway.py` | Frame demux, the tab-versus-command choice, and the end of a session (Ctrl-D without tmux, detach with it), without Docker |
 | `app/connections.py` | The sockets of one sandbox and the process that owns each, by a fixed `sh` probe run as the sandbox user; a sample, not a trace |
-| `app/vnc.py` | The desktop transport: node token, then a fixed `python3` bridge in the container copies bytes between `127.0.0.1:5900` and the WebSocket; nothing is recorded |
+| `app/vnc.py` | The desktop transport: node token, then a fixed `python3` bridge in the container copies bytes between `127.0.0.1:5900` and the WebSocket; nothing is recorded. With `?view=1`, `RfbClientFilter` lets the RFB handshake and framebuffer requests through and drops every key, pointer, clipboard and resize message |
 | `app/inventory.py` | Runs the probe and parses its sections |
 | `app/inventory.sh` | The fixed probe script, executed inside the container |
 | `app/terminal.py` | The browser terminal: node token, PTY pump, resize, idle close |
 | `tests/test_terminal.py` | The pump and the frame rules, without FastAPI and without Docker (`python3 -m unittest discover -s tests -t .`) |
 | `tests/test_ca_mounts.py` | Which egress modes get the CA and the bundle, and what the bundle contains |
+| `tests/test_vnc.py` | The view-only RFB filter: what passes, what is dropped, what makes the stream close |
 | `Dockerfile` | Image build |
 
 ## Samples, processes, inventory

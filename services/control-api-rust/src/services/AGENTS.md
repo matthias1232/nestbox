@@ -81,7 +81,7 @@ shape it:
 | `job_service.rs` | Job creation and progress |
 | `catalog_sync/` | The model catalogue is rebuilt from Hugging Face, Ollama, NGC, and NIM, never over a curated row |
 | `schedule_service.rs` | Schedule evaluation and runs |
-| `metrics_service.rs` | Sample ingest, ranged query, rollup, partition maintenance, the two metrics jobs |
+| `metrics_service.rs` | Sample ingest, ranged query, rollup, partition maintenance, the two metrics jobs; `desktop_target` decides the desktop permission (drive needs `SandboxExec`, view only needs `SandboxRead`) and whether the stream really is view-only |
 | `inventory_service.rs` | Snapshot storage and age, the allow-list that keeps a value out, never an environment value |
 | `access_service.rs` | SSH key pair as a file with a locator, port pool, sessions; pushes the port set and key to the runner and records what it opened |
 | `stack_topology_service.rs` | Reads the facts for the stack diagram (timeouts, degrade to unknown) and the appliance components |
