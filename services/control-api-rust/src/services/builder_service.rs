@@ -2753,3 +2753,218 @@ mod tests {
         assert_eq!(bytes_of("1g"), None);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Recreating an existing recipe sandbox (moves)
+// ---------------------------------------------------------------------------
+
+/// Create the container of an existing recipe sandbox again, on the node its row names.
+///
+/// `instantiate` makes a sandbox from a recipe; this makes the container of one that already
+/// exists, with the same id, name, node, image and stored mounts, which is what a move needs.
+/// `sandbox_service::recreate` cannot do it: a recipe image's entrypoint is generated at build
+/// time, so only the recipe knows how the sandbox starts.
+///
+/// The supervisor keeps its row, because the table is unique on gateway and name and the new
+/// container's reports must land where the old ones did, and gets a new token: only the hash of the
+/// old one was ever stored.
+pub async fn recreate_in_place(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+) -> Result<serde_json::Value, ApiError> {
+    require(principal, Permission::SandboxWrite)?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
+        .await
+        .map_err(ApiError::from)?;
+    let sandbox = sandbox_store::get(&mut scope, sandbox_id)
+        .await
+        .map_err(ApiError::from)?;
+    if !sandbox.image.starts_with("nestbox-recipe/") {
+        return Err(ApiError::conflict(
+            ErrorCode::SANDBOX_INVALID_STATE,
+            "This sandbox was not built from a recipe; recreate it from its mounts instead.",
+        ));
+    }
+    let recipe_id = sandbox
+        .spec
+        .get("recipe_id")
+        .and_then(|value| value.as_str())
+        .and_then(|value| Uuid::parse_str(value).ok())
+        .ok_or_else(|| {
+            ApiError::conflict(
+                ErrorCode::SANDBOX_INVALID_STATE,
+                "This sandbox does not say which recipe it was made from.",
+            )
+        })?;
+    let recipe = store::get(&mut scope, recipe_id).await.map_err(recipe_error)?;
+    // The mode is read from the row, not from a request: the container is replaced after a move,
+    // and a mode the operator did not choose is a silent policy change.
+    let mode = crate::store::postgres::policies::egress_mode_for_sandbox(&mut scope, sandbox.id)
+        .await
+        .map_err(ApiError::from)?
+        .map(|setting| setting.mode)
+        .unwrap_or(crate::domain::policy::EgressMode::ForwardProxy);
+    let egress_exit = crate::store::postgres::proxies::for_sandbox(&mut scope, sandbox.id)
+        .await
+        .map_err(ApiError::from)?
+        .filter(|proxy| proxy.enabled);
+    let mounts = crate::services::persist_service::mount_specs_for_sandbox(&mut scope, sandbox.id).await?;
+    let memory_limit = sandbox
+        .spec
+        .get("memory_limit")
+        .and_then(|value| value.as_str())
+        .unwrap_or("1g")
+        .to_string();
+    let cpu_limit = sandbox.spec.get("cpu_limit").and_then(|value| value.as_f64()).unwrap_or(1.0);
+    let pids_limit = sandbox.spec.get("pids_limit").and_then(|value| value.as_i64()).unwrap_or(256);
+    let gpu_count = sandbox.spec.get("gpu_count").and_then(|value| value.as_u64()).unwrap_or(0) as u32;
+    let supervisor = reissue_supervisor_token(&mut scope, &sandbox).await?;
+    crate::store::postgres::audit::record(
+        &mut scope,
+        crate::store::postgres::audit::NewAuditEvent {
+            actor_id: Some(principal.user_id),
+            actor_label: &principal.display_name,
+            kind: "sandbox.recreate",
+            subject_type: Some("sandbox"),
+            subject_id: Some(sandbox.id),
+            detail: &serde_json::json!({
+                "recipe": recipe.name,
+                "image": sandbox.image,
+                "mounts": mounts.len(),
+                "in_place": true,
+            }),
+            request_id: None,
+        },
+    )
+    .await
+    .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+
+    let name = sandbox.name.clone();
+    let image = sandbox.image.clone();
+    let pack_key = sandbox.pack_key.clone();
+    let node_id = sandbox.node_id;
+    let mut environment: Vec<(String, String)> =
+        if crate::services::sandbox_service::pack_needs_inference(&pack_key) {
+            match crate::services::provider_service::environment_for_sandbox(
+                ctx,
+                principal.environment_id,
+                &pack_key,
+                &name,
+            )
+            .await
+            {
+                Ok(values) => values.into_iter().collect(),
+                Err(error) => {
+                    tracing::warn!(
+                        code = error.code.0,
+                        "provider environment unavailable; creating without it"
+                    );
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+    // The same derivation `instantiate` uses, so a container created here reaches the proxy the
+    // stored mode says it should and nothing else.
+    if let Some(proxy) = crate::services::sandbox_service::sandbox_proxy_url(mode, egress_exit.as_ref()) {
+        environment.extend(crate::services::sandbox_service::egress_environment_for(
+            &proxy,
+            mode,
+            crate::services::sandbox_service::EGRESS_CA_IN_SANDBOX,
+        ));
+    }
+    crate::services::sandbox_service::add_inference_bypass_vec(&mut environment);
+    if let Some((supervisor_id, token)) = &supervisor {
+        environment.push((
+            "NESTBOX_SUPERVISOR_STATE".to_string(),
+            crate::domain::builder::supervisor_state_directory(),
+        ));
+        environment.push(("NESTBOX_SUPERVISOR_ID".to_string(), supervisor_id.to_string()));
+        environment.push(("NESTBOX_SUPERVISOR_TOKEN".to_string(), token.clone()));
+        environment.push((
+            "NESTBOX_CONTROL_URL".to_string(),
+            std::env::var("NESTBOX_CONTROL_URL")
+                .unwrap_or_else(|_| "http://control-api:8000".to_string()),
+        ));
+        crate::services::sandbox_service::add_env_url_bypass_vec(&mut environment, "NESTBOX_CONTROL_URL");
+        environment.push(("NESTBOX_TOOLS".to_string(), recipe.tools.join(",")));
+    }
+
+    // The container is replaced, not added: the name is what the runtime and the sandbox's
+    // supervisor know it by, so the old one has to go first.
+    if let Err(error) = ctx.runtime.remove(&name).await {
+        tracing::warn!(sandbox = %name, error = %error, "remove before the in-place recreate failed; continuing");
+    }
+    let spec = SandboxSpec {
+        name: name.clone(),
+        image: image.clone(),
+        // The image's own entrypoint starts the agents; a command here would run nothing the
+        // recipe installed. The same rule as `instantiate`.
+        command: Vec::new(),
+        environment,
+        pack_key: pack_key.clone(),
+        tool_profile: String::new(),
+        memory_limit,
+        cpu_limit,
+        pids_limit,
+        mounts,
+        gpu_count,
+        egress_mode: mode.as_str().to_string(),
+        node_id: Some(node_id),
+        memory_reservation: None,
+        cpu_shares: None,
+    };
+    match ctx.runtime.create(spec).await {
+        Ok(facts) => {
+            let health = crate::services::sandbox_service::health_from_runtime(&facts);
+            let settled = settle(ctx, sandbox, SandboxStatus::Running, health).await?;
+            // Every agent the recipe holds gets its files written again, so a container created on
+            // another node starts with the same configuration, MCP attachments included. Best
+            // effort, as for any sandbox: a failure is logged, not fatal.
+            let mut packs: Vec<String> = recipe.agents.iter().map(|agent| agent.pack_key.clone()).collect();
+            packs.dedup();
+            for pack in packs {
+                if let Err(error) = crate::services::sandbox_service::reconfigure_pack(ctx, principal, settled.id, Some(&pack)).await {
+                    tracing::warn!(sandbox = %settled.name, pack, code = error.code.0, "could not write the agent files after the recreate");
+                }
+            }
+            Ok(serde_json::json!({ "recreated": true, "sandbox": settled.name }))
+        }
+        Err(error) => {
+            tracing::error!(sandbox = %name, error = %error, "the in-place recreate failed");
+            settle(ctx, sandbox, SandboxStatus::Failed, SandboxHealth::Unhealthy).await?;
+            Err(ApiError::internal(
+                "The sandbox could not be created again; its container is gone. Create it again from its recipe.",
+            )
+            .with_internal(error.to_string()))
+        }
+    }
+}
+
+/// Give the sandbox's supervisor a new token, and return it in plain text.
+///
+/// Only a hash is stored, so a container created again cannot be handed the token it had. Rotating
+/// keeps one supervisor row per sandbox, which is what the unique constraint and the sandbox's
+/// reports both require.
+async fn reissue_supervisor_token(
+    scope: &mut TenantScope<'_>,
+    sandbox: &Sandbox,
+) -> Result<Option<(Uuid, String)>, ApiError> {
+    let Some(supervisor_id) = sandbox.supervisor_id else {
+        return Ok(None);
+    };
+    let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    let hash: String = hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect();
+    sqlx::query("UPDATE supervisors SET token_hash = $2 WHERE id = $1")
+        .bind(supervisor_id)
+        .bind(&hash)
+        .execute(scope.connection())
+        .await
+        .map_err(|error| ApiError::from(StoreError::Database(error)))?;
+    Ok(Some((supervisor_id, token)))
+}
