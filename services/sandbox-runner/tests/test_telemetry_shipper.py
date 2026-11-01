@@ -30,6 +30,35 @@ def line(**fields) -> str:
     return "2026-10-29T01:14:23.241Z " + json.dumps(base)
 
 
+class ShipTest(unittest.TestCase):
+    def test_a_refused_entry_is_dropped_and_the_rest_is_delivered(self) -> None:
+        sent: list[list[str]] = []
+
+        def fake(entries):
+            hosts = [e["host"] for e in entries]
+            if "bad" in hosts:
+                return "refused"
+            sent.append(hosts)
+            return "ok"
+
+        original = ship.post_batch
+        ship.post_batch = fake
+        try:
+            batch = [{"host": name} for name in ("a", "b", "bad", "c", "d")]
+            self.assertEqual(ship.ship(batch), 5)
+        finally:
+            ship.post_batch = original
+        self.assertEqual(sorted(h for group in sent for h in group), ["a", "b", "c", "d"])
+
+    def test_a_server_that_is_down_keeps_everything(self) -> None:
+        original = ship.post_batch
+        ship.post_batch = lambda entries: "retry"
+        try:
+            self.assertEqual(ship.ship([{"host": "a"}, {"host": "b"}]), 0)
+        finally:
+            ship.post_batch = original
+
+
 class RecordTest(unittest.TestCase):
     def test_a_body_cut_by_docker_is_joined_again(self) -> None:
         # Docker splits a long line into pieces and stamps each piece.
