@@ -96,6 +96,15 @@ pub async fn save_tabs(
     Ok(Json(tabs))
 }
 
+/// Which terminal tabs of this sandbox are open, and who is in each.
+pub async fn sessions(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(terminal_service::attached(&state.services, &auth.principal, id).await?))
+}
+
 /// Attach a terminal to a sandbox.
 pub async fn terminal(
     State(state): State<AppState>,

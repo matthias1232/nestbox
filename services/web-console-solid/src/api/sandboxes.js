@@ -72,6 +72,10 @@ export function exec(id, command, timeoutSeconds = 60) {
 // The terminal tabs this user keeps in the sandbox, and whether their shells are
 // still alive. The list lives on the server so a reload reopens the same
 // terminals on any machine, not whatever this browser last stored.
+export function terminalSessions(id) {
+  return request(`sandboxes/${id}/terminal-sessions`);
+}
+
 export function terminalTabs(id) {
   return request(`sandboxes/${id}/terminal-tabs`);
 }

@@ -191,12 +191,7 @@ impl RuntimeAdapter for HttpRunner {
             "name": spec.name,
             "image": spec.image,
             "command": spec.command,
-            // `openshell` puts the sandbox on the OpenShell gateway; anything else is
-            // the development Docker adapter. One value per deployment.
-            "runtime": std::env::var("NESTBOX_SANDBOX_RUNTIME")
-                .ok()
-                .filter(|value| value == "openshell")
-                .unwrap_or_else(|| "docker-development".to_string()),
+            "runtime": runtime_for(&spec.egress_mode),
             "pack_key": spec.pack_key,
             "tool_profile": spec.tool_profile,
             "environment": environment,
@@ -743,10 +738,23 @@ impl RuntimeAdapter for HttpRunner {
         Ok(upgrade.0)
     }
 
-    async fn open_terminal(&self, name: &str, tab_id: &str) -> Result<BoxTerminal, RuntimeError> {
+    async fn terminal_sessions(&self, name: &str) -> Result<serde_json::Value, RuntimeError> {
+        self.send(reqwest::Method::GET, &format!("/v1/sandboxes/{name}/terminal/sessions"), None).await
+    }
+
+    async fn open_terminal(&self, name: &str, tab_id: &str, who: &str) -> Result<BoxTerminal, RuntimeError> {
         // `tab_id` is validated to ASCII alphanumerics, `_`, and `-` before it
         // reaches the runtime, so it is already safe as this path's query value.
-        let url = format!("{}/v1/sandboxes/{}/terminal?tab={tab_id}", self.ws_base_url(), name);
+        // `who` is a label; it is percent-encoded so a name with a space or an
+        // accent cannot break the query.
+        let who_encoded: String = who
+            .bytes()
+            .map(|byte| match byte {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (byte as char).to_string(),
+                other => format!("%{other:02X}"),
+            })
+            .collect();
+        let url = format!("{}/v1/sandboxes/{}/terminal?tab={tab_id}&who={who_encoded}", self.ws_base_url(), name);
         let mut request = url
             .as_str()
             .into_client_request()
@@ -808,6 +816,31 @@ impl RuntimeAdapter for HttpRunner {
     }
 }
 
+/// Which runtime a sandbox with this egress mode runs on.
+///
+/// The gateway decides every connection itself and parses anything sent to another
+/// proxy as HTTP, so a `CONNECT` to the egress proxy is refused there. Reading TLS
+/// (chats, token use, method and path rules) therefore needs the Docker runtime;
+/// `direct` needs a route of its own, which a gateway sandbox does not have. Only
+/// the mode that just allows or blocks by host — `forward_proxy` — runs on the
+/// gateway, which is also the one whose decisions the gateway already makes.
+pub fn runtime_for(egress_mode: &str) -> String {
+    let openshell_default = std::env::var("NESTBOX_SANDBOX_RUNTIME")
+        .ok()
+        .filter(|value| value == "openshell")
+        .is_some();
+    runtime_choice(openshell_default, egress_mode).to_string()
+}
+
+/// The decision itself, so it can be tested without touching the process environment.
+fn runtime_choice(openshell_default: bool, egress_mode: &str) -> &'static str {
+    if openshell_default && !matches!(egress_mode, "direct" | "transparent" | "hybrid") {
+        "openshell"
+    } else {
+        "docker-development"
+    }
+}
+
 /// The subprotocol the terminal speaks. Named so both ends agree, and so a
 /// proxy that inspects the upgrade sees a protocol rather than a bare socket.
 const TERMINAL_SUBPROTOCOL: &str = "nestbox-terminal";
@@ -844,5 +877,19 @@ impl HttpRunner {
             )
             .await?;
         Ok(facts.into())
+    }
+}
+
+#[cfg(test)]
+mod runtime_choice_tests {
+    use super::runtime_choice;
+
+    #[test]
+    fn only_the_host_only_mode_stays_on_the_gateway() {
+        assert_eq!(runtime_choice(true, "forward_proxy"), "openshell");
+        for mode in ["transparent", "hybrid", "direct"] {
+            assert_eq!(runtime_choice(true, mode), "docker-development", "{mode}");
+        }
+        assert_eq!(runtime_choice(false, "forward_proxy"), "docker-development");
     }
 }

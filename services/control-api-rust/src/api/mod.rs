@@ -151,6 +151,10 @@ pub fn router(state: AppState) -> Router {
         // Admin Center: terminal, SSH, ports, sessions
         .route("/api/v1/sandboxes/{id}/desktop", get(sandboxes_vnc::desktop))
         .route(
+            "/api/v1/sandboxes/{id}/terminal-sessions",
+            get(sandboxes_terminal::sessions),
+        )
+        .route(
             "/api/v1/sandboxes/{id}/terminal",
             get(sandboxes_terminal::terminal),
         )

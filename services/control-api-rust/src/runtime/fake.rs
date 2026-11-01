@@ -636,7 +636,7 @@ impl RuntimeAdapter for FakeRuntime {
         Ok(format!("{service}: ready\n"))
     }
 
-    async fn open_terminal(&self, name: &str, _tab_id: &str) -> Result<BoxTerminal, RuntimeError> {
+    async fn open_terminal(&self, name: &str, _tab_id: &str, _who: &str) -> Result<BoxTerminal, RuntimeError> {
         let guard = lock(&self.sandboxes);
         if !guard.contains_key(name) {
             return Err(RuntimeError::NotFound(name.to_string()));

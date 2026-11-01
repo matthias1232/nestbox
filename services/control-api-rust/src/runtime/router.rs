@@ -262,8 +262,12 @@ impl RuntimeAdapter for RuntimeRouter {
         // directly (see the B17 report).
         self.local.stop_model(model_key).await
     }
-    async fn open_terminal(&self, name: &str, tab_id: &str) -> Result<BoxTerminal, RuntimeError> {
-        self.adapter_for(name).await.open_terminal(name, tab_id).await
+    async fn open_terminal(&self, name: &str, tab_id: &str, who: &str) -> Result<BoxTerminal, RuntimeError> {
+        self.adapter_for(name).await.open_terminal(name, tab_id, who).await
+    }
+
+    async fn terminal_sessions(&self, name: &str) -> Result<serde_json::Value, RuntimeError> {
+        self.adapter_for(name).await.terminal_sessions(name).await
     }
     async fn set_forwards(
         &self,

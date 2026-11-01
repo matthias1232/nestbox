@@ -249,6 +249,7 @@ pub const OPERATIONS: &[Operation] = &[
     // Admin Center: terminal, SSH, ports, sessions
     op("GET", "/api/v1/sandboxes/{id}/terminal", "Attach an interactive terminal over WebSocket", "sandboxes", "operator", false, StreamKind::Ws),
     op("GET", "/api/v1/sandboxes/{id}/terminal-tabs", "The terminal tabs this user keeps in the sandbox, with their shell state", "sandboxes", "operator", false, StreamKind::None),
+    op("GET", "/api/v1/sandboxes/{id}/terminal-sessions", "Who is attached to which terminal tab", "sandboxes", "viewer", false, StreamKind::None),
     op("PUT", "/api/v1/sandboxes/{id}/terminal-tabs", "Replace the terminal tab set", "sandboxes", "operator", true, StreamKind::None),
     op("GET", "/api/v1/sandboxes/{id}/ssh-key", "The SSH key record, never the private key", "sandboxes", "viewer", false, StreamKind::None),
     op("GET", "/api/v1/sandboxes/{id}/ssh-key/download", "Download the private key, once", "sandboxes", "operator", false, StreamKind::None),

@@ -426,7 +426,7 @@ pub async fn attach(
     ticket: &Ticket,
     client: &mut dyn ClientSocket,
 ) -> Result<SessionOutcome, ApiError> {
-    let mut terminal = match ctx.runtime.open_terminal(&ticket.sandbox_name, &ticket.tab_id).await {
+    let mut terminal = match ctx.runtime.open_terminal(&ticket.sandbox_name, &ticket.tab_id, &ticket.actor_label).await {
         Ok(terminal) => terminal,
         Err(error) => {
             let failure = runtime_failure(error);
@@ -1210,4 +1210,33 @@ mod tests {
         assert_eq!(limits.idle, Duration::from_secs(1800));
         assert_eq!(limits.stale_after(), Duration::from_secs(2100));
     }
+}
+
+
+/// Who is attached to which terminal tab of one sandbox.
+///
+/// A terminal is shared: several people can sit in the same `tmux` session. The
+/// runner holds the sockets, so this is a read of its live answer, not of a table.
+pub async fn attached(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+) -> Result<serde_json::Value, ApiError> {
+    require(principal, Permission::SandboxRead)?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
+        .await
+        .map_err(ApiError::from)?;
+    let sandbox = crate::store::postgres::sandboxes::get(&mut scope, sandbox_id)
+        .await
+        .map_err(|error| match error {
+            crate::error::StoreError::NotFound => {
+                ApiError::not_found(ErrorCode::SANDBOX_NOT_FOUND, "No such sandbox in this environment.")
+            }
+            other => ApiError::from(other),
+        })?;
+    scope.commit().await.map_err(ApiError::from)?;
+    ctx.runtime
+        .terminal_sessions(&sandbox.name)
+        .await
+        .map_err(|error| ApiError::conflict(ErrorCode::SANDBOX_INVALID_STATE, error.to_string()))
 }
