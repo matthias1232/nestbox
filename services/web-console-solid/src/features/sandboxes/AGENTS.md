@@ -47,7 +47,8 @@ on it.
 | File | Responsibility |
 |---|---|
 | `useSandboxes.js` | Paging, filters, selection, actions; no JSX |
-| `SandboxListPage.jsx` | Table with stacks (a lead and its members drawn together), facets, bulk bar, the New sandbox drawer |
+| `SandboxListPage.jsx` | Table with stacks (a lead and its members drawn together), facets, bulk bar, the New sandbox drawer. Its Network and Connected columns come from `GET /sandboxes/control-overview` every 15 s; a Workbox button opens `/box/<id>` |
+| `overview.js` | The list's live columns as text: `modeLabel`, `agentModes`, `indexById` for the overview map. Test: `node --test overview.test.js` |
 | `ConnectPanel.jsx`, `AccessTab.jsx` | How to reach a sandbox: the node's address and hostname (never the container's), every published port with its dial address, the `ssh` line, an SSH config block, the one-time key. Each port says what it is, how to connect to it, and whether it answers (open, and something behind it). One component, used by the Access tab and the list's Connect drawer |
 | `StackTopology.jsx`, `stackLayout.js` | The Topology tab: the stack from you to the internet in bands, live every 5 s, a card per piece with its facts, connections and log. `stackLayout.js` is pure (`node --test stackLayout.test.js`) |
 | `MapTab.jsx` | Hands the sandbox to `StackTopology.jsx`; the tab is registered as Topology |
