@@ -442,6 +442,36 @@ pub async fn create_for_sandbox(
     Ok((supervisor, token))
 }
 
+/// The two warnings a supervisor raises for a situation that is normal here.
+///
+/// * no model gateway configured: the agent signs in with its own account, or
+///   the recipe has no agent, so there is nothing to reach;
+/// * no policy hash delivered: a sandbox on the Docker runtime is governed by
+///   the egress proxy, which no supervisor is told about.
+///
+/// Counting them made every such sandbox permanently "degraded", which hides the
+/// day something is really wrong. The checks stay in the report and on the page.
+fn is_expected_warning(check: &crate::domain::gateway::SupervisorCheck) -> bool {
+    (check.key == "model_reachable" && check.detail.starts_with("no OPENAI_BASE_URL"))
+        || (check.key == "policy_drift" && check.detail.starts_with("no desired policy hash"))
+}
+
+/// The status to store for a report: `degraded` only when a warning is not one of
+/// the expected ones.
+pub fn effective_status(
+    report: &crate::domain::gateway::SupervisorReport,
+) -> crate::domain::gateway::SupervisorStatus {
+    use crate::domain::gateway::SupervisorStatus;
+    if report.status != SupervisorStatus::Degraded {
+        return report.status;
+    }
+    let unexpected = report
+        .checks
+        .iter()
+        .any(|check| check.state != "ok" && !is_expected_warning(check));
+    if unexpected { SupervisorStatus::Degraded } else { SupervisorStatus::Running }
+}
+
 /// Record one report from a supervisor.
 ///
 /// The caller is the process in the sandbox, not a browser: it presents the
@@ -452,9 +482,11 @@ pub async fn record_report(
     ctx: &ServiceContext,
     token: &str,
     supervisor_id: Uuid,
-    report: crate::domain::gateway::SupervisorReport,
+    mut report: crate::domain::gateway::SupervisorReport,
 ) -> Result<Supervisor, ApiError> {
     use sha2::{Digest, Sha256};
+
+    report.status = effective_status(&report);
 
     if token.trim().is_empty() {
         return Err(ApiError::unauthenticated("The supervisor token was refused."));
@@ -894,4 +926,52 @@ pub async fn supervisor_view(
         "openshell": live,
         "openshell_note": note.map(|_| "This sandbox runs on the Docker runtime, not on an OpenShell gateway, so there is no gateway view. Its own supervisor program, when its image has one, reports on the row above."),
     }))
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+    use crate::domain::gateway::{SupervisorCheck, SupervisorReport, SupervisorStatus};
+
+    fn check(key: &str, state: &str, detail: &str) -> SupervisorCheck {
+        SupervisorCheck { key: key.into(), state: state.into(), detail: detail.into() }
+    }
+
+    fn report(checks: Vec<SupervisorCheck>, status: SupervisorStatus) -> SupervisorReport {
+        SupervisorReport {
+            status,
+            version: None,
+            config_dirtiness: 0,
+            last_policy_applied_at: None,
+            checks,
+            facts: serde_json::Value::Null,
+        }
+    }
+
+    #[test]
+    fn expected_warnings_do_not_degrade_a_supervisor() {
+        let r = report(
+            vec![
+                check("model_reachable", "warn", "no OPENAI_BASE_URL: this recipe asked for no agent"),
+                check("policy_drift", "warn", "no desired policy hash delivered yet"),
+                check("memory", "ok", "2066 MiB available"),
+            ],
+            SupervisorStatus::Degraded,
+        );
+        assert_eq!(effective_status(&r), SupervisorStatus::Running);
+    }
+
+    #[test]
+    fn a_real_warning_still_degrades_and_a_failure_is_kept() {
+        let r = report(
+            vec![
+                check("policy_drift", "warn", "no desired policy hash delivered yet"),
+                check("memory", "warn", "219 MiB available of 7941 MiB"),
+            ],
+            SupervisorStatus::Degraded,
+        );
+        assert_eq!(effective_status(&r), SupervisorStatus::Degraded);
+        let failed = report(vec![check("agent_running", "fail", "gone")], SupervisorStatus::Failed);
+        assert_eq!(effective_status(&failed), SupervisorStatus::Failed);
+    }
 }
