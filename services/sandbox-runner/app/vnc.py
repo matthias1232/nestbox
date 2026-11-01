@@ -10,8 +10,10 @@ the terminal does:
   sandbox;
 * a fixed program is started in the container with `docker exec`; it connects
   to `127.0.0.1:5900` and copies bytes in both directions;
-* the runner moves those bytes to and from the WebSocket and looks at none of
-  them. No screen content is recorded here.
+* the runner moves those bytes to and from the WebSocket. Screen content is
+  never recorded here; the only bytes it looks at are the small client-to-server
+  messages, and only for a view-only stream, where every input message is
+  dropped before it reaches the desktop.
 
 The in-container program is Python because the desktop image already has it.
 It is a constant, never built from the request.
@@ -65,6 +67,60 @@ def authorised(websocket: WebSocket) -> bool:
         if candidate and candidate != SUBPROTOCOL and candidate == expected:
             return True
     return False
+
+
+class RfbClientFilter:
+    """Forward only the messages a viewer needs; drop input when view-only.
+
+    Client handshake: 12 bytes version, 1 byte security type, 1 byte ClientInit = 14 bytes.
+    Then messages: 0 SetPixelFormat (20), 2 SetEncodings (4 + 4n), 3 FramebufferUpdateRequest (10),
+    4 KeyEvent (8), 5 PointerEvent (6), 6 ClientCutText (8 + |len|), 150 EnableContinuousUpdates (10),
+    248 ClientFence (9 + len), 251 SetDesktopSize (8 + 16n).
+    """
+
+    DROP_WHEN_VIEW_ONLY = {4, 5, 6, 251}
+
+    def __init__(self, view_only: bool) -> None:
+        self.view_only = view_only
+        self.handshake_left = 14
+        self.buffer = b""
+        self.broken = False
+
+    def _length(self, data: bytes) -> int | None:
+        kind = data[0]
+        fixed = {0: 20, 3: 10, 4: 8, 5: 6, 150: 10}
+        if kind in fixed:
+            return fixed[kind]
+        if kind == 2:
+            return None if len(data) < 4 else 4 + 4 * int.from_bytes(data[2:4], "big")
+        if kind == 6:
+            return None if len(data) < 8 else 8 + abs(int.from_bytes(data[4:8], "big", signed=True))
+        if kind == 248:
+            return None if len(data) < 9 else 9 + data[8]
+        if kind == 251:
+            return None if len(data) < 8 else 8 + 16 * data[6]
+        self.broken = True
+        return None
+
+    def feed(self, data: bytes) -> bytes:
+        """Bytes in from the browser, bytes out to the desktop."""
+        if not self.view_only:
+            return data
+        out = b""
+        if self.handshake_left:
+            take = data[: self.handshake_left]
+            self.handshake_left -= len(take)
+            out += take
+            data = data[len(take):]
+        self.buffer += data
+        while self.buffer and not self.broken:
+            length = self._length(self.buffer)
+            if length is None or len(self.buffer) < length:
+                break
+            message, self.buffer = self.buffer[:length], self.buffer[length:]
+            if message[0] not in self.DROP_WHEN_VIEW_ONLY:
+                out += message
+        return out
 
 
 class ExecStream:
@@ -131,6 +187,12 @@ async def vnc(websocket: WebSocket, name: str) -> None:
         await websocket.close(code=CLOSE_UNAUTHORIZED, reason="node token required")
         return
 
+    # `view=1` means the control API decided this caller may watch but not
+    # drive. The decision is repeated here, so a bug or a stale console cannot
+    # turn a view-only ticket into a keyboard.
+    view_only = websocket.query_params.get("view") == "1"
+    flt = RfbClientFilter(view_only)
+
     import docker
     from docker.errors import DockerException, NotFound
 
@@ -169,7 +231,15 @@ async def vnc(websocket: WebSocket, name: str) -> None:
                 return
             data = message.get("bytes")
             if data:
-                await asyncio.to_thread(stream.write, data)
+                forwarded = flt.feed(data)
+                if flt.broken:
+                    # An unknown client message in view-only mode: the safest
+                    # answer is to end the stream, not to guess what it meant.
+                    logger.warning("vnc: unknown client message in view-only mode; closing")
+                    await websocket.close(code=CLOSE_NORMAL, reason="unknown client message")
+                    return
+                if forwarded:
+                    await asyncio.to_thread(stream.write, forwarded)
 
     tasks = [asyncio.create_task(to_browser()), asyncio.create_task(to_desktop())]
     try:

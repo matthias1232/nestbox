@@ -160,11 +160,12 @@ seconds instead of half an hour.
 | `app/commands.py` | What starts in a sandbox and by which way in (terminal, ssh, inside), from the parent chain; a ring buffer filled while somebody polls |
 | `app/gateway_exec.py` | Running things inside a sandbox whichever runtime holds it: `exec_run` (probes), `GatewayPty` (terminal through `openshell sandbox exec --tty`), `GatewayStream` (desktop bridge). `docker exec` runs outside a gateway sandbox's boundary, so gateway sandboxes never use it |
 | `app/connections.py` | The sockets of one sandbox and the process that owns each, by a fixed `sh` probe run as the sandbox user; a sample, not a trace |
-| `app/vnc.py` | The desktop transport: node token, then a fixed `python3` bridge in the container copies bytes between `127.0.0.1:5900` and the WebSocket; nothing is recorded |
+| `app/vnc.py` | The desktop transport: node token, then a fixed `python3` bridge in the container copies bytes between `127.0.0.1:5900` and the WebSocket; nothing is recorded. With `?view=1`, `RfbClientFilter` lets the RFB handshake and framebuffer requests through and drops every key, pointer, clipboard and resize message |
 | `app/inventory.py` | Runs the probe and parses its sections |
 | `app/inventory.sh` | The fixed probe script, executed inside the container |
 | `app/terminal.py` | The browser terminal: node token, PTY pump, resize, idle close |
 | `tests/test_terminal.py` | The pump and the frame rules, without FastAPI and without Docker (`python3 -m unittest discover -s tests -t .`) |
+| `tests/test_vnc.py` | The view-only RFB filter: what passes, what is dropped, what makes the stream close |
 | `Dockerfile` | Image build |
 
 ## Samples, processes, inventory

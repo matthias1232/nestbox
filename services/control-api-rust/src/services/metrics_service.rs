@@ -236,15 +236,26 @@ pub async fn processes(
 
 /// The sandbox a desktop session may attach to, checked before the upgrade.
 ///
-/// A desktop is as powerful as a terminal (it can open one), so it needs the
-/// same permission, and it needs a running sandbox. Returning the name rather
-/// than a ticket is enough: nothing here is counted or limited yet.
+/// Watching a desktop is as revealing as a terminal but not as powerful as one:
+/// a viewer may drive the mouse and the keyboard, so driving needs
+/// `SandboxExec`. Only watching needs `SandboxRead`, and the caller cannot
+/// choose that on their own — `view_only` is requested, and the returned flag
+/// says whether the session really is view-only. A principal without
+/// `SandboxExec` is always view-only, even when the console asked for control.
+/// Returning the name rather than a ticket is enough: nothing here is counted
+/// or limited yet.
 pub async fn desktop_target(
     ctx: &ServiceContext,
     principal: &Principal,
     sandbox_id: Uuid,
-) -> Result<String, ApiError> {
-    require(principal, Permission::SandboxExec)?;
+    view_only: bool,
+) -> Result<(String, bool), ApiError> {
+    if view_only {
+        require(principal, Permission::SandboxRead)?;
+    } else {
+        require(principal, Permission::SandboxExec)?;
+    }
+    let effective_view_only = view_only || !principal.can(Permission::SandboxExec);
     let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
     let sandbox = sandbox_store::get(&mut scope, sandbox_id).await.map_err(|error| match error {
         StoreError::NotFound => ApiError::not_found(ErrorCode::SANDBOX_NOT_FOUND, "No such sandbox."),
@@ -257,7 +268,7 @@ pub async fn desktop_target(
             format!("A desktop needs a running sandbox; this one is '{}'.", sandbox.status.as_str()),
         ));
     }
-    Ok(sandbox.name)
+    Ok((sandbox.name, effective_view_only))
 }
 
 /// A live view of one sandbox, read through the runner.

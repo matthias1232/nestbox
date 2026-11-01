@@ -104,7 +104,11 @@ place in this layer where a quota is a status code rather than a frame.
 `sandboxes_vnc.rs` is the desktop route. It follows the terminal's rules: the
 origin is checked first, the permission and the sandbox state before the
 upgrade, and then frames are moved between the browser and the runner without
-being read. `GET /sandboxes/{id}/live/{kind}` (in `metrics.rs`) is the read-only
+being read. Driving needs `SandboxExec`; `?view=1` needs only `SandboxRead`, and
+a caller without `SandboxExec` is view-only even without it — the runner then
+drops all input. Each connection is a `desktop` presence row, opened after the
+upgrade and closed when the stream ends; a failure there is logged and never
+ends the stream. `GET /sandboxes/{id}/live/{kind}` (in `metrics.rs`) is the read-only
 live view (`connections`); the kind is a closed list. `POST
 /sandboxes/{id}/allow` creates an enabled allow rule for one destination in one
 step (idempotent) — the one-click release from the Traffic tab.
