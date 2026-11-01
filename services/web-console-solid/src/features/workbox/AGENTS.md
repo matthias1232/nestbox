@@ -16,6 +16,7 @@ evaluation windows, plus live chats, the topology and the shared terminals.
 | `SessionsPanel.jsx` | all shared terminal tabs and the desktop |
 | `TerminalPopout.jsx`, `DesktopPopout.jsx` | the pop-out windows without a sidebar |
 | `LiveChatsPanel.jsx` | the agents' conversation, live |
+| `livechats.js` | turns a recorded call into a turn, groups turns by session, shortens text (pure, tested by `livechats.test.js`) |
 | `TopologyPanel.jsx` | the live topology of the sandbox |
 | `ModelsCard.jsx` | the models the sandbox may use, with warm-up |
 | `MoveDialog.jsx` | preflight and progress of a move to another node |
