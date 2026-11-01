@@ -235,8 +235,8 @@ pub async fn burst(
     let expires_at = Utc::now() + Duration::minutes(hosting::clamp_ttl(ttl_minutes));
     let inserted: Result<Uuid, sqlx::Error> = sqlx::query_scalar(
         "INSERT INTO provisioned_hosts (environment_id, account_id, node_name, external_id, host_type, location, address,
-                                        hourly_milli, state, expires_at, idle_minutes, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id",
+                                        hourly_milli, state, expires_at, idle_minutes, created_by, site_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id",
     )
     .bind(principal.environment_id)
     .bind(account)
@@ -250,6 +250,7 @@ pub async fn burst(
     .bind(expires_at)
     .bind(idle_minutes.max(0))
     .bind(principal.user_id)
+    .bind(site_id)
     .fetch_one(&ctx.pool)
     .await;
     // A machine that exists at the provider but not in our books would run up a bill nobody sees:
@@ -379,6 +380,7 @@ pub async fn reap(ctx: &ServiceContext, config: &Config) -> Result<usize, ApiErr
     .await
     .map_err(db)?;
     let now = Utc::now();
+    help_joining(ctx, config).await;
     let mut deleted = 0;
     for (id, environment_id, account, external_id, node_name, expires_at, idle_minutes, idle_since) in rows {
         let node: Option<(Uuid, String)> = sqlx::query_as("SELECT id, status FROM nodes WHERE name = $1 AND environment_id = $2")
@@ -433,6 +435,37 @@ pub async fn reap(ctx: &ServiceContext, config: &Config) -> Result<usize, ApiErr
         }
     }
     Ok(deleted)
+}
+
+/// Machines that were created but have not become nodes: after a minute and a half, run the join
+/// command in them again with a fresh token (up to eight tries). This is the second half of
+/// creating a machine at a provider that cannot hand user data to it, and what keeps a restart of
+/// the control plane from leaving a rented machine running and unjoined.
+async fn help_joining(ctx: &ServiceContext, config: &Config) {
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(Uuid, Uuid, Uuid, String, String, Option<Uuid>, Option<Uuid>)> = match sqlx::query_as(
+        "SELECT h.id, h.environment_id, h.account_id, h.external_id, h.node_name, h.site_id, h.created_by
+           FROM provisioned_hosts h
+          WHERE h.destroyed_at IS NULL AND h.state = 'creating' AND h.join_attempts < 8
+            AND h.created_at < now() - interval '90 seconds' AND h.site_id IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM nodes n WHERE n.name = h.node_name AND n.environment_id = h.environment_id)",
+    )
+    .fetch_all(&ctx.pool)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(_) => return,
+    };
+    for (id, environment_id, account, external_id, node_name, site, created_by) in rows {
+        let Some(site) = site else { continue };
+        let _ = sqlx::query("UPDATE provisioned_hosts SET join_attempts = join_attempts + 1 WHERE id = $1").bind(id).execute(&ctx.pool).await;
+        let Ok((_, _, driver)) = account_driver(ctx, environment_id, account).await else { continue };
+        let Ok(token) = node_join_service::issue_token_system(ctx, config, environment_id, site, &node_name, created_by).await else { continue };
+        match driver.run_join(&external_id, &token.command).await {
+            Ok(()) => tracing::info!(node = %node_name, "the join command was started in a rented machine"),
+            Err(error) => tracing::debug!(node = %node_name, error = %error, "a rented machine is not ready to join yet"),
+        }
+    }
 }
 
 /// The cloud-init document for a join token, for a host that is not one of the drivers.

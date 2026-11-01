@@ -174,6 +174,39 @@ pub async fn create_token(
     })
 }
 
+/// A join token made on the control plane's own initiative, for a machine it created itself.
+pub async fn issue_token_system(
+    ctx: &ServiceContext,
+    config: &Config,
+    environment_id: Uuid,
+    site_id: Uuid,
+    node_name: &str,
+    created_by: Option<Uuid>,
+) -> Result<JoinToken, ApiError> {
+    let token = session::random_token();
+    let expires_at = Utc::now() + Duration::minutes(15);
+    sqlx::query(
+        "INSERT INTO node_join_tokens (token_hash, environment_id, site_id, node_name, created_by, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(session::hash_token(&token))
+    .bind(environment_id)
+    .bind(site_id)
+    .bind(node_name)
+    .bind(created_by)
+    .bind(expires_at)
+    .execute(&ctx.pool)
+    .await
+    .map_err(db)?;
+    let base = if config.public_url.is_empty() { config.overlay.control_url.clone() } else { config.public_url.clone() };
+    Ok(JoinToken {
+        command: format!("curl -fsSL \"{base}/api/v1/join/{token}/script\" | sudo bash"),
+        token,
+        node_name: node_name.to_string(),
+        expires_at,
+    })
+}
+
 /// The install script for a token that is still good, with the token and address filled in.
 pub async fn script(ctx: &ServiceContext, config: &Config, token: &str) -> Result<String, ApiError> {
     let valid: bool = sqlx::query_scalar(

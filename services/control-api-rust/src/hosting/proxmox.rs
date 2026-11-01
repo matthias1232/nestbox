@@ -163,37 +163,6 @@ impl Proxmox {
         used
     }
 
-    /// Wait for the guest agent, then run the join command in the guest. Runs after `create`
-    /// returned: a clone takes a minute to boot and the caller should not wait for it.
-    async fn join_when_ready(base: Self, vmid: u32, command: String) {
-        let ping = format!("/nodes/{}/qemu/{vmid}/agent/ping", base.node);
-        for _ in 0..90 {
-            if base.call(reqwest::Method::POST, &ping, Some(String::new())).await.is_ok() {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        }
-        let body = form(&[("command", "bash".into()), ("command", "-c".into()), ("command", command)]);
-        match base.call(reqwest::Method::POST, &format!("/nodes/{}/qemu/{vmid}/agent/exec", base.node), Some(body)).await {
-            Ok(_) => tracing::info!(vmid, "the join command was started in the new machine"),
-            Err(error) => tracing::warn!(vmid, error = %error, "the join command could not be started in the new machine"),
-        }
-    }
-
-    fn duplicate(&self) -> Self {
-        Self {
-            base: self.base.clone(),
-            token: self.token.clone(),
-            node: self.node.clone(),
-            template: self.template,
-            pool: self.pool.clone(),
-            gateway: self.gateway.clone(),
-            prefix: self.prefix,
-            nameserver: self.nameserver.clone(),
-            types: self.types.clone(),
-            http: self.http.clone(),
-        }
-    }
 }
 
 #[async_trait]
@@ -233,8 +202,19 @@ impl HostDriver for Proxmox {
         self.call(reqwest::Method::PUT, &format!("/nodes/{}/qemu/{vmid}/config", self.node), Some(config)).await?;
         self.call(reqwest::Method::POST, &format!("/nodes/{}/qemu/{vmid}/status/start", self.node), Some(String::new())).await?;
 
-        tokio::spawn(Self::join_when_ready(self.duplicate(), vmid, request.join_command.clone()));
+        // The join command runs once the machine has booted and its guest agent answers: the
+        // provisioning loop calls `run_join` until the node appears (a restart of the control plane
+        // between the two steps must not lose it).
         Ok(HostState { external_id: vmid.to_string(), state: "creating".into(), address: Some(address) })
+    }
+
+    async fn run_join(&self, external_id: &str, join_command: &str) -> Result<(), HostError> {
+        let base = format!("/nodes/{}/qemu/{external_id}/agent", self.node);
+        // The agent answers only once the guest has booted; until then Proxmox says so and the
+        // caller tries again on its next pass.
+        self.call(reqwest::Method::POST, &format!("{base}/ping"), Some(String::new())).await?;
+        let body = form(&[("command", "bash".into()), ("command", "-c".into()), ("command", join_command.to_string())]);
+        self.call(reqwest::Method::POST, &format!("{base}/exec"), Some(body)).await.map(|_| ())
     }
 
     async fn status(&self, external_id: &str) -> Result<HostState, HostError> {

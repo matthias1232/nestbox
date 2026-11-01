@@ -60,6 +60,12 @@ pub trait HostDriver: Send + Sync {
     /// Create the machine. Returns when the provider has accepted it; the machine joins on its own.
     async fn create(&self, request: &HostRequest) -> Result<HostState, HostError>;
     async fn status(&self, external_id: &str) -> Result<HostState, HostError>;
+    /// Run the join command inside a machine that has no user data of its own. A provider that
+    /// hands user data to the machine (Hetzner) has nothing to do here. Safe to repeat: a spent
+    /// token makes the second run stop at once.
+    async fn run_join(&self, _external_id: &str, _join_command: &str) -> Result<(), HostError> {
+        Ok(())
+    }
     /// Delete the machine. Deleting one that is already gone is success.
     async fn destroy(&self, external_id: &str) -> Result<(), HostError>;
 }
