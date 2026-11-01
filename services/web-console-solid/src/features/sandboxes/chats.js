@@ -56,6 +56,27 @@ function salvageRequest(text) {
   return { model, prompt, partial: true };
 }
 
+/** The id of the conversation a call belongs to, when the client names one. */
+export function sessionOf(text) {
+  if (!text) return null;
+  const direct = /"nestbox_session"\s*:\s*"([0-9a-f-]{8,})"/.exec(text);
+  if (direct) return direct[1];
+  // Claude Code: `metadata.user_id` is a JSON string, so its quotes are escaped.
+  const escaped = /session_id\\?"\s*:\s*\\?"([0-9a-f-]{8,})/.exec(text);
+  return escaped ? escaped[1] : null;
+}
+
+/** A title the client asked the model to write for a conversation, if this answer is one. */
+export function titleOf(answerText) {
+  const match = /^\s*\{\s*"title"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(answerText || '');
+  if (!match) return null;
+  try {
+    return JSON.parse(`"${match[1]}"`);
+  } catch {
+    return match[1];
+  }
+}
+
 /** What was asked: model, the newest user message, and how long the history was. */
 export function readRequest(text) {
   if (!text) return { model: null, prompt: '', history: 0 };
@@ -69,7 +90,7 @@ export function readRequest(text) {
     model: body.model || null,
     system: textOf(body.system) || undefined,
     prompt: newest ? textOf(newest.content) : input,
-    history: messages.length,
+    history: body.nestbox_history ?? messages.length,
     stream: body.stream === true,
     tools: Array.isArray(body.tools) ? body.tools.length : 0,
   };

@@ -9,7 +9,7 @@ import { For, Show, createSignal } from 'solid-js';
 import * as deck from '../../api/deck.js';
 import * as policies from '../../api/policies.js';
 import { usePolling } from '../../components/Poll.js';
-import { isModelCall, readRequest, readResponse } from './chats.js';
+import { isModelCall, readRequest, readResponse, sessionOf, titleOf } from './chats.js';
 
 const PER_POLL = 6;
 
@@ -53,13 +53,44 @@ export default function ChatsTab(props) {
         const body = await deck.trafficBody(props.sandbox.id, item.id);
         const ask = readRequest(body.request_body);
         const answer = readResponse(body.response_body);
-        cache.set(item.id, { id: item.id, ts: item.ts, host: item.host, path: item.path, status: item.status, truncated: body.truncated, ask, answer });
+        cache.set(item.id, { id: item.id, ts: item.ts, host: item.host, path: item.path, status: item.status, truncated: body.truncated, ask, answer, session: sessionOf(body.request_body), title: titleOf(answer.text) });
       } catch {
         cache.set(item.id, { id: item.id, ts: item.ts, host: item.host, path: item.path, status: item.status, ask: { prompt: '' }, answer: { text: '' }, unreadable: true });
       }
     }
-    setTurns([...cache.values()].sort((a, b) => String(b.ts).localeCompare(String(a.ts))));
+    // Calls with neither a question nor an answer (a model that only "thought",
+    // a title request) are bookkeeping of the client, not a conversation.
+    setTurns(
+      [...cache.values()]
+        .filter((turn) => turn.unreadable || turn.ask.prompt || turn.answer.text || turn.answer.error)
+        .sort((a, b) => String(b.ts).localeCompare(String(a.ts))),
+    );
   }
+
+  // Calls that belong together (one `claude` session) are shown together, under
+  // the title the client had the model write, or else the first thing asked.
+  const groups = () => {
+    const bySession = new Map();
+    for (const turn of turns()) {
+      const key = turn.session || 'none';
+      if (!bySession.has(key)) bySession.set(key, { key, turns: [], title: null });
+      const group = bySession.get(key);
+      if (turn.title) group.title = group.title || turn.title;
+      else group.turns.push(turn);
+    }
+    return [...bySession.values()]
+      .filter((group) => group.turns.length)
+      .map((group) => {
+        const oldest = [...group.turns].sort((a, b) => String(a.ts).localeCompare(String(b.ts)))[0];
+        const first = (oldest?.ask.prompt || '').replace(/\s+/g, ' ').trim();
+        return {
+          ...group,
+          label: group.title || (first ? first.slice(0, 90) : group.key === 'none' ? 'Calls without a session' : `Session ${group.key.slice(0, 8)}`),
+          last: group.turns[0].ts,
+        };
+      })
+      .sort((a, b) => String(b.last).localeCompare(String(a.last)));
+  };
 
   const poll = usePolling(refresh, { everyMs: 3000, onData: () => setError(null), onError: (e) => setError(e.message) });
   const toggle = (id) => setOpen({ ...open(), [id]: !open()[id] });
@@ -87,7 +118,14 @@ export default function ChatsTab(props) {
           <Show when={seenTunnel()}> The sandbox does reach a model host, but only through a tunnel the proxy cannot read: switch it to the <b>transparent</b> or <b>hybrid</b> egress mode under Policies and recreate it.</Show>
         </p>
       </Show>
-      <For each={turns()}>
+      <For each={groups()}>
+        {(group) => (
+          <details open style="margin-bottom:1rem">
+            <summary class="controls">
+              <b>{group.label}</b>
+              <span class="muted small">{group.turns.length} calls · last {String(group.last).slice(11, 19)}{group.key !== 'none' ? ` · session ${group.key.slice(0, 8)}` : ''}</span>
+            </summary>
+      <For each={group.turns}>
         {(turn) => (
           <article class="card" style="margin-bottom:.75rem">
             <header class="controls">
@@ -110,6 +148,9 @@ export default function ChatsTab(props) {
               <p><span class="muted small">system</span><br /><span class="small" style="white-space:pre-wrap">{turn.ask.system.slice(0, 2000)}</span></p>
             </Show>
           </article>
+        )}
+      </For>
+          </details>
         )}
       </For>
     </section>
