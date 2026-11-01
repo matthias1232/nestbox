@@ -50,11 +50,17 @@ Snapshots are restic snapshots in one encrypted repository per data center on th
 snapshot server. They double as backups: the data survives the machine, so a rented server can be
 deleted once its last snapshot is in.
 
+While a sandbox works on a joined node its folders are snapshotted every 15 minutes
+(`NESTBOX_SNAPSHOT_MINUTES`). If the machine is lost, tick *The node is gone: recover from the last
+snapshot* on the Moves page: the sandbox comes back on another node with the data of the newest snapshot
+(the work since then is lost). Old snapshots are cleared with `POST /api/v1/snapshots/prune`
+(administrators; the snapshot server itself never deletes).
+
 A node with sandboxes, models or folders cannot be removed or handed back: move them first.
 
 ## Rented machines
 
-*Rented machines*: add a **Hetzner Cloud** or **Proxmox VE** account (the token is stored encrypted),
+*Rented machines*: add a **Hetzner Cloud**, **DigitalOcean**, **Vultr** or **Proxmox VE** account (the token is stored encrypted),
 pick a machine type (Hetzner shows the hourly price), a lifetime and an idle limit. The machine joins
 by itself. It is deleted when its time is up or it has been empty for the idle limit, never while data
 is on it; a budget per account caps what running machines may cost per hour.

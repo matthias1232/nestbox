@@ -29,9 +29,12 @@ Revisited when a provider has no usable API or when billing becomes a product fe
 * Drivers: **Hetzner Cloud** (join command in `user_data`; request shapes and price parsing are unit
   tested, not run against a real account) and **Proxmox VE** (clone a template, address from a pool,
   run the join command through the guest agent; exercised end to end against a real Proxmox host).
+* **DigitalOcean and Vultr** drivers follow the providers' published v2 APIs (droplet / instance with the
+  join command as user data, hourly prices from the size / plan lists); request shapes and answer parsing are
+  unit tested, they have not been run against live accounts.
 * **Not built:** NVIDIA Brev (no API to verify against here; a Brev instance joins with the one-line
-  command or the cloud-init document, like any other host), DigitalOcean, Vultr, AWS, GCP, and a generic
-  SSH driver (the container has no SSH client; the one-line command covers it).
+  command or the cloud-init document, like any other host), AWS, GCP, and a generic SSH driver (the
+  container has no SSH client; the one-line command covers it).
 * The reaper deletes a machine when its lifetime ends or it has been empty for its idle limit, never
   while data is on it (the deadline moves by 30 minutes and the console says why), and repeats the join
   step for a machine that never became a node.

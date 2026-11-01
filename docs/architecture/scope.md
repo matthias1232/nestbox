@@ -78,6 +78,9 @@ WireGuard, per-node runner dispatch, image registry sync, sandbox move there and
 machines from Proxmox with deletion. Proven by tests only (no live provider): OIDC sign-in flow
 (profile parsing, registration, invitation, replay), Hetzner driver request shapes.
 
-Not built, deliberately listed: Brev/DigitalOcean/AWS/GCP drivers; models, builds and CUDA-X on a
-joined node; scheduled snapshots; snapshot pruning; node-to-node links; automatic failover of a
-sandbox; billing. See the amendments of ADR 0044-0050.
+Also proven since: scheduled snapshots of folders working on a joined node, pruning, and recovery of a
+sandbox after its machine was powered off. DigitalOcean and Vultr drivers: unit tests only.
+
+Not built, deliberately listed: Brev/AWS/GCP drivers; models, builds and CUDA-X on a joined node;
+node-to-node links; automatic (unattended) failover; site-level roles and a general `role_bindings`
+table; billing. See the amendments of ADR 0044-0050.
