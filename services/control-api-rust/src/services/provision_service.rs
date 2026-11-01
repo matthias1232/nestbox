@@ -233,7 +233,7 @@ pub async fn burst(
     };
     let created = driver.create(&request).await.map_err(driver_error)?;
     let expires_at = Utc::now() + Duration::minutes(hosting::clamp_ttl(ttl_minutes));
-    let id: Uuid = sqlx::query_scalar(
+    let inserted: Result<Uuid, sqlx::Error> = sqlx::query_scalar(
         "INSERT INTO provisioned_hosts (environment_id, account_id, node_name, external_id, host_type, location, address,
                                         hourly_milli, state, expires_at, idle_minutes, created_by)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id",
@@ -251,8 +251,16 @@ pub async fn burst(
     .bind(idle_minutes.max(0))
     .bind(principal.user_id)
     .fetch_one(&ctx.pool)
-    .await
-    .map_err(db)?;
+    .await;
+    // A machine that exists at the provider but not in our books would run up a bill nobody sees:
+    // if the record cannot be written, the machine goes again.
+    let id = match inserted {
+        Ok(id) => id,
+        Err(error) => {
+            let _ = driver.destroy(&created.external_id).await;
+            return Err(db(error));
+        }
+    };
     tracing::info!(provider = %kind, node = %token.node_name, host = %created.external_id, "a machine was created for a data center");
     hosts(ctx, principal, Some(id)).await?.into_iter().next().ok_or_else(|| ApiError::internal("the new machine vanished"))
 }
@@ -264,6 +272,8 @@ fn milli(value: i64) -> String {
 /// The machines of this data center, newest first.
 pub async fn hosts(ctx: &ServiceContext, principal: &Principal, only: Option<Uuid>) -> Result<Vec<HostView>, ApiError> {
     require(principal, Permission::NodeRead)?;
+    // `provider_accounts` is row-level secured, so the join needs the data center's scope.
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
     #[allow(clippy::type_complexity)]
     let rows: Vec<(Uuid, String, String, String, Option<String>, Option<String>, i64, String, DateTime<Utc>, i32, Option<String>, DateTime<Utc>, Option<DateTime<Utc>>)> = sqlx::query_as(
         "SELECT h.id, a.name, h.node_name, h.host_type, h.location, h.address, h.hourly_milli, h.state, h.expires_at,
@@ -274,9 +284,10 @@ pub async fn hosts(ctx: &ServiceContext, principal: &Principal, only: Option<Uui
     )
     .bind(principal.environment_id)
     .bind(only)
-    .fetch_all(&ctx.pool)
+    .fetch_all(scope.connection())
     .await
     .map_err(db)?;
+    scope.commit().await.map_err(ApiError::from)?;
     let now = Utc::now();
     Ok(rows
         .into_iter()
