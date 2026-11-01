@@ -121,4 +121,5 @@ the invitation preview are public on purpose: the token in the path is the crede
 `agent_auth.rs`, `control.rs`, `presence.rs`, `rule_bulk.rs`, `model_grants.rs`,
 `model_readiness.rs`, `node_connect.rs` and `move_preflight.rs` carry the workbox's endpoints. Each
 handler parses, authorises through `Auth`, and delegates; the two internal routes
-(`accounting/models/{sandbox}`, `node/egress-lock`) authenticate a service instead.
+(`accounting/models/{sandbox}`, `node/egress-lock`) authenticate a service instead — `node/egress-lock`
+verifies the node token in the service, with the same check that guards the node package fetch.

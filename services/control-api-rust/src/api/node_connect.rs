@@ -71,7 +71,9 @@ pub async fn node_egress_lock(
     let token = text("authorization")
         .and_then(|raw| raw.split_once(' ').map(|(_, token)| token.trim().to_string()))
         .ok_or_else(missing)?;
-    crate::services::policy_service::authenticate_node(&state.services, node_id, &token).await?;
+    // The service verifies the token against the node's own locator (the same check the node's
+    // package fetch gets) and answers the lock only after it matches, so a wrong token learns
+    // nothing about which lock a node applies.
     let lock = node_connect_service::egress_lock_for_node(&state.services, node_id, &token).await?;
     Ok(Json(serde_json::json!({ "lock": lock })))
 }
