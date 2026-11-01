@@ -28,13 +28,31 @@ the only place those two facts are shown together.
   (from the inventory) and `props.onOpenSandbox` (from this drawer) are optional
   callbacks. Without them the names render as text, never as a button that does
   nothing.
+- **The tunnel column is the hub's opinion, not a ping.** It comes from
+  `nodes/tunnels` (every ten seconds, and at once on a `node_tunnel_changed`
+  event); a node the hub has no peer for reads "no tunnel", never "up". The local
+  host reads "local" in both the tunnel and the egress column, because it is this
+  gateway and takes no tunnel to itself.
+- **The egress select never shows an unconfirmed choice.** A refused write leaves
+  the control at the value the page knew and the error above the table; `strict`
+  asks first, because it moves all of the node's traffic through this gateway.
+  The node list does not report the current lock yet, so the select starts at
+  "not read" rather than assuming `strict`.
+- **A credential never stays on the page.** `ConnectNode` empties its password and
+  key fields as soon as the request is answered, and the server is not allowed to
+  store them at all.
 
 ## Files
 
 | File | Responsibility |
 |---|---|
-| `NodesPage.jsx` | The table: name and key, kind, status, container GPU, sandbox count, budget; opens the drawer |
+| `NodesPage.jsx` | The table: name and key, kind, status, tunnel state, egress lock, container GPU, sandbox count, budget; opens the drawer; keeps the tunnel list fresh |
 | `NodeDrawer.jsx` | One node: facts, budget, probe, its sandboxes, display rename |
+| `JoinNode.jsx` | Add a machine by handing out a one-time join command |
+| `ConnectNode.jsx` | Add an existing machine by address: SSH login used once, WireGuard port, egress lock |
+| `TunnelBadge.jsx` | One node's tunnel as a badge: state word, handshake age, colour |
+| `tunnels.js` | Tunnel wording and colour: `tunnelLabel`, `ageText`, `tunnelTone`; no JSX |
+| `tunnels.test.js` | The wording rules, run with `node --test` |
 | `BudgetBars.jsx` | Total / reserved / free for RAM and GPU memory, plus cores, GPUs, and installs |
 | `useNodes.js` | The list and the drawer's state: fetch, probe, rename; no JSX |
 | `nodeFormat.js` | Status colour and kind wording shared by the page and the drawer |

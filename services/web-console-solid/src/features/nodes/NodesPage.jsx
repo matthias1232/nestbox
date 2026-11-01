@@ -5,26 +5,120 @@
 // reserve, and what is left. The numbers are the server's; a node nobody has
 // measured says so instead of drawing zeros as capacity.
 //
-// The page itself is markup. State and calls live in `useNodes.js`.
+// Two columns are about reachability rather than capacity: "Tunnel" is the state
+// of the node's WireGuard tunnel as the hub sees it (refreshed every ten seconds
+// and whenever the hub reports a change), and "Egress" is the choice of where the
+// node's traffic leaves. Both are admin work, so the page keeps the tunnel list
+// small and cheap.
+//
+// The page itself is markup. State and calls live in `useNodes.js`; the tunnel
+// and lock state is small enough to stay here, next to the two columns it feeds.
 
-import { For, Show, createMemo, createSignal, onMount } from 'solid-js';
+import { For, Show, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 import Empty from '../../components/Empty.jsx';
+import * as nodesConnect from '../../api/nodesConnect.js';
+import { stateStream } from '../../api/telemetry.js';
 import BudgetBars from './BudgetBars.jsx';
+import ConnectNode from './ConnectNode.jsx';
 import NodeDrawer from './NodeDrawer.jsx';
 import JoinNode from './JoinNode.jsx';
+import TunnelBadge from './TunnelBadge.jsx';
 import { kindLabel, statusTone } from './nodeFormat.js';
 import { useNodes } from './useNodes.js';
 import '../../styles/nodes.css';
 
+// How often the tunnel list is asked again. The hub writes a status file every
+// few seconds, so a quarter of a minute would already be stale-looking; ten
+// seconds is one small query and keeps the column honest.
+const TUNNEL_REFRESH_MS = 10000;
+
+const LOCK_TEXT = { strict: 'Strict', exit_local: 'Exit locally' };
+
 export default function NodesPage(props) {
   const state = useNodes();
   const [openId, setOpenId] = createSignal(null);
+  const [tunnels, setTunnels] = createSignal({});
+  const [tunnelError, setTunnelError] = createSignal(null);
+  const [locks, setLocks] = createSignal({});
+  const [lockSaving, setLockSaving] = createSignal(null);
+  const [lockError, setLockError] = createSignal(null);
+  const [lockAsk, setLockAsk] = createSignal(null);
 
-  onMount(() => state.load());
+  // One tunnel request at a time: a slow answer must not stack up behind the
+  // ten-second poll.
+  let tunnelBusy = false;
 
   const measured = createMemo(() => state.items().filter((node) => node.hardware_known).length);
   const sandboxTotal = createMemo(() =>
     state.items().reduce((sum, node) => sum + (node.budget?.sandboxes || 0), 0));
+
+  /** The tunnel of every node, keyed by node id; one request for the whole table. */
+  async function loadTunnels() {
+    if (tunnelBusy) return;
+    tunnelBusy = true;
+    try {
+      const list = await nodesConnect.tunnels();
+      const byNode = {};
+      for (const tunnel of list || []) byNode[tunnel.node_id] = tunnel;
+      setTunnels(byNode);
+      setTunnelError(null);
+    } catch (failure) {
+      // A console that cannot read tunnel states still shows its nodes; the page
+      // says the column is unknown instead of failing as a whole.
+      setTunnelError(failure.message);
+    } finally {
+      tunnelBusy = false;
+    }
+  }
+
+  /** Write one node's lock and remember it, so the select shows the server's answer. */
+  async function applyLock(node, lock) {
+    setLockSaving(node.id);
+    setLockError(null);
+    try {
+      await nodesConnect.setEgressLock(node.id, lock);
+      setLocks((current) => ({ ...current, [node.id]: lock }));
+    } catch (failure) {
+      setLockError(`${node.display_name} (${node.name}): ${failure.message}`);
+    } finally {
+      setLockSaving(null);
+    }
+  }
+
+  /**
+   * Take a lock picked in the table.
+   *
+   * `strict` is confirmed first because it moves all of the node's traffic; the
+   * control is put back to what the page knows until the server confirms, so a
+   * refused change can never look applied.
+   */
+  function pickLock(node, lock, select) {
+    select.value = locks()[node.id] || '';
+    if (!lock) return;
+    if (lock === 'strict') {
+      setLockAsk({ node, lock });
+      return;
+    }
+    applyLock(node, lock);
+  }
+
+  onMount(() => {
+    state.load();
+    loadTunnels();
+    const timer = setInterval(loadTunnels, TUNNEL_REFRESH_MS);
+    // A tunnel that just changed state is exactly the case the next poll would
+    // report too late, so the live event refreshes the column at once.
+    const stop = stateStream({
+      onEvent: (event) => {
+        if (event.type === 'node_tunnel_changed') loadTunnels();
+      },
+      onError: () => {},
+    });
+    onCleanup(() => {
+      clearInterval(timer);
+      stop();
+    });
+  });
 
   return (
     <section class="page">
@@ -45,6 +139,10 @@ export default function NodesPage(props) {
       </header>
 
       <Show when={state.error()}><p class="error">{state.error()}</p></Show>
+      <Show when={tunnelError()}>
+        <p class="muted small">Tunnel states unavailable: {tunnelError()}</p>
+      </Show>
+      <Show when={lockError()}><p class="error">{lockError()}</p></Show>
 
       <Show when={state.items().length > 0}>
         <div class="table-scroll">
@@ -54,6 +152,8 @@ export default function NodesPage(props) {
                 <th>Node</th>
                 <th class="narrow">Kind</th>
                 <th class="narrow">Status</th>
+                <th class="narrow">Tunnel</th>
+                <th class="narrow">Egress</th>
                 <th class="narrow">Container GPU</th>
                 <th class="narrow">Sandboxes</th>
                 <th>Budget</th>
@@ -90,6 +190,52 @@ export default function NodesPage(props) {
                     </td>
                     <td class="narrow">
                       <span class={`badge ${statusTone(node.status)}`}><i />{node.status}</span>
+                    </td>
+                    <td class="narrow small">
+                      <Show
+                        when={!node.is_local}
+                        fallback={
+                          <span class="muted" title="The local host is this gateway; it has no tunnel to it.">
+                            local
+                          </span>
+                        }
+                      >
+                        <Show
+                          when={tunnels()[node.id]}
+                          fallback={<span class="muted" title="The hub has no peer for this node yet.">no tunnel</span>}
+                        >
+                          <TunnelBadge
+                            state={tunnels()[node.id].state}
+                            age={tunnels()[node.id].handshake_age_seconds}
+                            title={tunnels()[node.id].endpoint
+                              ? `Endpoint ${tunnels()[node.id].endpoint}`
+                              : 'The hub has not seen this peer yet.'}
+                          />
+                        </Show>
+                      </Show>
+                    </td>
+                    <td class="narrow small">
+                      <Show
+                        when={!node.is_local}
+                        fallback={
+                          <span class="muted" title="The local host is this gateway; its own traffic does not take a tunnel.">
+                            local
+                          </span>
+                        }
+                      >
+                        <select
+                          value={locks()[node.id] || ''}
+                          disabled={lockSaving() === node.id}
+                          title="Where this node's traffic leaves. The node applies a change within five minutes."
+                          onChange={(event) => pickLock(node, event.currentTarget.value, event.currentTarget)}
+                        >
+                          <option value="" disabled>
+                            {locks()[node.id] ? LOCK_TEXT[locks()[node.id]] : 'not read'}
+                          </option>
+                          <option value="strict">Strict</option>
+                          <option value="exit_local">Exit locally</option>
+                        </select>
+                      </Show>
                     </td>
                     <td class="narrow small">
                       <Show
@@ -142,8 +288,32 @@ export default function NodesPage(props) {
         />
       </Show>
 
+      <Show when={lockAsk()}>
+        <div class="warn-note">
+          <p>
+            <strong>{lockAsk().node.display_name}</strong>: the node will send all traffic through
+            this gateway. Running sandboxes keep working; downloads become slower if this gateway's
+            line is slow.
+          </p>
+          <div class="actions">
+            <button
+              class="primary"
+              onClick={() => {
+                const ask = lockAsk();
+                setLockAsk(null);
+                if (ask) applyLock(ask.node, ask.lock);
+              }}
+            >
+              Send everything through this gateway
+            </button>
+            <button class="secondary" onClick={() => setLockAsk(null)}>Cancel</button>
+          </div>
+        </div>
+      </Show>
+
       <Show when={props.role === 'admin'}>
         <JoinNode onChanged={() => state.load()} />
+        <ConnectNode onChanged={() => state.load()} />
       </Show>
 
       <p class="muted small phase-note">
