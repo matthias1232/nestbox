@@ -406,6 +406,9 @@ pub async fn reap(ctx: &ServiceContext, config: &Config) -> Result<usize, ApiErr
             }
             (false, None) => None,
         };
+        if online {
+            let _ = sqlx::query("UPDATE provisioned_hosts SET state = 'running' WHERE id = $1 AND state = 'creating'").bind(id).execute(&ctx.pool).await;
+        }
         let verdict = hosting::reaping(now, expires_at, idle_minutes, idle_since, empty && online);
         if verdict == Reaping::Keep {
             continue;

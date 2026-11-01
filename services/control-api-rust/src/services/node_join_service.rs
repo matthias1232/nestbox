@@ -432,16 +432,11 @@ pub async fn sync(ctx: &ServiceContext, router: &crate::runtime::router::Runtime
 
 /// Whether anything still lives on a node: sandboxes, models or persistent folders.
 pub async fn node_is_empty(pool: &sqlx::PgPool, node_id: Uuid) -> Result<bool, ApiError> {
-    let busy: i64 = sqlx::query_scalar(
-        "SELECT (SELECT count(*) FROM sandboxes WHERE node_id = $1 AND status <> 'deleted')
-              + (SELECT count(*) FROM model_installs WHERE node_id = $1)
-              + (SELECT count(*) FROM persistent_roots WHERE node_id = $1 AND archived_at IS NULL)",
-    )
-    .bind(node_id)
-    .fetch_one(pool)
-    .await
-    .map_err(db)?;
-    Ok(busy == 0)
+    sqlx::query_scalar("SELECT nb_node_is_empty($1)")
+        .bind(node_id)
+        .fetch_one(pool)
+        .await
+        .map_err(db)
 }
 
 /// Delete an empty joined node on the control plane's own initiative (the reaper of rented
