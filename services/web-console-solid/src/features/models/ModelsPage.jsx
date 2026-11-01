@@ -13,6 +13,7 @@ import ModelFitCell from '../../components/ModelFitCell.jsx';
 import StatusBadge from '../../components/StatusBadge.jsx';
 import { gib } from '../../components/ResourceBars.jsx';
 import * as models from '../../api/models.js';
+import ModelGrantsSection from './ModelGrantsSection.jsx';
 import ModelRuntimePanel from './ModelRuntimePanel.jsx';
 
 // The verdicts that mean "this machine can run it". Same list the server's
@@ -542,6 +543,8 @@ export default function ModelsPage() {
         Install creates a job and records the intent. The artefact download is Phase 2:
         no bytes are fetched yet, so a job does not make a model usable on its own.
       </p>
+
+      <ModelGrantsSection />
     </section>
   );
 }

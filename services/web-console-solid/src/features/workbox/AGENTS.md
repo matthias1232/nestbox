@@ -25,6 +25,7 @@ evaluation windows, plus live chats, the topology and the shared terminals.
 | `livechats.js` | turns a recorded call into a turn, groups turns by session, shortens text (pure, tested by `livechats.test.js`) |
 | `TopologyPanel.jsx` | the live topology of the sandbox |
 | `ModelsCard.jsx` | the models the sandbox may use, with warm-up |
+| `models.js`, `models.test.js` | the card's logic: readiness badges, scope labels, who may manage |
 | `MoveDialog.jsx` | preflight and progress of a move to another node |
 | `move.js` | the nine move steps, their state map from events and polls, the node order |
 | `useLive.js` | one subscription to the state stream, filtered per sandbox |

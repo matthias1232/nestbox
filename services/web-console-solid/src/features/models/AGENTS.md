@@ -39,3 +39,11 @@ Install on a model the API will refuse.
 
 No fetching of model weights, no progress bar for a download, no client-side
 VRAM arithmetic.
+
+## Files
+
+| File | What it shows |
+|---|---|
+| `ModelsPage.jsx` | the catalogue, the install table, the filters |
+| `ModelRuntimePanel.jsx` | one installed model's flags, logs and metrics |
+| `ModelGrantsSection.jsx` | environment and user model grants (admins only), below the page |
