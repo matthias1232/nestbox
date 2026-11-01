@@ -167,9 +167,11 @@ seconds instead of half an hour.
 | `app/inventory.py` | Runs the probe and parses its sections |
 | `app/inventory.sh` | The fixed probe script, executed inside the container |
 | `app/terminal.py` | The browser terminal: node token, PTY pump, resize, idle close |
+| `app/remote_ssh.py` | `POST /v1/remote/ssh-run`: one script over SSH on a machine that is not a node yet, credentials used once |
 | `tests/test_terminal.py` | The pump and the frame rules, without FastAPI and without Docker (`python3 -m unittest discover -s tests -t .`) |
 | `tests/test_ca_mounts.py` | Which egress modes get the CA and the bundle, and what the bundle contains |
 | `tests/test_vnc.py` | The view-only RFB filter: what passes, what is dropped, what makes the stream close |
+| `tests/test_remote_ssh.py` | `env_prefix` quoting and which environment keys are refused, without a machine to reach |
 | `Dockerfile` | Image build |
 
 ## Samples, processes, inventory
@@ -214,4 +216,7 @@ It is a courtesy to the package index, never control state: emptying it changes
 nothing an operator can observe except how long the next search takes.
 
 `app/remote_ssh.py` runs a script over SSH on a machine that is not a node yet (ADR 0057): the
-credentials arrive with the request and are used once.
+credentials arrive with the request and are used once. The host key is not checked, on purpose —
+a first contact has no trusted key, and what is trusted afterwards is the WireGuard key the new
+node answers on its overlay address. `env_prefix` single-quotes every value and refuses a key
+that is not a shell name, and no password, key or environment ever reaches a log line.
