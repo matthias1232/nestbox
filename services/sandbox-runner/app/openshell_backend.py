@@ -86,10 +86,18 @@ def memory_quantity(value: str) -> str:
 # section is read once, when the sandbox starts, so it has to be given here.
 FILESYSTEM_POLICY: dict[str, Any] = {
     "include_workdir": True,
-    "read_only": ["/bin", "/usr", "/lib", "/proc", "/dev/urandom", "/dev/random", "/etc", "/var/log"],
+    "read_only": [
+        "/bin", "/usr", "/lib", "/proc", "/dev/urandom", "/dev/random", "/etc", "/var/log",
+        # Tools installed under /opt, the keyboard data and dbus machine id, what
+        # Chrome reads from /sys, and the node CA Nestbox mounts for inspecting modes.
+        "/opt", "/var/lib", "/sys", "/run/secrets",
+    ],
     "read_write": [
         "/tmp", "/var/tmp", "/dev/null", "/dev/zero", "/dev/tty",
         "/dev/ptmx", "/dev/pts", "/dev/shm",
+        # The X server compiles the keyboard map here; without it Xtigervnc dies
+        # with "Failed to activate virtual core keyboard".
+        "/var/lib/xkb",
     ],
 }
 
