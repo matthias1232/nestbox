@@ -31,6 +31,13 @@ def line(**fields) -> str:
 
 
 class ShipTest(unittest.TestCase):
+    def test_a_batch_is_cut_by_size(self) -> None:
+        big = {"host": "x", "request_body": "A" * 300_000}
+        taken = ship.take_batch([dict(big) for _ in range(5)])
+        self.assertEqual(len(taken), 2)
+        self.assertEqual(len(ship.take_batch([{"host": "a"}] * 10)), 10)
+        self.assertEqual(len(ship.take_batch([{"host": "x", "request_body": "A" * 2_000_000}])), 1)
+
     def test_a_refused_entry_is_dropped_and_the_rest_is_delivered(self) -> None:
         sent: list[list[str]] = []
 

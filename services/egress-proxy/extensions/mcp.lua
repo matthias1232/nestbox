@@ -124,7 +124,7 @@ local function last_message_digest(bytes)
   -- can put a conversation's calls together.
   local session = string.match(bytes, 'session_id\\"%s*:%s*\\"([%x%-]+)\\"') or string.match(bytes, '"session_id"%s*:%s*"([%x%-]+)"')
   return string.format(
-    '{"model":%s,"nestbox_history":%d,"nestbox_session":%s,"messages":[%s]}',
+    '{"model":%s,"nestbox_history":%d,"nestbox_conversation":%s,"messages":[%s]}',
     model and ('"' .. model .. '"') or "null",
     count,
     session and ('"' .. session .. '"') or "null",
