@@ -70,7 +70,7 @@ on it.
 | `ConnectionsTab.jsx` | Sockets and owning processes, filtered by where they go (internet, SSH, name lookups), polled every 2.5 s |
 | `ChatsTab.jsx`, `chats.js` | Model conversations read from the recorded bodies (Anthropic, OpenAI chat, OpenAI responses; SSE stitched back). Needs an inspecting egress mode |
 | `AccessTab.jsx` | Ports, SSH key, remote snippets (`feat/console-access`) |
-| `PoliciesTab.jsx` | Effective rules, deployed state (`feat/console-map-policies`) |
+| `PoliciesTab.jsx` | Effective rules, deployed state; the egress-mode labels come from `features/workbox/network.js`, so this tab and the user's card name a mode the same way (`feat/console-map-policies`) |
 | `ProcessesTab.jsx`, `InventoryTab.jsx`, `LogsTab.jsx` | `docker top`, snapshot, log tail (`feat/console-inventory`) |
 
 ## The drawer's Agents tab
