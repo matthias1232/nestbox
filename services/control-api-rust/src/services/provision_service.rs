@@ -235,8 +235,8 @@ pub async fn burst(
     let expires_at = Utc::now() + Duration::minutes(hosting::clamp_ttl(ttl_minutes));
     let inserted: Result<Uuid, sqlx::Error> = sqlx::query_scalar(
         "INSERT INTO provisioned_hosts (environment_id, account_id, node_name, external_id, host_type, location, address,
-                                        hourly_milli, state, expires_at, idle_minutes, created_by, site_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id",
+                                        hourly_milli, state, expires_at, idle_minutes, created_by, site_id, account_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, (SELECT name FROM provider_accounts WHERE id = $2)) RETURNING id",
     )
     .bind(principal.environment_id)
     .bind(account)
@@ -277,9 +277,9 @@ pub async fn hosts(ctx: &ServiceContext, principal: &Principal, only: Option<Uui
     let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
     #[allow(clippy::type_complexity)]
     let rows: Vec<(Uuid, String, String, String, Option<String>, Option<String>, i64, String, DateTime<Utc>, i32, Option<String>, DateTime<Utc>, Option<DateTime<Utc>>)> = sqlx::query_as(
-        "SELECT h.id, a.name, h.node_name, h.host_type, h.location, h.address, h.hourly_milli, h.state, h.expires_at,
+        "SELECT h.id, coalesce(a.name, h.account_name, '?'), h.node_name, h.host_type, h.location, h.address, h.hourly_milli, h.state, h.expires_at,
                 h.idle_minutes, h.note, h.created_at, h.destroyed_at
-           FROM provisioned_hosts h JOIN provider_accounts a ON a.id = h.account_id
+           FROM provisioned_hosts h LEFT JOIN provider_accounts a ON a.id = h.account_id
           WHERE h.environment_id = $1 AND ($2::uuid IS NULL OR h.id = $2)
           ORDER BY h.created_at DESC LIMIT 100",
     )
