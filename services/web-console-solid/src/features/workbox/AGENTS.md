@@ -17,6 +17,9 @@ evaluation windows, plus live chats, the topology and the shared terminals.
 | `network.js` | the proxy modes, durations and banner sentence; pure, tested with `node --test network.test.js` |
 | `SessionsPanel.jsx` | all shared terminal tabs and the desktop |
 | `TerminalPopout.jsx`, `DesktopPopout.jsx` | the pop-out windows without a sidebar |
+| `SessionsPanel.jsx` | all shared terminal tabs ("Connected now" from `control.presence`, then terminals and desktop behind two tabs) |
+| `sessions.js`, `sessions.test.js` | pure logic of the shared tabs: `mergeTabs` (my list + everybody's, each tab once), `sshCommand`, `puttyHint`; tested with `node --test sessions.test.js` |
+| `TerminalPopout.jsx`, `DesktopPopout.jsx` | the pop-out windows without a sidebar: one tab with its viewers, or the desktop, each filling the window |
 | `LiveChatsPanel.jsx` | the agents' conversation, live |
 | `TopologyPanel.jsx` | the live topology of the sandbox |
 | `ModelsCard.jsx` | the models the sandbox may use, with warm-up |
@@ -37,3 +40,8 @@ The vocabulary travels the other way once: `features/sandboxes/PoliciesTab.jsx`
 imports the mode labels from `network.js`, so an administrator and a user read
 the same words for the same mode. That module is data and pure functions only —
 no state, no API call.
+`sessions.js` is the reverse of the exception above: `features/sandboxes/` takes
+that one module from here, because the tab strip in the Admin Center and in the
+Workbox is the same list. It is pure logic — no JSX, no state, no API call — so
+it cannot become a second truth. The same holds for `useLive.js`, which a
+terminal imports for its presence events so a page keeps one event stream.
