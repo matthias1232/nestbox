@@ -336,6 +336,8 @@ uses to find it.
 | `agent_launch_service` | the launcher, agentctl and env.sh written into a sandbox |
 | `agent_activity_service` | which tmux panes run an agent, and whether one is busy |
 | `egress_live_service` | switching a sandbox's proxy mode without a new container, the revert timer that switches it back (`revert_plan`, `revert_due`), and the `direct` exception that still rebuilds |
+| `agent_activity_service` | which tmux panes run an agent, whether one is busy, restarting a pane or a supervised agent, recent model traffic |
+| `egress_live_service` | switching a sandbox's proxy mode without a new container |
 | `presence_service` | who is connected to a sandbox now |
 | `model_grant_service` | which models a sandbox may use, and where they are served |
 | `model_readiness_service` | starting and warming those models before they are used |

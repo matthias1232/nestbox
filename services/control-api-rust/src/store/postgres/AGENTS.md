@@ -54,6 +54,7 @@ the codebase where SQL appears.
 | `terminal_sessions.rs` | Terminal sessions in `sandbox_sessions`: open, count for the limits, close. Never content (ADR 0023) |
 | `terminal_tabs.rs` | The named terminal tabs one user keeps in one sandbox: list, replace. Never content |
 | `login_rules.rs` | The per-sandbox `Sign-in (<agent>): <host>` rules that open an agent's own-account hosts: delete for a sandbox, insert one host, list the environments the restart loop walks |
+| `agent_activity.rs` | Whether a sandbox talked to a model in the last 30 seconds, from `telemetry_events` |
 
 ## Reading the traffic log
 
