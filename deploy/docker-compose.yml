@@ -174,11 +174,11 @@ services:
       NESTBOX_SANDBOX_RUNTIME: ${NESTBOX_SANDBOX_RUNTIME:-openshell}
       # Where an agent finds the Nestbox MCP hub. On OpenShell the hub is reached
       # through the host (see the mcp-hub service).
-      NESTBOX_MCP_HUB_URL: ${NESTBOX_MCP_HUB_URL:-http://mcp-hub:8080/mcp}
+      NESTBOX_MCP_HUB_URL: ${NESTBOX_MCP_HUB_URL:-}
       # Where an agent reaches the media MCP server. On OpenShell the compose name
       # is not resolvable from a host-network supervisor, so a deployment sets this
       # to the host.openshell.internal form the hub already uses.
-      NESTBOX_MEDIA_MCP_URL: ${NESTBOX_MEDIA_MCP_URL:-http://media-mcp:8080/mcp}
+      NESTBOX_MEDIA_MCP_URL: ${NESTBOX_MEDIA_MCP_URL:-}
       # Rendered assets: a volume, not the container's writable layer, so a
       # rebuild does not delete what an operator asked to keep.
       NESTBOX_MEDIA_DIR: /var/lib/nestbox/media

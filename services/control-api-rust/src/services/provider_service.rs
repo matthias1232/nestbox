@@ -935,6 +935,11 @@ mod tests {
 pub fn media_mcp_url() -> String {
     match std::env::var("NESTBOX_MEDIA_MCP_URL") {
         Ok(value) if !value.trim().is_empty() => value.trim().to_string(),
+        // A gateway sandbox has no route on the runtime network; its supervisor
+        // reaches the host, where the server's port is published (ADR 0035).
+        _ if crate::services::sandbox_service::openshell_runtime() => {
+            "http://host.openshell.internal:18089/mcp".to_string()
+        }
         _ => "http://media-mcp:8080/mcp".to_string(),
     }
 }
@@ -942,6 +947,9 @@ pub fn media_mcp_url() -> String {
 pub fn mcp_hub_url() -> String {
     match std::env::var("NESTBOX_MCP_HUB_URL") {
         Ok(value) if !value.trim().is_empty() => value.trim().to_string(),
+        _ if crate::services::sandbox_service::openshell_runtime() => {
+            "http://host.openshell.internal:18088/mcp".to_string()
+        }
         _ => "http://mcp-hub:8080/mcp".to_string(),
     }
 }
