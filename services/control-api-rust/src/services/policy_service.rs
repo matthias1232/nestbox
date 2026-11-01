@@ -958,14 +958,29 @@ pub async fn set_egress_mode(
     let sandbox = sandbox_store::get(&mut scope, sandbox_id)
         .await
         .map_err(ApiError::from)?;
-    // A sandbox built from a recipe cannot be recreated (its entrypoint is
-    // generated at build time), so a new mode would be stored but never reach
-    // the container. Say so instead of saving a setting that is not true.
+    // A sandbox built from a recipe cannot be recreated in place (its entrypoint and
+    // supervisor identity are generated when it is created), so it is made again
+    // from its recipe with the new mode: the old one is removed, a new one takes its
+    // name. Persistent folders (login, history) stay. The sandbox gets a new id,
+    // which the answer carries, so the console can follow it.
     if sandbox.image.starts_with("nestbox-recipe/") {
-        return Err(ApiError::conflict(
-            ErrorCode::SANDBOX_INVALID_STATE,
-            "This sandbox was built from a recipe and its mode is fixed when it is created. Create it again from the recipe with the mode you want (instantiate takes `egress_mode`).",
-        ));
+        scope.commit().await.map_err(ApiError::from)?;
+        let rebuilt = crate::services::builder_service::rebuild_with_mode(
+            ctx,
+            principal,
+            sandbox.id,
+            mode.as_str(),
+        )
+        .await?;
+        let mut again = TenantScope::begin_for(&ctx.pool, principal)
+            .await
+            .map_err(ApiError::from)?;
+        let setting = store::egress_mode_for_sandbox(&mut again, rebuilt.id)
+            .await
+            .map_err(ApiError::from)?
+            .ok_or_else(|| ApiError::validation("The rebuilt sandbox has no egress setting."))?;
+        again.commit().await.map_err(ApiError::from)?;
+        return Ok(setting);
     }
     let setting = store::set_egress_mode(
         &mut scope,

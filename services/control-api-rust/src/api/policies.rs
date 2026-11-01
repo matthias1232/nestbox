@@ -658,6 +658,7 @@ pub async fn internal_check(
             .and_then(|value| Uuid::parse_str(value.trim()).ok()),
     };
 
+    let destination = host.clone();
     let request = CheckRequest {
         sandbox_id,
         node_id: Some(node_id),
@@ -730,7 +731,7 @@ pub async fn internal_check(
     insert_header(
         &mut response_headers,
         "x-nestbox-egress-mode",
-        &response.egress_mode,
+        &crate::domain::egress::mode_for_host(&response.egress_mode, &destination),
     );
     insert_header(
         &mut response_headers,

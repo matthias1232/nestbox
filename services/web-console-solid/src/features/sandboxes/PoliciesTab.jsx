@@ -13,24 +13,24 @@ import { NetworkRuleForm, DnsRuleForm } from '../policies/RuleForms.jsx';
 
 const MODES = [
   {
-    value: 'direct',
-    label: 'Direct — no proxy, no inspection',
-    note: 'The sandbox leaves on its own route: no proxy in the environment, no CA, nothing observed. Policy rules still exist, but this traffic does not pass the proxy that enforces them — choose it when the sandbox must not be observed at all.',
-  },
-  {
-    value: 'forward_proxy',
-    label: 'Forward proxy — sees host and port',
-    note: 'Every request goes through the node\'s egress proxy, which sees the destination and decides per request. It does not read inside an encrypted connection, so no CA is needed.',
-  },
-  {
     value: 'transparent',
-    label: 'Transparent — reads TLS',
-    note: 'The proxy terminates TLS and reads the request, so methods and paths can be matched. The node CA is mounted into this sandbox only, and its tools are told to trust it.',
+    label: 'Read everything — TLS of every connection is opened',
+    note: 'The proxy opens every encrypted connection and reads the request, so methods, paths, bodies and chats can be matched and recorded. The node CA is mounted into this sandbox only, and its tools are told to trust it.',
   },
   {
     value: 'hybrid',
-    label: 'Hybrid — reads TLS, forwards the rest',
-    note: 'Reads TLS on the ports you choose and forwards the rest unread. The node CA is mounted into this sandbox only.',
+    label: 'Agents only — read the model providers, tunnel the rest',
+    note: 'Only connections to model providers (Claude, Codex / ChatGPT, OpenAI, Gemini, OpenRouter and the like — the ones an agent signed in with an account reaches directly, where no key can be put on the request) are opened and recorded, with chats and token use. Everything else stays an unread tunnel the proxy only allows or blocks by host. Add your own gateway with NESTBOX_AGENT_HOSTS.',
+  },
+  {
+    value: 'forward_proxy',
+    label: 'Off — host and port only',
+    note: 'Every request goes through the node\'s egress proxy, which sees the destination and decides per request. It does not read inside an encrypted connection, so no CA is needed and no chat or token use can be shown.',
+  },
+  {
+    value: 'direct',
+    label: 'Direct — no proxy at all',
+    note: 'The sandbox leaves on its own route: no proxy in the environment, no CA, nothing observed. Policy rules still exist, but this traffic does not pass the proxy that enforces them — choose it only when the sandbox must not be observed at all. Runs on the Docker runtime, because a gateway sandbox has no route of its own.',
   },
 ];
 
@@ -94,15 +94,19 @@ export default function PoliciesTab(props) {
 
       <h3>How deeply is its egress observed?</h3>
       <div class="controls">
-        <select value={currentModeValue()} onChange={(e) => run(() => api.setEgressMode(id(), e.currentTarget.value), 'Egress mode saved. A running sandbox is recreated so the change applies.', refetchMode)}>
+        <select value={currentModeValue()} onChange={(e) => run(async () => {
+          const saved = await api.setEgressMode(id(), e.currentTarget.value);
+          // A sandbox made from a recipe is made again, and the new one has a new id.
+          if (saved?.sandbox_id && saved.sandbox_id !== id()) props.followed?.(saved.sandbox_id);
+        }, 'Mode saved. The sandbox is rebuilt so it applies; its persistent data stays.', refetchMode)}>
           <For each={MODES}>{(item) => <option value={item.value}>{item.label}</option>}</For>
         </select>
       </div>
       <p class="muted small">{MODES.find((item) => item.value === currentModeValue())?.note}</p>
       <p class="muted small">
         A mode is part of the container, not a rule the proxy reads per request: changing it
-        recreates the sandbox. Its persistent data survives; anything written outside a
-        persistent root does not.
+        rebuilds the sandbox (a recipe sandbox is made again from its recipe). Its persistent
+        data survives; anything written outside a persistent root does not.
       </p>
 
       <h3>Which exit does it leave through?</h3>

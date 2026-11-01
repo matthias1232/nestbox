@@ -175,7 +175,7 @@ export default function AdminCenter(props) {
             {(entry) => (
               <Show when={entry.id === tab()}>
                 <TabBoundary>
-                  <entry.component sandbox={sandbox()} revision={revision()} reload={reload} />
+                  <entry.component sandbox={sandbox()} revision={revision()} reload={reload} followed={props.onFollow} />
                 </TabBoundary>
               </Show>
             )}

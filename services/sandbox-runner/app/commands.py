@@ -23,6 +23,7 @@ from docker.errors import NotFound
 from fastapi import APIRouter, HTTPException
 
 from app.processes import client
+from app.gateway_exec import exec_run
 from app.workload import get_container
 
 router = APIRouter()
@@ -37,7 +38,7 @@ _state: dict[str, dict[str, Any]] = {}
 
 
 def _read(container: Any) -> dict[int, dict[str, Any]]:
-    result = container.exec_run(PS, stdout=True, stderr=False)
+    result = exec_run(container, PS)
     if result.exit_code != 0:
         raise HTTPException(409, "the sandbox process table is unavailable")
     table: dict[int, dict[str, Any]] = {}

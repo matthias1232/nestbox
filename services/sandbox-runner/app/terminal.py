@@ -30,7 +30,8 @@ Three rules shape this file:
    mean "no check".
 """
 from __future__ import annotations
-from app.workload import get_container, list_workloads, sandbox_name
+from app.gateway_exec import GatewayPty
+from app.workload import get_container, list_workloads, openshell_name, sandbox_name
 
 import asyncio
 import codecs
@@ -432,14 +433,24 @@ async def terminal(websocket: WebSocket, name: str) -> None:
     if not tab or len(tab) > 64 or not all(ch.isascii() and (ch.isalnum() or ch in "_-") for ch in tab):
         await websocket.close(code=CLOSE_INTERNAL, reason="invalid terminal tab")
         return
+    gateway = openshell_name(container.name)
+    exec_id = None
     try:
-        exec_id, pty = await asyncio.to_thread(opened_exec, container, tab)
-    except (DockerException, KeyError) as exc:
+        if gateway:
+            # Through the gateway, so the shell has the proxy, the CA and the
+            # boundary the agent has (see gateway_exec.py).
+            pty = await asyncio.to_thread(GatewayPty.open, gateway, tab)
+        else:
+            exec_id, pty = await asyncio.to_thread(opened_exec, container, tab)
+    except (DockerException, KeyError, OSError) as exc:
         await finish(websocket, "error", f"could not open a shell: {exc}")
         return
 
     def resize(cols: int, rows: int) -> None:
-        client.api.exec_resize(exec_id, height=rows, width=cols)
+        if gateway:
+            pty.resize(cols, rows)
+        else:
+            client.api.exec_resize(exec_id, height=rows, width=cols)
 
     try:
         # A PTY starts at whatever the kernel defaults to; setting the size

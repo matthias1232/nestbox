@@ -20,6 +20,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from docker.errors import NotFound
 
+from app.gateway_exec import exec_run
 from app.workload import get_container
 from app.processes import client
 
@@ -153,7 +154,7 @@ def connections(name: str) -> dict[str, Any]:
         item = get_container(client, name)
     except NotFound as exc:
         raise HTTPException(404, f"no such sandbox: {name}") from exc
-    result = item.exec_run(["sh", "-c", PROBE], stdout=True, stderr=False)
+    result = exec_run(item, ["sh", "-c", PROBE])
     if result.exit_code not in (0, None):
         raise HTTPException(409, "the sandbox connection table is unavailable")
     answer = _parse((result.output or b"").decode(errors="replace"))

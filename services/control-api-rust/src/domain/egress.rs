@@ -919,3 +919,93 @@ mod tests {
         assert_eq!(agent_hint(None), None);
     }
 }
+
+
+// ---------------------------------------------------------------------------
+// "Agents only" inspection
+// ---------------------------------------------------------------------------
+
+/// Hosts an agent talks to when it signs in with an account or calls a model
+/// directly, so a key cannot be put on the request by the gateway.
+const AGENT_HOSTS: &[&str] = &[
+    "api.anthropic.com",
+    "claude.ai",
+    "platform.claude.com",
+    "console.anthropic.com",
+    "mcp-proxy.anthropic.com",
+    "api.openai.com",
+    "chatgpt.com",
+    "chat.openai.com",
+    "auth.openai.com",
+    "generativelanguage.googleapis.com",
+    "openrouter.ai",
+    "api.mistral.ai",
+    "api.groq.com",
+    "api.x.ai",
+    "api.deepseek.com",
+    "api.cohere.com",
+    "api.perplexity.ai",
+];
+
+/// Suffixes that are agent hosts as a family.
+const AGENT_SUFFIXES: &[&str] = &[".openai.azure.com", ".anthropic.com", ".openai.com"];
+
+/// Whether a destination is a model provider the agents-only mode reads.
+///
+/// The built-in list plus any hosts named in `NESTBOX_AGENT_HOSTS` (comma
+/// separated; a leading dot is a suffix), so an operator can add a self-hosted
+/// gateway without a release.
+pub fn is_agent_host(host: &str) -> bool {
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    let host = host.split(':').next().unwrap_or("");
+    if host.is_empty() {
+        return false;
+    }
+    if AGENT_HOSTS.contains(&host) || AGENT_SUFFIXES.iter().any(|suffix| host.ends_with(suffix)) {
+        return true;
+    }
+    std::env::var("NESTBOX_AGENT_HOSTS").is_ok_and(|extra| {
+        extra.split(',').map(str::trim).filter(|item| !item.is_empty()).any(|item| {
+            match item.strip_prefix('.') {
+                Some(suffix) => host.ends_with(&format!(".{suffix}")) || host == suffix,
+                None => host == item.to_ascii_lowercase(),
+            }
+        })
+    })
+}
+
+/// The mode the proxy should act on for one destination.
+///
+/// `hybrid` reads TLS only towards model providers; for any other destination the
+/// proxy gets `forward_proxy` and keeps a blind tunnel. The other modes are
+/// unchanged.
+pub fn mode_for_host(mode: &str, host: &str) -> String {
+    if mode == "hybrid" && !is_agent_host(host) {
+        "forward_proxy".to_string()
+    } else {
+        mode.to_string()
+    }
+}
+
+#[cfg(test)]
+mod agent_host_tests {
+    use super::*;
+
+    #[test]
+    fn model_providers_are_agent_hosts_and_the_rest_is_not() {
+        for host in ["api.anthropic.com", "CHATGPT.com:443", "mine.openai.azure.com", "statsig.anthropic.com"] {
+            assert!(is_agent_host(host), "{host}");
+        }
+        for host in ["github.com", "registry.npmjs.org", "evil-anthropic.com", ""] {
+            assert!(!is_agent_host(host), "{host}");
+        }
+    }
+
+    #[test]
+    fn only_hybrid_is_narrowed() {
+        assert_eq!(mode_for_host("hybrid", "github.com"), "forward_proxy");
+        assert_eq!(mode_for_host("hybrid", "api.anthropic.com"), "hybrid");
+        assert_eq!(mode_for_host("transparent", "github.com"), "transparent");
+        assert_eq!(mode_for_host("forward_proxy", "api.anthropic.com"), "forward_proxy");
+    }
+}

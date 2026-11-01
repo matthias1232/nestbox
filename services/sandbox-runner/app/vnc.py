@@ -25,7 +25,9 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.gateway_exec import GatewayStream
 from app.terminal import CLOSE_INTERNAL, CLOSE_UNAUTHORIZED, get_container, node_token
+from app.workload import openshell_name
 
 router = APIRouter()
 logger = logging.getLogger("nestbox.runner.vnc")
@@ -109,7 +111,12 @@ class ExecStream:
             pass
 
 
-def open_bridge(container: Any) -> ExecStream:
+def open_bridge(container: Any) -> Any:
+    gateway = openshell_name(container.name)
+    if gateway:
+        # The desktop's loopback port lives inside the sandbox's own boundary, so
+        # the bridge is started through the gateway, not beside it.
+        return GatewayStream.open(gateway, ["python3", "-c", BRIDGE])
     client = container.client
     created = client.api.exec_create(
         container.id, ["python3", "-c", BRIDGE], tty=False, stdin=True, stdout=True, stderr=True

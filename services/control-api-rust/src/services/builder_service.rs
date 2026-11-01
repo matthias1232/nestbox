@@ -1079,6 +1079,44 @@ pub async fn instantiate(
     }
 }
 
+/// Make a recipe sandbox again with another egress mode.
+///
+/// The mode is fixed when the container is created, and a recipe sandbox's
+/// entrypoint is generated at build time, so there is no in-place recreate: the
+/// sandbox is removed and created again from the same recipe under the same name.
+/// The agents' persistent folders are not touched, so the login and the history
+/// are still there afterwards. The new sandbox has a new id.
+pub async fn rebuild_with_mode(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+    mode: &str,
+) -> Result<Sandbox, ApiError> {
+    require(principal, Permission::RecipeWrite)?;
+    require(principal, Permission::SandboxWrite)?;
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
+        .await
+        .map_err(ApiError::from)?;
+    let sandbox = sandbox_store::get(&mut scope, sandbox_id)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    let recipe_id = sandbox
+        .spec
+        .get("recipe_id")
+        .and_then(|value| value.as_str())
+        .and_then(|value| Uuid::parse_str(value).ok())
+        .ok_or_else(|| {
+            ApiError::conflict(
+                ErrorCode::SANDBOX_INVALID_STATE,
+                "This sandbox does not say which recipe it was made from.",
+            )
+        })?;
+    let name = sandbox.name.clone();
+    crate::services::sandbox_service::delete(ctx, principal, sandbox_id).await?;
+    instantiate(ctx, principal, recipe_id, &name, Some(mode)).await
+}
+
 /// Move a freshly created sandbox to its settled status and announce it.
 async fn settle(
     ctx: &ServiceContext,

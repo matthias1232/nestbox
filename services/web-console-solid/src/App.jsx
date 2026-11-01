@@ -183,7 +183,7 @@ export default function App() {
                 </>
               }
             >
-              <AdminCenter sandboxId={adminId()} onClose={closeAdmin} />
+              <AdminCenter sandboxId={adminId()} onClose={closeAdmin} onFollow={openAdmin} />
             </Show>
               )}
             </Show>
