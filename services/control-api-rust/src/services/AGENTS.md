@@ -299,7 +299,7 @@ uses to find it.
 
 | Service | Question it answers |
 |---|---|
-| `agent_auth_service` | which agent signs in how, and how a change reaches a running agent |
+| `agent_auth_service` | which agent signs in how, how a change reaches a running agent, the sign-in rules that follow the mode, and the restart that waits for an idle agent |
 | `agent_launch_service` | the launcher, agentctl and env.sh written into a sandbox |
 | `agent_activity_service` | which tmux panes run an agent, and whether one is busy |
 | `egress_live_service` | switching a sandbox's proxy mode without a new container, the revert timer that switches it back (`revert_plan`, `revert_due`), and the `direct` exception that still rebuilds |

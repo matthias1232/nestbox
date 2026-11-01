@@ -34,3 +34,4 @@ Two different jobs:
 | `metrics.rs` | Sample ingest, the hour/day/week reads, rollup idempotency, partition retention, the process table and the inventory snapshot against a database |
 | `telemetry_ingest.rs` | The proxy batch against a database: node token fail-closed, network/dns rows, redacted bodies, MCP calls, the batch cap, tenant scope (`feat/proxy-telemetry`) |
 | `traffic.rs` | The traffic log: rows, aggregates, the map, and the scoped reads |
+| `agent_auth.rs` | Agent sign-in modes against a database: the default from the old `login` choice, a switch stored as waiting, a restart that keeps the mode, and the sign-in rules appearing and disappearing with the mode |
