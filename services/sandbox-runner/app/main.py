@@ -791,11 +791,18 @@ def create_openshell_sandbox(body: SandboxRequest) -> dict[str, Any]:
             mounts.append({"type": "bind", "source": public_ca, "target": EGRESS_CA_TARGET, "read_only": True})
         else:
             logger.warning("egress mode %s needs the node CA, but %s does not exist", body.egress_mode, EGRESS_CA_HOST)
+    # The gateway runs the command it is given *instead of* the image's entrypoint
+    # (Docker would pass it as arguments to it). A recipe image's entrypoint is the
+    # script that starts its supervisor and agents, so it has to be named, or the
+    # sandbox comes up with nothing running in it.
+    command = body.command
+    if body.image.startswith("nestbox-recipe/"):
+        command = ["/usr/local/bin/nestbox-entrypoint"]
     try:
         osh.create(
             name=body.name,
             image=body.image,
-            command=body.command,
+            command=command,
             environment=body.environment,
             memory_limit=body.memory_limit,
             cpu_limit=body.cpu_limit,
