@@ -24,3 +24,18 @@ Work should move to a rented GPU machine and back: project files, persistent dat
 ## Invalidation conditions
 
 Revisited when roots reach sizes where snapshots are too slow, or when a root must be live on two nodes.
+
+## Amendment 2026-11-01 - what was built
+
+* The **lease is the row**: a persistent root has exactly one `node_id`, and a move changes it in the
+  same transaction that changes the sandbox's node, so two nodes never both claim a root.
+* The snapshot server is restic's `rest-server`, **append-only**, on the overlay address; each data
+  center has its own repository path and its own encryption password (kept in that data center's vault).
+  A node can add snapshots but not delete or rewrite one. Pruning old snapshots is therefore an
+  administrator task on the control plane and is not automated yet.
+* A restore sets the existing folder aside as `<folder>.replaced-<time>` instead of deleting it.
+* Proven on the test box: a sandbox with a 3 MB folder moved from the appliance to a joined VM and back;
+  the way back sent 0.5 MB (only the change); the file written on the VM was there after the return.
+* Not built: scheduled snapshots while a sandbox works away from home, the pgBackRest backup of the
+  control plane (a dump script exists: `deploy/scripts/backup-control-plane.sh`), moving a folder shared
+  by several sandboxes.

@@ -71,3 +71,6 @@ not another.
 If you are adding a new secret-shaped field, add its key name to
 `redaction::SENSITIVE_KEYS` **first**, then write the code that handles it. That
 order is deliberate: the mask exists before the value does.
+
+`node_token.rs` also verifies a joined node's `digest://<sha256>` locator, in constant time, next to
+the file locators of the appliance's own node.

@@ -70,3 +70,6 @@ Add the type with a validating constructor, then the error variants it can
 produce, then a unit test that constructs it valid *and* invalid. If the type
 needs a new state, add the enum variant and the database representation in the
 same change, and update the `CHECK` constraint in the migration.
+
+`tenancy.rs` holds the pure rules of the tenant tree (slugs, organisation kinds, invitation roles) and
+`hosting.rs` the pure rules of rented machines (budget, lifetime, when to reap).

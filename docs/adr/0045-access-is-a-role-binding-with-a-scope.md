@@ -26,3 +26,19 @@ ADR 0004 gave three roles per environment. A provider needs a company level, a c
 ## Invalidation conditions
 
 Revisited when customers need custom roles, or when binding evaluation shows up in query plans.
+
+## Amendment 2026-11-01 - what was built
+
+The design said `role_bindings(user, scope_type, scope_id, role)`. What shipped is smaller and covers
+the cases that were asked for, with the database doing the isolation:
+
+* the **member** role (between viewer and operator), granted per environment as before;
+* **`sandbox_grants(sandbox, user)`**, which extend the sandbox visibility policy, so telemetry, rules
+  and supervisors follow without further code;
+* **`SandboxPolicy`**, the permission a member holds for the rules, drafts, traffic windows and egress
+  mode of a sandbox they can see; shared policies and the environment-wide switch stay `PolicyWrite`;
+* the organisation tree gives provider-level reach.
+
+Site-level roles (`site_operator`) and organisation-level roles below admin are not built; the
+general `role_bindings` table is the next step if they are needed. A member's persistent folders are
+those they own; a folder cannot yet be granted separately from its sandbox.

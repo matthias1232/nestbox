@@ -108,3 +108,10 @@ being read. `GET /sandboxes/{id}/live/{kind}` (in `metrics.rs`) is the read-only
 live view (`connections`); the kind is a closed list. `POST
 /sandboxes/{id}/allow` creates an enabled allow rule for one destination in one
 step (idempotent) — the one-click release from the Traffic tab.
+
+## Multi-tenant and multi-node routes
+
+`tenancy.rs` (organisations, sites, grants, invitations), `oidc.rs` (sign-in providers, callback),
+`node_join.rs` (join tokens and the public join routes, node package, moves), `images.rs` (registry,
+assignments, matrix), `hosting.rs` (provider accounts, rented machines, cloud-init). The join routes and
+the invitation preview are public on purpose: the token in the path is the credential.

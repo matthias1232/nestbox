@@ -87,3 +87,11 @@ whose `+`, `/` and `=` the handshake parser rejects with a bare 400.
 A text frame from the runner is output, except a JSON object with
 `"type":"close"`, which is the reason the session ended. `close_control_frame`
 is that rule, and it is unit-tested here rather than trusted.
+
+## The dispatcher
+
+`router.rs` implements `RuntimeAdapter` in front of one runner per node (ADR 0047). A call about a
+sandbox goes to the runner of the node it is placed on (looked up once, remembered); `create` carries
+its node in the spec; `list` merges every runner that answers. It does not decide placement and does not
+fail a sandbox over to another node. `for_node` gives the adapter of one node for the calls that name a
+node instead of a sandbox (hardware, images, snapshots).

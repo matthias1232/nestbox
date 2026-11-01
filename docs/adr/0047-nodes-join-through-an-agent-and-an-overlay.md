@@ -25,3 +25,20 @@ ADR 0029 kept one runtime adapter per process and refused to create nodes. The g
 ## Invalidation conditions
 
 Revisited when overlay throughput becomes the bottleneck, or when a customer forbids a provider-operated hub.
+
+## Amendment 2026-11-01 - what was built
+
+* The "node agent" is the runner plus a systemd timer (`nestbox-node-sync`) that fetches the node
+  package from `GET /api/v1/node/compose` with the node's token, and pulls and recreates when it changed.
+* A node reaches the control API itself at `http://10.77.0.1:8000` (forwarded by the hub), **not** the
+  console's nginx: the egress proxy asks the API about `CONNECT` requests and nginx refuses that method.
+* A joined node's token is kept as `digest://<sha256>` in `nodes.node_token_ref`; the clear value lives
+  in the vault for the control plane's calls to the node's runner. Every runner request on a node must
+  carry it (`NESTBOX_RUNNER_REQUIRE_TOKEN`).
+* Every node's Docker hands out the same private addresses, so the proxy's "who is asking" lookup asks
+  only the node that called, never the merged list of all nodes.
+* The dispatcher (`runtime/router.rs`) routes calls about one sandbox to its node's runner and merges
+  `list`. Calls about nothing in particular (builds, catalogue, model serving, backups) still go to
+  the local runner: models and builds on a joined node are not built yet.
+* Not built: node-to-node direct links (all traffic goes through the hub), automatic re-placement of a
+  sandbox when its node dies.

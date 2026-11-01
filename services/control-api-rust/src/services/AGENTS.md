@@ -274,3 +274,15 @@ redactor masks every key containing "session" (so a session cookie can never
 leak), and a masked reference reads like a redacted secret instead of a pointer.
 The row itself is in `sandbox_sessions`; `terminal_id` is the join key a reviewer
 uses to find it.
+
+## Multi-tenant and multi-node services (ADR 0044-0050)
+
+| File | Responsibility |
+|---|---|
+| `tenancy_service.rs` | Customers, data centers, sites, sandbox grants, invitations |
+| `oidc_service.rs` | Sign-in through an identity provider: PKCE flow, profile parsing, who a stranger is |
+| `node_join_service.rs` | Join tokens, the join script, overlay addresses, the hub's peer list, the sync loop |
+| `node_join/` | The script and the compose file a joined node runs (embedded with `include_str!`) |
+| `image_sync_service.rs` | Image assignments, the images x nodes matrix, the pull loop |
+| `move_service.rs` | Moving a sandbox and its folders to another node with restic snapshots |
+| `provision_service.rs` | Provider accounts, renting machines, the budget, the reaper |

@@ -24,3 +24,18 @@ A service provider wants to host many customers, each with their own data center
 ## Invalidation conditions
 
 Revisited when customers must share hardware, or when the tree needs more than three levels.
+
+## Amendment 2026-11-01 - what was built
+
+* **Sandbox names are unique on the whole installation, not namespaced.** A container, an agent
+  home and an SSH alias are all named after the sandbox, on every node. Renaming them per tenant
+  would touch the runner, the SSH gateway, forwards and the terminal; refusing a name another data
+  center already uses (`nb_sandbox_name_taken`, migration 0062) gives the same safety (no collision,
+  no ambiguity for the dispatcher) at the price that two customers cannot both have `dev-1`.
+  Revisit if that bites.
+* **Nodes are usable by their own data center and its organisation** (`nb_node_usable`). The node
+  that existed before belongs to the first data center, so the provider's organisation keeps it and
+  a new customer starts with none and brings (or rents) its own.
+* A provider's administrator reaches the customers below it through the organisation tree
+  (`nb_user_environments`), not through membership rows, so removing a customer from the tree
+  removes the access with it.

@@ -23,3 +23,17 @@ The goal is to start a machine at any cheap host, use it, and delete it, without
 ## Invalidation conditions
 
 Revisited when a provider has no usable API or when billing becomes a product feature.
+
+## Amendment 2026-11-01 - what was built
+
+* Drivers: **Hetzner Cloud** (join command in `user_data`; request shapes and price parsing are unit
+  tested, not run against a real account) and **Proxmox VE** (clone a template, address from a pool,
+  run the join command through the guest agent; exercised end to end against a real Proxmox host).
+* **Not built:** NVIDIA Brev (no API to verify against here; a Brev instance joins with the one-line
+  command or the cloud-init document, like any other host), DigitalOcean, Vultr, AWS, GCP, and a generic
+  SSH driver (the container has no SSH client; the one-line command covers it).
+* The reaper deletes a machine when its lifetime ends or it has been empty for its idle limit, never
+  while data is on it (the deadline moves by 30 minutes and the console says why), and repeats the join
+  step for a machine that never became a node.
+* The hosted service, GitHub Pages: Pages serves the static site that already lives in this repository;
+  the hosted control plane is an ordinary installation with `NESTBOX_MODE=saas`.

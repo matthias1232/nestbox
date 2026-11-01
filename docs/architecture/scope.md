@@ -69,3 +69,15 @@ image registry, snapshot-based migration and provider drivers. Status per phase
 is tracked in the project plan and in `phase1-review.md` once a phase is proven
 on the appliance. Until a phase says otherwise there, it is a decision, not a
 feature.
+
+### Status of the multi-tenant and multi-node work (2026-11-01)
+
+Proven on the development appliance (192.168.55.50) with a second VM and a Proxmox host:
+organisation tree, data centers, sites, member role and sandbox grants, invitations, node join over
+WireGuard, per-node runner dispatch, image registry sync, sandbox move there and back, rented
+machines from Proxmox with deletion. Proven by tests only (no live provider): OIDC sign-in flow
+(profile parsing, registration, invitation, replay), Hetzner driver request shapes.
+
+Not built, deliberately listed: Brev/DigitalOcean/AWS/GCP drivers; models, builds and CUDA-X on a
+joined node; scheduled snapshots; snapshot pruning; node-to-node links; automatic failover of a
+sandbox; billing. See the amendments of ADR 0044-0050.
