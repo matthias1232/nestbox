@@ -381,7 +381,7 @@ local function check_tunnel(handle, authority, source_address)
     handle:respond({ [":status"] = "503", ["x-nestbox-decision"] = "deny" }, "")
     return
   end
-  for _, name in ipairs({ "x-nestbox-decision", "x-nestbox-reason", "x-nestbox-rule-id", "x-nestbox-sandbox" }) do
+  for _, name in ipairs({ "x-nestbox-decision", "x-nestbox-reason", "x-nestbox-rule-id", "x-nestbox-sandbox", "x-nestbox-would-deny" }) do
     local value = response_headers[name]
     if value then
       meta:set("envoy.filters.http.ext_authz", name, value)
@@ -398,6 +398,10 @@ local function check_tunnel(handle, authority, source_address)
   else
     handle:headers():replace("x-nestbox-inspect", "0")
   end
+  -- The route depends on the header we just set: the route was chosen before
+  -- this filter ran, so without clearing the cache the inspection route (or the
+  -- plain tunnel) chosen for the request as it arrived is the one that is used.
+  handle:clearRouteCache()
   if response_headers[":status"] ~= "200" then
     handle:respond(
       { [":status"] = "403", ["x-nestbox-decision"] = response_headers["x-nestbox-decision"] or "deny" },

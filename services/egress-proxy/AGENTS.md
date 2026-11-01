@@ -153,6 +153,12 @@ One JSON line per stream, from two listeners with different `sni` sources:
 | `mcp_method` / `mcp_tool` | Lua from the request body | `initialize`, `tools/call`, … and `params.name` |
 | `mcp_is_error` / `mcp_result_kind` | Lua from the response body | `true`/`false`, `result` / `error` / `tool_error` when the body was readable |
 | `decision` / `reason` / `rule_id` | ext_authz response headers via `dynamic_metadata_from_headers` | what the decider said. Empty until a decider answers — that is the truth, not a bug |
+| `would_deny` | `x-nestbox-would-deny` via `dynamic_metadata_from_headers` | `1` when only a window or an allow-all mode let the request through although a rule would have denied it |
+
+A CONNECT tunnel has `idle_timeout: 10s` on both routes, so a changed egress mode
+reaches the next connection within seconds instead of five minutes (ADR 0052); the
+Lua filter calls `clearRouteCache()` after setting `x-nestbox-inspect`, because the
+route is chosen from that header.
 
 The decision headers are copied into filter metadata **by Envoy**, so neither the
 sandbox nor the destination host sees them. The previous configuration read them

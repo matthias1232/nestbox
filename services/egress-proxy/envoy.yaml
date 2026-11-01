@@ -134,6 +134,9 @@ static_resources:
                           # `dynamic_metadata_from_headers` below). Empty until
                           # a decider answers, which is the truth and not a bug.
                           decision: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-decision)%"
+                          # 1 when only a window or an allow-all mode let this
+                          # through; the decision above is then allow.
+                          would_deny: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-would-deny)%"
                           reason: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-reason)%"
                           rule_id: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-rule-id)%"
                 route_config:
@@ -170,7 +173,9 @@ static_resources:
                               - upgrade_type: CONNECT
                                 connect_config: {}
                             timeout: 0s
-                            idle_timeout: 300s
+                            # Short so a changed egress mode reaches the next
+                            # connection within seconds (ADR 0052).
+                            idle_timeout: 10s
                           typed_per_filter_config:
                             envoy.filters.http.buffer:
                               "@type": type.googleapis.com/envoy.extensions.filters.http.buffer.v3.BufferPerRoute
@@ -186,9 +191,11 @@ static_resources:
                                 connect_config: {}
                             # A tunnel may legitimately be idle for a while; it
                             # is the idle timeout, not the request timeout, that
-                            # ends a dead one.
+                            # ends a dead one. Short so a changed egress mode
+                            # reaches the next connection within seconds
+                            # (ADR 0052).
                             timeout: 0s
-                            idle_timeout: 300s
+                            idle_timeout: 10s
                           typed_per_filter_config:
                             # The buffer filter waits for the end of the request
                             # body, and a CONNECT's body is the tunnel: it ends
@@ -275,6 +282,9 @@ static_resources:
                               - exact: x-nestbox-reason
                               - exact: x-nestbox-rule-id
                               - exact: x-nestbox-sandbox
+                              # A window or an allow-all mode let the request
+                              # through although a rule would have denied it.
+                              - exact: x-nestbox-would-deny
                       # Fail closed. A control API that cannot answer is not
                       # permission to proceed.
                       failure_mode_allow: false
@@ -376,6 +386,9 @@ static_resources:
                           cache_markers: "%DYNAMIC_METADATA(nestbox:cache_markers)%"
                           llm_auth: "%DYNAMIC_METADATA(nestbox:llm_auth)%"
                           decision: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-decision)%"
+                          # 1 when only a window or an allow-all mode let this
+                          # through; the decision above is then allow.
+                          would_deny: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-would-deny)%"
                           reason: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-reason)%"
                           rule_id: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-rule-id)%"
                 route_config:
@@ -435,6 +448,9 @@ static_resources:
                               - exact: x-nestbox-reason
                               - exact: x-nestbox-rule-id
                               - exact: x-nestbox-sandbox
+                              # A window or an allow-all mode let the request
+                              # through although a rule would have denied it.
+                              - exact: x-nestbox-would-deny
                       failure_mode_allow: false
                   - name: envoy.filters.http.router
                     typed_config:
