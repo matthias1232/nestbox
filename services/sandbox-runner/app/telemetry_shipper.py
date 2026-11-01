@@ -32,6 +32,10 @@ logger = logging.getLogger("nestbox.runner.telemetry")
 
 POLL_SECONDS = float(os.getenv("NESTBOX_TELEMETRY_POLL_SECONDS", "2"))
 MAX_BATCH = 400
+# The control API refuses a request body over 1 MiB (it closes the connection, which
+# the shipper sees as a broken pipe). Bodies of chat requests are large, so a batch
+# is cut by size as well as by count.
+MAX_BATCH_BYTES = 800_000
 SEEN_LIMIT = 2000
 
 #: Envoy prints "-" for a field it has no value for.
@@ -183,6 +187,22 @@ def post_batch(entries: list[dict[str, Any]]) -> str:
     return "retry"
 
 
+def take_batch(pending: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The next entries to send: up to `MAX_BATCH`, and up to `MAX_BATCH_BYTES` of JSON.
+
+    At least one entry is always taken, so a single large one still goes out alone.
+    """
+    batch: list[dict[str, Any]] = []
+    size = 0
+    for entry in pending[:MAX_BATCH]:
+        cost = len(json.dumps(entry))
+        if batch and size + cost > MAX_BATCH_BYTES:
+            break
+        batch.append(entry)
+        size += cost
+    return batch
+
+
 def ship(entries: list[dict[str, Any]]) -> int:
     """Deliver as much of `entries` as can be delivered; how many were dealt with.
 
@@ -268,7 +288,7 @@ async def run() -> None:
                 if record is not None:
                     pending.append(record)
             while pending:
-                batch = pending[:MAX_BATCH]
+                batch = take_batch(pending)
                 done = await asyncio.to_thread(ship, batch)
                 del pending[:done]
                 if done < len(batch):
