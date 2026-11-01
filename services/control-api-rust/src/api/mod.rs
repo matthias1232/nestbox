@@ -227,6 +227,8 @@ pub fn router(state: AppState) -> Router {
         // Accounting: organisation overview, rows, retention, purge.
         .route("/api/v1/accounting/overview", get(accounting::overview))
         .route("/api/v1/accounting/requests", get(accounting::requests))
+        .route("/api/v1/accounting/usage", get(accounting::usage))
+        .route("/api/v1/accounting/prices", get(accounting::prices).put(accounting::put_price))
         .route(
             "/api/v1/accounting/settings",
             get(accounting::get_settings).put(accounting::put_settings),

@@ -94,6 +94,16 @@ pub struct ProxyTrafficEntry {
     /// Base64, as Envoy's JSON access-log field carries it.
     pub request_body: Option<String>,
     pub response_body: Option<String>,
+    /// Token counters the proxy read off a model answer, as compact JSON
+    /// (`i`, `o`, `cr`, `cw`, `cw1`, `rs`). Absent for anything else.
+    #[serde(default)]
+    pub usage: Option<String>,
+    /// How many `cache_control` markers the request carried.
+    #[serde(default)]
+    pub cache_markers: Option<String>,
+    /// `key` or `account`: how the call was authenticated. Never the credential.
+    #[serde(default)]
+    pub llm_auth: Option<String>,
 }
 
 /// One DNS answer, from the node's resolver.
@@ -285,6 +295,17 @@ pub async fn ingest_batch(
         tracing::error!(error = %error, "mcp tool call insert failed");
         ApiError::from(error)
     })?;
+
+    // Model usage the proxy read, into the accounting table. After the traffic is
+    // stored and best effort: a failure here is logged and must not turn into a
+    // refused batch (the proxy would retry it and the traffic is already in).
+    for (entry, item) in batch.traffic.iter().zip(prepared.iter()) {
+        if let Some(call) = observed_call(entry, item.id, batch.environment_id) {
+            if let Err(error) = crate::services::accounting_service::record_observed(ctx, call).await {
+                tracing::warn!(code = error.code.0, "could not record observed model usage");
+            }
+        }
+    }
 
     Ok(BatchOutcome {
         accepted: prepared.len(),
@@ -1013,6 +1034,9 @@ mod tests {
             mcp_server: Some("nestbox-hub".into()),
             request_body: None,
             response_body: None,
+            usage: None,
+            cache_markers: None,
+            llm_auth: None,
         }
     }
 
@@ -1356,6 +1380,9 @@ pub async fn pull_openshell_events(ctx: &ServiceContext) -> Result<u64, ApiError
                 mcp_server: None,
                 request_body: None,
                 response_body: None,
+                usage: None,
+                cache_markers: None,
+                llm_auth: None,
             };
             if let Ok(item) = prepare_traffic(&entry, environment_id, now) {
                 prepared.push(item);
@@ -1389,4 +1416,105 @@ pub async fn pull_openshell_events(ctx: &ServiceContext) -> Result<u64, ApiError
         stored_total += stored as u64;
     }
     Ok(stored_total)
+}
+
+
+/// The model call an access-log line describes, when it carries usage counters.
+fn observed_call(
+    entry: &ProxyTrafficEntry,
+    event_id: Uuid,
+    environment_id: Uuid,
+) -> Option<crate::services::accounting_service::ObservedCall> {
+    use crate::domain::accounting::{AuthKind, ObservedUsage};
+
+    let sandbox_id = entry.sandbox_id?;
+    let counters: serde_json::Value = serde_json::from_str(entry.usage.as_deref()?.trim()).ok()?;
+    let number = |key: &str| counters.get(key).and_then(serde_json::Value::as_i64).unwrap_or(0);
+    let usage = ObservedUsage {
+        input: number("i"),
+        output: number("o"),
+        cache_read: number("cr"),
+        cache_write: number("cw"),
+        cache_write_1h: number("cw1"),
+        reasoning: number("rs"),
+    };
+    let request = decode_text(entry.request_body.as_deref());
+    let response = decode_text(entry.response_body.as_deref());
+    let model = request
+        .as_deref()
+        .and_then(model_of)
+        .or_else(|| response.as_deref().and_then(model_of));
+    Some(crate::services::accounting_service::ObservedCall {
+        id: event_id,
+        environment_id,
+        sandbox_id,
+        host: entry.host.clone(),
+        path: entry.path.clone(),
+        status: entry.status.unwrap_or(0),
+        latency_ms: entry.duration_ms.unwrap_or(0).clamp(0, i64::from(i32::MAX)) as i32,
+        model,
+        usage,
+        cache_markers: entry
+            .cache_markers
+            .as_deref()
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(0),
+        auth: AuthKind::parse(entry.llm_auth.as_deref().unwrap_or("")),
+        conversation: request.as_deref().and_then(conversation_of),
+    })
+}
+
+fn decode_text(raw: Option<&str>) -> Option<String> {
+    let raw = raw?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let engine = base64::engine::general_purpose::STANDARD;
+    let bytes = engine
+        .decode(raw)
+        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(raw))
+        .ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// The model a request or an answer names: the first `"model":"…"` in the text.
+fn model_of(text: &str) -> Option<String> {
+    let at = text.find("\"model\"")?;
+    let rest = text[at + 7..].trim_start().strip_prefix(':')?.trim_start().strip_prefix('"')?;
+    let name: String = rest.chars().take_while(|c| *c != '"').take(120).collect();
+    if name.is_empty() { None } else { Some(name) }
+}
+
+/// The conversation a call belongs to: the proxy's own key for a long request, else
+/// the `session_id` inside the client's `metadata.user_id` (a JSON string, so its
+/// quotes are escaped).
+fn conversation_of(text: &str) -> Option<String> {
+    for key in ["\"nestbox_conversation\":\"", "session_id\\\":\\\"", "\"session_id\":\""] {
+        if let Some(at) = text.find(key) {
+            let id: String = text[at + key.len()..]
+                .chars()
+                .take_while(|c| c.is_ascii_hexdigit() || *c == '-')
+                .take(64)
+                .collect();
+            if id.len() >= 8 {
+                return Some(id);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod observed_telemetry_tests {
+    use super::*;
+
+    #[test]
+    fn the_model_and_the_conversation_are_read_from_a_request() {
+        let text = r#"{"model":"claude-opus-5-5","nestbox_conversation":"27a41161-b693-419a-850f-a5f2565bd848"}"#;
+        assert_eq!(model_of(text).as_deref(), Some("claude-opus-5-5"));
+        assert_eq!(conversation_of(text).as_deref(), Some("27a41161-b693-419a-850f-a5f2565bd848"));
+        let escaped = r#"{"metadata":{"user_id":"{\"session_id\":\"aaaaaaaa-bbbb\"}"}}"#;
+        assert_eq!(conversation_of(escaped).as_deref(), Some("aaaaaaaa-bbbb"));
+        assert_eq!(model_of("{}"), None);
+    }
 }

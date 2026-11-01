@@ -46,6 +46,71 @@ pub async fn overview(
     ))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UsageQuery {
+    #[serde(default)]
+    pub timeframe: Option<String>,
+    #[serde(default)]
+    pub sandbox_id: Option<Uuid>,
+    /// provider, model, sandbox, auth, day, owner, site, organization, agent,
+    /// conversation. Default: model.
+    #[serde(default)]
+    pub group_by: Option<String>,
+}
+
+/// Usage by one dimension: tokens, cache split, hit rate, cost and account estimate.
+pub async fn usage(
+    State(state): State<AppState>,
+    auth: Auth,
+    Query(query): Query<UsageQuery>,
+) -> Result<Json<accounting_service::UsageReport>, ApiError> {
+    let timeframe = parse_timeframe(query.timeframe.as_deref())?;
+    Ok(Json(
+        accounting_service::usage(
+            &state.services,
+            &auth.principal,
+            timeframe,
+            query.group_by.as_deref().unwrap_or("model"),
+            query.sandbox_id,
+        )
+        .await?,
+    ))
+}
+
+/// The price list and the used models that have no price.
+pub async fn prices(
+    State(state): State<AppState>,
+    auth: Auth,
+) -> Result<Json<accounting_service::PriceList>, ApiError> {
+    Ok(Json(accounting_service::prices(&state.services, &auth.principal).await?))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetPriceRequest {
+    pub model: String,
+    /// Micros per million tokens.
+    pub input_per_mtok: i64,
+    pub output_per_mtok: i64,
+    #[serde(default)]
+    pub cached_per_mtok: Option<i64>,
+}
+
+/// Set one model's price for the environment; earlier unpriced calls are priced.
+pub async fn put_price(
+    State(state): State<AppState>,
+    auth: Auth,
+    Json(body): Json<SetPriceRequest>,
+) -> Result<Json<crate::domain::accounting::Price>, ApiError> {
+    let price = crate::domain::accounting::Price {
+        input_per_mtok: body.input_per_mtok,
+        output_per_mtok: body.output_per_mtok,
+        cached_per_mtok: body.cached_per_mtok,
+    };
+    Ok(Json(
+        accounting_service::set_price(&state.services, &auth.principal, &body.model, price).await?,
+    ))
+}
+
 /// Recent requests, newest first.
 pub async fn requests(
     State(state): State<AppState>,

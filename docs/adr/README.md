@@ -65,3 +65,4 @@ Copy the shape of an existing file. Keep it short. The value is in the
 *rejected alternatives* and the *invalidation conditions*, because those are
 what a future reader cannot reconstruct from the code.
 | [0039](0039-the-catalogue-is-the-distributions-and-a-build-is-verified.md) | The package catalogue is the distribution's, and a build is verified | Accepted |
+| [0051](0051-model-usage-is-read-from-the-answer-and-keys-and-accounts-are-kept-apart.md) | Model usage is read from the answer, and keys and accounts are kept apart | Accepted |

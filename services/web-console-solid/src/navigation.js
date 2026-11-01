@@ -29,6 +29,7 @@ export const ROUTES = [
   { id: 'live', label: 'Agent situation', group: 'status' },
   { id: 'traffic', label: 'Live traffic', group: 'status' },
   { id: 'logs', label: 'Live logs', group: 'status' },
+  { id: 'usage', label: 'Usage & cost', group: 'status' },
   { id: 'system', label: 'System containers', group: 'status', minRole: 'operator' },
 
   { id: 'sandboxes', label: 'Sandboxes', group: 'operate' },

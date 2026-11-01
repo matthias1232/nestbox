@@ -25,6 +25,7 @@ import McpPage from './features/mcp/McpPage.jsx';
 import MediaPage from './features/media/MediaPage.jsx';
 import PrivacyPage from './features/privacy/PrivacyPage.jsx';
 import MasterControlPage from './features/master/MasterControlPage.jsx';
+import UsagePage from './features/usage/UsagePage.jsx';
 import LivePage from './features/live/LivePage.jsx';
 import BuilderPage from './features/builder/BuilderPage.jsx';
 import JobsPage from './features/jobs/JobsPage.jsx';
@@ -177,6 +178,7 @@ export default function App() {
                   <Show when={route() === 'privacy'}><PrivacyPage role={session.identity()?.role} /></Show>
                   <Show when={route() === 'master'}><MasterControlPage role={session.identity()?.role} /></Show>
                   <Show when={route() === 'live'}><LivePage /></Show>
+                  <Show when={route() === 'usage'}><UsagePage /></Show>
                   <Show when={route() === 'logs'}><LogsPage role={session.identity()?.role} /></Show>
                 </>
               }

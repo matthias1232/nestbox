@@ -264,6 +264,9 @@ pub const OPERATIONS: &[Operation] = &[
     // Media settings and renders
     op("GET", "/api/v1/accounting/overview", "Organisation or sandbox totals for a timeframe", "accounting", "viewer", false, StreamKind::None),
     op("GET", "/api/v1/accounting/requests", "Recent proxied requests with tokens and cost", "accounting", "viewer", false, StreamKind::None),
+    op("GET", "/api/v1/accounting/usage", "Model usage grouped by provider, model, sandbox, owner, site or day", "accounting", "viewer", false, StreamKind::None),
+    op("GET", "/api/v1/accounting/prices", "The price list and the used models without a price", "accounting", "viewer", false, StreamKind::None),
+    op("PUT", "/api/v1/accounting/prices", "Set a model price; earlier unpriced calls are priced", "accounting", "admin", true, StreamKind::None),
     op("GET", "/api/v1/accounting/settings", "Accounting retention settings", "accounting", "viewer", false, StreamKind::None),
     op("PUT", "/api/v1/accounting/settings", "Set the accounting retention", "accounting", "admin", true, StreamKind::None),
     op("POST", "/api/v1/accounting/purge", "Delete raw accounting rows older than a number of days", "accounting", "admin", true, StreamKind::None),

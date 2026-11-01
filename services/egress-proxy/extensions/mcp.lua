@@ -154,6 +154,138 @@ local function record_body(handle, name, bytes)
   set(handle, name, handle:base64Escape(bytes))
 end
 
+-- ---------------------------------------------------------------------------
+-- Model usage
+--
+-- A model call is recognised by its path. For such a call the proxy keeps three
+-- facts and no content: how it was authenticated (a key or a signed-in account —
+-- never the credential), how many `cache_control` markers the request carried, and
+-- the counters the provider put in its answer. The counters travel in one
+-- vocabulary whatever the provider says: `i` fresh input, `o` output, `cr` cache
+-- reads, `cw` cache writes, `cw1` the one-hour share of the writes, `rs` reasoning.
+-- ---------------------------------------------------------------------------
+
+local MODEL_PATHS = {
+  "/v1/messages", "/chat/completions", "/v1/responses", "/backend-api/codex/responses",
+  "/v1/completions", ":generateContent", ":streamGenerateContent",
+}
+
+local function is_model_path(path)
+  for _, needle in ipairs(MODEL_PATHS) do
+    if string.find(path, needle, 1, true) then
+      return true
+    end
+  end
+  return string.find(path, "/responses", 1, true) ~= nil
+end
+
+-- Whose bill a call is on, from the shape of the credential. Only the class
+-- leaves this function.
+local function auth_kind(headers, host)
+  if host == "chatgpt.com" or host == "chat.openai.com" then
+    return "account"
+  end
+  local api_key = headers:get("x-api-key")
+  if api_key and api_key ~= "" then
+    if string.find(api_key, "sk-ant-oat", 1, true) == 1 then
+      return "account"
+    end
+    return "key"
+  end
+  local authorization = headers:get("authorization")
+  if authorization and authorization ~= "" then
+    if string.find(authorization, "Bearer sk-ant-oat", 1, true) == 1 then
+      return "account"
+    end
+    if string.find(authorization, "Bearer sk-", 1, true) == 1 then
+      return "key"
+    end
+    return "account"
+  end
+  return "unknown"
+end
+
+local function count_plain(text, needle)
+  local count, from = 0, 1
+  while true do
+    local at = string.find(text, needle, from, true)
+    if not at then
+      return count
+    end
+    count = count + 1
+    from = at + #needle
+  end
+end
+
+-- The last number written after `"key":` in either text (the tail wins: counters
+-- are cumulative and the final event carries the totals).
+local function last_number(head, tail, key)
+  local pattern = '"' .. key .. '"%s*:%s*(%d+)'
+  local found
+  for _, text in ipairs({ head, tail }) do
+    if text and text ~= "" then
+      for n in string.gmatch(text, pattern) do
+        found = n
+      end
+    end
+  end
+  return found and tonumber(found) or nil
+end
+
+-- The usage counters of an answer, as compact JSON, or nil when it has none.
+local function extract_usage(head, tail)
+  local cache_read = last_number(head, tail, "cache_read_input_tokens")
+  local cache_write = last_number(head, tail, "cache_creation_input_tokens")
+  local write_1h = last_number(head, tail, "ephemeral_1h_input_tokens")
+  local input, output, reasoning = 0, 0, 0
+  if cache_read or cache_write then
+    -- Anthropic: `input_tokens` is only the fresh part.
+    input = last_number(head, tail, "input_tokens") or 0
+    output = last_number(head, tail, "output_tokens") or 0
+    reasoning = last_number(head, tail, "thinking_tokens") or 0
+  elseif last_number(head, tail, "prompt_tokens") then
+    -- OpenAI chat: `prompt_tokens` includes what was cached.
+    local prompt = last_number(head, tail, "prompt_tokens") or 0
+    cache_read = last_number(head, tail, "cached_tokens") or 0
+    input = math.max(prompt - cache_read, 0)
+    output = last_number(head, tail, "completion_tokens") or 0
+    reasoning = last_number(head, tail, "reasoning_tokens") or 0
+  elseif last_number(head, tail, "promptTokenCount") then
+    -- Gemini.
+    local prompt = last_number(head, tail, "promptTokenCount") or 0
+    cache_read = last_number(head, tail, "cachedContentTokenCount") or 0
+    input = math.max(prompt - cache_read, 0)
+    output = last_number(head, tail, "candidatesTokenCount") or 0
+    reasoning = last_number(head, tail, "thoughtsTokenCount") or 0
+  elseif last_number(head, tail, "input_tokens") then
+    -- OpenAI responses / Codex (cached inside `input_tokens`), or Anthropic
+    -- without caching (no cached field at all).
+    local total = last_number(head, tail, "input_tokens") or 0
+    cache_read = last_number(head, tail, "cached_tokens") or 0
+    input = math.max(total - cache_read, 0)
+    output = last_number(head, tail, "output_tokens") or 0
+    reasoning = last_number(head, tail, "reasoning_tokens") or last_number(head, tail, "thinking_tokens") or 0
+  else
+    return nil
+  end
+  cache_read = cache_read or 0
+  cache_write = cache_write or 0
+  write_1h = math.min(write_1h or 0, cache_write)
+  if input + output + cache_read + cache_write == 0 then
+    return nil
+  end
+  return string.format(
+    '{"i":%d,"o":%d,"cr":%d,"cw":%d,"cw1":%d,"rs":%d}',
+    input, output, cache_read, cache_write, write_1h, reasoning
+  )
+end
+
+-- Whether the request phase marked this call as a model call.
+local function is_model_call(handle)
+  local nestbox = handle:streamInfo():dynamicMetadata():get("nestbox")
+  return nestbox ~= nil and nestbox.llm == "1"
+end
+
 local function json(headers)
   local content_type = headers:get("content-type")
   if not content_type then
@@ -315,12 +447,24 @@ function envoy_on_request(handle)
     -- Ask the server for an uncompressed answer so the recorded response is
     -- readable. A compressed body in the log would be noise.
     headers:remove("accept-encoding")
+    local model_call = is_model_path(headers:get(":path") or "")
     local seen, buffered = pcall(function() return handle:body() end)
     if seen and buffered ~= nil and buffered:length() > 0 then
-      record_body(handle, "request_body", buffered:getBytes(0, buffered:length()))
+      local text = buffered:getBytes(0, buffered:length())
+      if model_call then
+        local markers = count_plain(text, '"cache_control"')
+        if markers > 0 then
+          set(handle, "cache_markers", tostring(markers))
+        end
+      end
+      record_body(handle, "request_body", text)
     end
     -- Reading the body yields; the header object from before it is stale.
     headers = handle:headers()
+    if model_call then
+      set(handle, "llm", "1")
+      set(handle, "llm_auth", auth_kind(headers, host))
+    end
   end
 
   if not json(headers) then
@@ -359,14 +503,25 @@ function envoy_on_response(handle)
     -- chunk by chunk and passed on untouched, so recording does not delay the
     -- first token. Only the first BODY_LIMIT bytes are kept.
     local kept, size = {}, 0
+    local model_call = is_model_call(handle)
+    local tail = ""
     for chunk in handle:bodyChunks() do
       local n = chunk:length()
       if size < BODY_LIMIT and n > 0 then
         kept[#kept + 1] = chunk:getBytes(0, math.min(n, BODY_LIMIT - size))
         size = size + math.min(n, BODY_LIMIT - size)
       end
+      if model_call and n > 0 then
+        -- The totals come in the last event, which a long answer pushes past
+        -- the kept head; the last 16 KiB are enough to hold it.
+        tail = string.sub(tail .. chunk:getBytes(0, n), -16384)
+      end
     end
-    record_body(handle, "response_body", table.concat(kept))
+    local head = table.concat(kept)
+    record_body(handle, "response_body", head)
+    if model_call then
+      set(handle, "usage", extract_usage(head, tail))
+    end
     return
   end
 
@@ -379,6 +534,9 @@ function envoy_on_response(handle)
     return
   end
   record_body(handle, "response_body", text)
+  if is_model_call(handle) then
+    set(handle, "usage", extract_usage(text, ""))
+  end
   if string.find(text, '"isError"%s*:%s*true') then
     set(handle, "mcp_is_error", "true")
     set(handle, "mcp_result_kind", "tool_error")
