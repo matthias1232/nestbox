@@ -18,6 +18,7 @@ evaluation windows, plus live chats, the topology and the shared terminals.
 | `LiveChatsPanel.jsx` | the agents' conversation, live |
 | `TopologyPanel.jsx` | the live topology of the sandbox |
 | `ModelsCard.jsx` | the models the sandbox may use, with warm-up |
+| `models.js`, `models.test.js` | the card's logic: readiness badges, scope labels, who may manage |
 | `MoveDialog.jsx` | preflight and progress of a move to another node |
 | `useLive.js` | one subscription to the state stream, filtered per sandbox |
 
