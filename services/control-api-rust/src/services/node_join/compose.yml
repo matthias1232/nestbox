@@ -19,6 +19,9 @@ services:
       NESTBOX_NODE_ID: ${NODE_ID}
       NESTBOX_ENVIRONMENT_ID: ${ENVIRONMENT_ID}
       NESTBOX_FORWARD_RANGE: "22200-22299"
+      # Where the control plane asks this node to publish a local model server: the runner opens
+      # the port on the overlay so an inference request can be sent to the node directly.
+      NESTBOX_MODEL_PUBLISH_RANGE: "22300-22399"
       NESTBOX_FORWARD_BIND: ${OVERLAY_IP}
       NESTBOX_RUNNER_STATE: /var/lib/nestbox-runner
       NESTBOX_EGRESS_CA: ${NODE_DIR}/secrets/proxy/egress-ca.crt
@@ -70,6 +73,49 @@ services:
     networks:
       - control
       - runtime
+
+  # The hub's shared services under the names sandboxes use on the appliance (ADR 0057): a
+  # sandbox that runs on this node asks for `mcp-hub:8080`, `media-mcp:8080` or
+  # `accounting-proxy:8099` and reaches the hub without knowing it is not on the same machine.
+  mcp-hub:
+    image: alpine/socat:latest
+    restart: unless-stopped
+    command: ["TCP-LISTEN:8080,fork,reuseaddr", "TCP:${HUB_IP}:18088"]
+    networks:
+      - control
+      - runtime
+
+  media-mcp:
+    image: alpine/socat:latest
+    restart: unless-stopped
+    command: ["TCP-LISTEN:8080,fork,reuseaddr", "TCP:${HUB_IP}:18089"]
+    networks:
+      - control
+      - runtime
+
+  accounting-proxy:
+    image: alpine/socat:latest
+    restart: unless-stopped
+    command: ["TCP-LISTEN:8099,fork,reuseaddr", "TCP:${HUB_IP}:18099"]
+    networks:
+      - control
+      - runtime
+
+  # The same services on the host's loopback, for OpenShell sandboxes: they address them as
+  # `host.openshell.internal:<port>` with the port the appliance uses (18087 egress proxy, 18088
+  # MCP hub, 18089 media renderer, 18099 accounting proxy). The last socat runs in the foreground
+  # so the container stays up; the others end with it.
+  hub-forward-host:
+    image: alpine/socat:latest
+    restart: unless-stopped
+    network_mode: host
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        socat TCP-LISTEN:18087,bind=127.0.0.1,fork,reuseaddr TCP:${HUB_IP}:18087 &
+        socat TCP-LISTEN:18088,bind=127.0.0.1,fork,reuseaddr TCP:${HUB_IP}:18088 &
+        socat TCP-LISTEN:18089,bind=127.0.0.1,fork,reuseaddr TCP:${HUB_IP}:18089 &
+        exec socat TCP-LISTEN:18099,bind=127.0.0.1,fork,reuseaddr TCP:${HUB_IP}:18099
 
 networks:
   control: {}
