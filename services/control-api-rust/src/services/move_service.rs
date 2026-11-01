@@ -113,6 +113,32 @@ pub async fn start(
     sandbox_id: Uuid,
     target: &str,
 ) -> Result<MoveView, ApiError> {
+    begin(ctx, config, principal, sandbox_id, target, false).await
+}
+
+/// Bring a sandbox back on another node after the node it ran on is gone (ADR 0049).
+///
+/// Only for a source node that is not online: the folders are restored from their newest scheduled
+/// snapshot, so the work since that snapshot (at most the snapshot interval) is lost, and the log
+/// says which snapshot was used. If the source node is online, use a normal move: it loses nothing.
+pub async fn recover(
+    ctx: &ServiceContext,
+    config: &Config,
+    principal: &Principal,
+    sandbox_id: Uuid,
+    target: &str,
+) -> Result<MoveView, ApiError> {
+    begin(ctx, config, principal, sandbox_id, target, true).await
+}
+
+async fn begin(
+    ctx: &ServiceContext,
+    config: &Config,
+    principal: &Principal,
+    sandbox_id: Uuid,
+    target: &str,
+    recovering: bool,
+) -> Result<MoveView, ApiError> {
     require(principal, Permission::SandboxWrite)?;
     let Some(router) = ctx.router.clone() else {
         return Err(ApiError::unavailable(ErrorCode::NODE_RUNTIME_UNAVAILABLE, "This installation has no node dispatcher."));
@@ -150,7 +176,26 @@ pub async fn start(
         sharing.push((*root, others));
     }
     movable(&sharing).map_err(ApiError::validation)?;
-    if ![SandboxStatus::Running, SandboxStatus::Stopped].contains(&sandbox.status) {
+    let mut latest: Vec<(String, String)> = Vec::new();
+    if recovering {
+        if from.status == crate::domain::node::NodeStatus::Online {
+            return Err(ApiError::conflict(
+                ErrorCode::SANDBOX_INVALID_STATE,
+                format!("Node '{}' is online. Move the sandbox instead: a move loses nothing, a recovery loses the work since the last snapshot.", from.name),
+            ));
+        }
+        for (root, path) in &roots {
+            let newest: Option<String> = sqlx::query_scalar("SELECT snapshot FROM root_snapshots WHERE root_id = $1 ORDER BY taken_at DESC LIMIT 1")
+                .bind(root)
+                .fetch_optional(scope.connection())
+                .await
+                .map_err(db)?;
+            let Some(snapshot) = newest else {
+                return Err(ApiError::conflict(ErrorCode::SANDBOX_INVALID_STATE, format!("The folder {path} was never snapshotted, so there is nothing to recover from.")));
+            };
+            latest.push((path.clone(), snapshot));
+        }
+    } else if ![SandboxStatus::Running, SandboxStatus::Stopped].contains(&sandbox.status) {
         return Err(ApiError::conflict(ErrorCode::SANDBOX_INVALID_STATE, "Only a running or stopped sandbox can be moved."));
     }
     let id: Uuid = sqlx::query_scalar(
@@ -178,7 +223,9 @@ pub async fn start(
         sandbox_id: sandbox.id,
         name: sandbox.name.clone(),
         image: sandbox.image.clone(),
-        was_running: sandbox.status == SandboxStatus::Running,
+        was_running: recovering || sandbox.status == SandboxStatus::Running,
+        recover: recovering,
+        latest,
         from: from.id,
         to: to.id,
         roots,
@@ -199,6 +246,9 @@ struct Job {
     name: String,
     image: String,
     was_running: bool,
+    /// Restoring from the newest scheduled snapshots because the source is gone.
+    recover: bool,
+    latest: Vec<(String, String)>,
     from: Uuid,
     to: Uuid,
     roots: Vec<(Uuid, String)>,
@@ -229,18 +279,24 @@ async fn run(ctx: &ServiceContext, router: &crate::runtime::router::RuntimeRoute
         let mut bytes = 0i64;
         let mut snapshots = Vec::new();
         let tags = vec![format!("sandbox:{}", job.name), format!("move:{}", job.id)];
-        for (_, path) in &job.roots {
+        if job.recover {
+            for (path, snapshot) in &job.latest {
+                note(ctx, job.id, "recover", &format!("{path} from snapshot {snapshot}")).await;
+                snapshots.push((path.clone(), snapshot.clone()));
+            }
+        }
+        for (_, path) in job.roots.iter().filter(|_| !job.recover) {
             note(ctx, job.id, "snapshot", path).await;
             let fact = source.snapshot_backup(&job.repo, &password, path, &tags).await.map_err(|e| (step("snapshot"), ApiError::unavailable(ErrorCode::NODE_RUNTIME_UNAVAILABLE, e.to_string())))?;
             bytes += fact.bytes_added;
         }
 
-        if job.was_running {
+        if job.was_running && !job.recover {
             note(ctx, job.id, "stop", "stopping on the source").await;
             sandbox_service::act(ctx, principal, job.sandbox_id, LifecycleAction::Stop).await.map_err(|e| (step("stop"), e))?;
             stopped = true;
         }
-        for (_, path) in &job.roots {
+        for (_, path) in job.roots.iter().filter(|_| !job.recover) {
             note(ctx, job.id, "delta", path).await;
             let fact = source.snapshot_backup(&job.repo, &password, path, &tags).await.map_err(|e| (step("delta"), ApiError::unavailable(ErrorCode::NODE_RUNTIME_UNAVAILABLE, e.to_string())))?;
             bytes += fact.bytes_added;

@@ -141,3 +141,14 @@ fn keep_daily() -> i32 {
 pub async fn prune_snapshots(State(state): State<AppState>, auth: Auth, Json(body): Json<PruneRequest>) -> Result<Json<serde_json::Value>, ApiError> {
     Ok(Json(crate::services::snapshot_service::prune(&state.services, &auth.principal, body.keep_last, body.keep_daily).await?))
 }
+
+/// Bring a sandbox back on another node after its node is gone, from the newest scheduled snapshots.
+pub async fn recover_sandbox(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<MoveRequest>,
+) -> Result<(StatusCode, Json<crate::services::move_service::MoveView>), ApiError> {
+    let started = crate::services::move_service::recover(&state.services, &state.config, &auth.principal, id, &body.node).await?;
+    Ok((StatusCode::ACCEPTED, Json(started)))
+}

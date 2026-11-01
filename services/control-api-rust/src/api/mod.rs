@@ -438,6 +438,7 @@ pub fn router(state: AppState) -> Router {
         // Nodes
         .route("/api/v1/nodes", get(nodes::list))
         .route("/api/v1/sandboxes/{id}/move", post(node_join::move_sandbox))
+        .route("/api/v1/sandboxes/{id}/recover", post(node_join::recover_sandbox))
         .route("/api/v1/sandbox-moves", get(node_join::moves))
         .route("/api/v1/persistent-roots/{id}/snapshots", get(node_join::root_snapshots))
         .route("/api/v1/snapshots/prune", post(node_join::prune_snapshots))

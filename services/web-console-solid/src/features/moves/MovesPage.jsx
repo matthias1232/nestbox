@@ -19,7 +19,7 @@ export default function MovesPage() {
   const [moves, setMoves] = createSignal([]);
   const [nodes, setNodes] = createSignal([]);
   const [boxes, setBoxes] = createSignal([]);
-  const [form, setForm] = createSignal({ sandbox: '', node: '' });
+  const [form, setForm] = createSignal({ sandbox: '', node: '', recover: false });
   const [error, setError] = createSignal(null);
   const [busy, setBusy] = createSignal(false);
   const [open, setOpen] = createSignal(null);
@@ -46,7 +46,9 @@ export default function MovesPage() {
     setError(null);
     setBusy(true);
     try {
-      const started = await api.start(form().sandbox, form().node);
+      const started = form().recover
+        ? await api.recover(form().sandbox, form().node)
+        : await api.start(form().sandbox, form().node);
       setOpen(started.id);
       await load();
     } catch (failure) {
@@ -80,7 +82,7 @@ export default function MovesPage() {
         <h3>Move a sandbox</h3>
         <div class="form-grid">
           <label class="field"><span>Sandbox</span>
-            <select required value={form().sandbox} onChange={(e) => setForm({ sandbox: e.currentTarget.value, node: '' })}>
+            <select required value={form().sandbox} onChange={(e) => setForm({ ...form(), sandbox: e.currentTarget.value, node: '' })}>
               <option value="">Choose ...</option>
               <For each={boxes()}>{(item) => <option value={boxId(item)}>{boxName(item)} (on {boxNode(item) || '?'})</option>}</For>
             </select>
@@ -93,7 +95,11 @@ export default function MovesPage() {
             <small class="muted">Only online nodes of this data center are offered.</small>
           </label>
         </div>
-        <div class="actions"><button type="submit" disabled={busy() || !form().sandbox || !form().node}>Start the move</button></div>
+        <label class="field">
+          <span><input type="checkbox" checked={form().recover} onChange={(e) => setForm({ ...form(), recover: e.currentTarget.checked })} /> The node is gone: recover from the last snapshot</span>
+          <small class="muted">Only for a node that is offline. The work since its last scheduled snapshot is lost; a normal move loses nothing.</small>
+        </label>
+        <div class="actions"><button type="submit" disabled={busy() || !form().sandbox || !form().node}>{form().recover ? 'Recover on that node' : 'Start the move'}</button></div>
       </form>
 
       <h2>History</h2>
