@@ -2157,6 +2157,9 @@ fn heal_delay(attempts: u32) -> std::time::Duration {
     std::time::Duration::from_secs((60u64 << attempts.min(5)).min(1800))
 }
 
+/// After this many failed attempts a sandbox is left for an operator.
+const HEAL_MAX_ATTEMPTS: u32 = 6;
+
 type HealState = std::collections::HashMap<String, (u32, std::time::Instant)>;
 
 fn heal_state() -> &'static std::sync::Mutex<HealState> {
@@ -2207,8 +2210,11 @@ pub async fn heal_crashed(ctx: &ServiceContext) -> Result<u64, ApiError> {
     let mut healed = 0;
     for environment_id in environments {
         let mut scope = TenantScope::begin(&ctx.pool, environment_id).await.map_err(ApiError::from)?;
+        // `failed` is included: when a workload dies the reconcile marks the sandbox
+        // failed, and it is exactly the one to bring back. A sandbox that never
+        // came up also lands here, which is why attempts are capped below.
         let wanted: Vec<(Uuid, String)> = sqlx::query_as(
-            "SELECT id, name FROM sandboxes WHERE status::text = 'running'",
+            "SELECT id, name FROM sandboxes WHERE status::text IN ('running', 'failed')",
         )
         .fetch_all(scope.connection())
         .await
@@ -2217,7 +2223,9 @@ pub async fn heal_crashed(ctx: &ServiceContext) -> Result<u64, ApiError> {
             let due = match heal_state().lock() {
                 Ok(state) => state
                     .get(&name)
-                    .map(|(attempts, last)| last.elapsed() >= heal_delay(*attempts))
+                    .map(|(attempts, last)| {
+                        *attempts < HEAL_MAX_ATTEMPTS && last.elapsed() >= heal_delay(*attempts)
+                    })
                     .unwrap_or(true),
                 Err(_) => false,
             };
@@ -2254,6 +2262,14 @@ pub async fn heal_crashed(ctx: &ServiceContext) -> Result<u64, ApiError> {
             .await;
             if outcome.is_ok() {
                 healed += 1;
+                // It runs again; the stored state should say so.
+                let _ = sqlx::query(
+                    "UPDATE sandboxes SET status = 'running', version = version + 1, updated_at = now() \
+                      WHERE id = $1 AND status::text = 'failed'",
+                )
+                .bind(sandbox_id)
+                .execute(scope.connection())
+                .await;
             }
         }
         scope.commit().await.map_err(ApiError::from)?;

@@ -158,6 +158,7 @@ seconds instead of half an hour.
 | `app/stats.py` | One-shot `docker stats` samples and the poster loop |
 | `app/processes.py` | `docker top` for one sandbox |
 | `app/commands.py` | What starts in a sandbox and by which way in (terminal, ssh, inside), from the parent chain; a ring buffer filled while somebody polls |
+| `app/gateway_exec.py` | Running things inside a sandbox whichever runtime holds it: `exec_run` (probes), `GatewayPty` (terminal through `openshell sandbox exec --tty`), `GatewayStream` (desktop bridge). `docker exec` runs outside a gateway sandbox's boundary, so gateway sandboxes never use it |
 | `app/connections.py` | The sockets of one sandbox and the process that owns each, by a fixed `sh` probe run as the sandbox user; a sample, not a trace |
 | `app/vnc.py` | The desktop transport: node token, then a fixed `python3` bridge in the container copies bytes between `127.0.0.1:5900` and the WebSocket; nothing is recorded |
 | `app/inventory.py` | Runs the probe and parses its sections |

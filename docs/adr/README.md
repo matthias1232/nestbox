@@ -66,3 +66,4 @@ Copy the shape of an existing file. Keep it short. The value is in the
 what a future reader cannot reconstruct from the code.
 | [0039](0039-the-catalogue-is-the-distributions-and-a-build-is-verified.md) | The package catalogue is the distribution's, and a build is verified | Accepted |
 | [0051](0051-model-usage-is-read-from-the-answer-and-keys-and-accounts-are-kept-apart.md) | Model usage is read from the answer, and keys and accounts are kept apart | Accepted |
+| [0052](0052-gateway-sandboxes-run-through-the-gateway-and-the-proxy-chain-does-not-reach-them.md) | Gateway sandboxes are driven through the gateway, and the proxy chain does not reach them | Accepted |
