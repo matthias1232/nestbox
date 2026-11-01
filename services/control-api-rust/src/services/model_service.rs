@@ -1433,6 +1433,11 @@ pub async fn run_install(
         .map(|bytes| bytes.saturating_mul(2).saturating_add(GIB / 4))
         .unwrap_or(8 * GIB)
         .max(4 * GIB);
+    // Every step below happens on the node the install belongs to. A joined
+    // node is a different machine with its own disk and its own Docker, so the
+    // call has to name it; the appliance's own node is the runner the control
+    // plane already talks to, which is what `None` means.
+    let target_node = if node.is_local { None } else { Some(node.id) };
     let download = ctx
         .runtime
         .download_model(ModelDownload {
@@ -1440,7 +1445,7 @@ pub async fn run_install(
             repo: artifact.repo.clone(),
             file: artifact.file.clone(),
             max_bytes: expected,
-            node_id: None,
+            node_id: target_node,
         })
         .await;
     let download = match download {
@@ -1499,7 +1504,7 @@ pub async fn run_install(
             command,
             memory_limit_bytes: memory_limit,
             cpu_cores: threads as f64,
-            node_id: None,
+            node_id: target_node,
             port: image.port,
         })
         .await;
@@ -1520,6 +1525,32 @@ pub async fn run_install(
         &format!("Server container {} is {}.", served.name, served.status),
     )
     .await;
+
+    // A joined node publishes the server on its overlay address, and that
+    // address exists only once the runner has picked the port. The profile was
+    // written before the container started, so it is corrected here, before the
+    // probe asks it: otherwise every sandbox pointed at this install would get
+    // an endpoint nobody answers on.
+    if let (Some(address), Some(profile_id)) = (served.published.as_deref(), install.provider_profile_id) {
+        let mut scope = TenantScope::begin(&ctx.pool, environment_id)
+            .await
+            .map_err(ApiError::from)?;
+        crate::store::postgres::providers::set_endpoint(
+            &mut scope,
+            profile_id,
+            &format!("http://{address}/v1"),
+        )
+        .await
+        .map_err(ApiError::from)?;
+        scope.commit().await.map_err(ApiError::from)?;
+        log_install(
+            ctx,
+            environment_id,
+            job_id,
+            &format!("Published on {address}."),
+        )
+        .await;
+    }
 
     // 3. Probe. A server that is up is not a server that has loaded the model:
     //    llama.cpp answers only after the weights are mapped. The profile the

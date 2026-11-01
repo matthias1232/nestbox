@@ -39,7 +39,7 @@ the codebase where SQL appears.
 | `nodes.rs` | Nodes, the local node, seed marks, display fields, sandbox counts per node |
 | `jobs.rs` | Jobs, targets, schedules |
 | `environments.rs` | Environments, clusters, nodes, overview counts |
-| `providers.rs` | Provider profiles, secret references |
+| `providers.rs` | Provider profiles, secret references; `set_endpoint` corrects the address once a server on a joined node reports where it is published |
 | `agent_packs.rs` | Baselines, agent packs, and the tool catalog (global data, no tenant filter) |
 | `persistent_roots.rs` | Persistent roots, mounts, and the agents inside a sandbox |
 | `recipes.rs` | Recipes, the build outcome, applying a template, and the link from a sandbox to its recipe |

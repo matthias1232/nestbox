@@ -27,7 +27,7 @@ control plane.
 | `POST` | `/v1/catalogue` | Search a baseline image's native package index in a throwaway container |
 | `POST` | `/v1/images/verify` | Check a built image's package database against the recipe's packages |
 | `POST` | `/v1/models/download` | Fetch one GGUF into `NESTBOX_MODEL_BASE` |
-| `POST` | `/v1/models/serve` | Start one model server container |
+| `POST` | `/v1/models/serve` | Start one model server container; on a joined node publish it on the node's overlay address and answer `published: "<ip>:<port>"` |
 | `GET`/`DELETE` | `/v1/models/serve/{key}` | Inspect or stop it |
 | `GET` | `/v1/egress` | The sandbox network, the proxy, and the redirect state, as facts |
 | `GET` | `/v1/sandboxes/{name}/stats` | One `docker stats` sample |
@@ -69,6 +69,20 @@ control plane.
    with `internal=false` is refused with 503 instead of reused. See below.
 9. The egress proxy is joined to that network by this adapter, under the alias
    the sandbox environment names.
+
+## Publishing a model server on a joined node
+
+A sandbox and the control plane reach a local model server by container name, on
+the runtime network. A joined node has no such name: the control plane is on
+another machine and arrives through the overlay, so the server has to be
+published there. When `NESTBOX_FORWARD_BIND` and `NESTBOX_MODEL_PUBLISH_RANGE`
+are both set (the node package sets them), `serve_model` maps container `8080` to
+the first free port of the range on that address and answers
+`published: "<ip>:<port>"`; the control plane writes that into the provider
+profile. `pick_port` is the decision, `port_is_free` binds the candidate and
+closes it again, and `published_address` reads the mapping back from Docker, so a
+re-serve after a runner restart reports the port this process did not choose.
+The appliance's runner sets neither variable and keeps today's behaviour.
 
 ## The sandbox network has no route out
 
@@ -165,6 +179,7 @@ seconds instead of half an hour.
 | `app/inventory.sh` | The fixed probe script, executed inside the container |
 | `app/terminal.py` | The browser terminal: node token, PTY pump, resize, idle close |
 | `tests/test_terminal.py` | The pump and the frame rules, without FastAPI and without Docker (`python3 -m unittest discover -s tests -t .`) |
+| `tests/test_model_publish.py` | The model publish port: which range a joined node publishes in, the first free port, and the address read back from a running container |
 | `Dockerfile` | Image build |
 
 ## Samples, processes, inventory

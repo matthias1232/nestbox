@@ -1131,6 +1131,84 @@ def install_cudax(body: CudaxInstallRequest) -> dict[str, Any]:
         pulled.append(image)
     return {"component": body.component, "pulled": pulled}
 
+MODEL_SERVER_CONTAINER_PORT = 8080
+
+
+def publish_target() -> tuple[str, int, int] | None:
+    """Where and in which range this runner publishes a model server, if at all.
+
+    A joined node serves a model on its own overlay address, because the control
+    plane is on another machine and reaches it through WireGuard; it never joins
+    the node's runtime network, so the container name means nothing there. The
+    appliance's own runner leaves the publish variables unset and keeps the
+    server reachable by name, as before. A malformed value is also "do not
+    publish" rather than a crash: a model that serves only locally is still
+    usable, and the install reports that it has no published address.
+    """
+    bind = os.getenv("NESTBOX_FORWARD_BIND", "").strip()
+    raw = os.getenv("NESTBOX_MODEL_PUBLISH_RANGE", "").strip()
+    if not bind or not raw:
+        return None
+    try:
+        start, end = (int(part) for part in raw.split("-", 1))
+    except ValueError:
+        return None
+    if not 1 <= start <= end <= 65535:
+        return None
+    return bind, start, end
+
+
+def pick_port(bind: str, start: int, end: int, is_free) -> int | None:
+    """The first port in `start..end` for which `is_free(bind, port)` holds.
+
+    The choice is a pure function of the predicate, so a test can drive it
+    without a socket, and `port_is_free` is what the runner passes in. `None`
+    means the range is exhausted, which the caller reports instead of silently
+    choosing a port the node does not publish.
+    """
+    for port in range(start, end + 1):
+        if is_free(bind, port):
+            return port
+    return None
+
+
+def port_is_free(bind: str, port: int) -> bool:
+    """Whether this process can bind `bind:port` right now.
+
+    Binding and closing is the only answer Docker itself would accept, and it
+    catches a port the runner's own forward listeners already hold as well as
+    one another process took on the host.
+    """
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind((bind, port))
+        except OSError:
+            return False
+    return True
+
+
+def published_address(item) -> str | None:
+    """The overlay address a running model container is published on, if any.
+
+    Read from Docker's record rather than from memory: a re-serve after a runner
+    restart finds a container whose port this process never chose, and a
+    container started before a node gained a publish range has no mapping at
+    all, which is `None` and not an invented address.
+    """
+    ports = (item.attrs.get("NetworkSettings") or {}).get("Ports") or {}
+    for spec, bindings in ports.items():
+        if not spec.startswith(f"{MODEL_SERVER_CONTAINER_PORT}/") or not bindings:
+            continue
+        binding = bindings[0] or {}
+        host_ip = str(binding.get("HostIp") or "")
+        host_port = str(binding.get("HostPort") or "")
+        if host_ip and host_ip not in ("0.0.0.0", "::") and host_port.isdigit():
+            return f"{host_ip}:{host_port}"
+    return None
+
+
 @app.post("/v1/models/serve")
 def serve_model(body: ModelServeRequest) -> dict[str, Any]:
     """Start the server container for one installed artefact.
@@ -1163,10 +1241,31 @@ def serve_model(body: ModelServeRequest) -> dict[str, Any]:
         existing = client.containers.get(name)
         existing.reload()
         if existing.status == "running":
-            return {"name": name, "container_id": existing.id, "status": existing.status}
+            return {
+                "name": name,
+                "container_id": existing.id,
+                "status": existing.status,
+                "published": published_address(existing),
+            }
         existing.remove(force=True)
     except NotFound:
         pass
+
+    # A joined node publishes the server on its overlay address, because that is
+    # the only way the control plane can reach it. The mapping goes into the
+    # container at creation, so the first answer can already carry the address
+    # the provider profile needs; an appliance-local server is not published and
+    # stays reachable by container name on the runtime network.
+    published: str | None = None
+    ports: dict[str, Any] | None = None
+    target = publish_target()
+    if target is not None:
+        bind, low, high = target
+        chosen = pick_port(bind, low, high, port_is_free)
+        if chosen is None:
+            raise HTTPException(409, f"no free model port in {low}-{high} on {bind}")
+        ports = {f"{MODEL_SERVER_CONTAINER_PORT}/tcp": (bind, chosen)}
+        published = f"{bind}:{chosen}"
 
     ensure_network()
     try:
@@ -1182,6 +1281,7 @@ def serve_model(body: ModelServeRequest) -> dict[str, Any]:
             detach=True,
             network=NETWORK,
             volumes={directory: {"bind": MODEL_CONTAINER_PATH, "mode": "ro"}},
+            ports=ports,
             mem_limit=str(body.memory_limit_bytes),
             nano_cpus=int(body.cpu_cores * 1_000_000_000),
             pids_limit=256,
@@ -1197,7 +1297,12 @@ def serve_model(body: ModelServeRequest) -> dict[str, Any]:
     except DockerException as exc:
         raise HTTPException(400, f"the model server did not start: {exc}") from exc
     MODEL_PORTS[key] = body.port
-    return {"name": name, "container_id": container.id, "status": container.status}
+    return {
+        "name": name,
+        "container_id": container.id,
+        "status": container.status,
+        "published": published,
+    }
 
 
 @app.get("/v1/models/serve/{key}")
