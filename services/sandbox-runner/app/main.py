@@ -33,6 +33,7 @@ from app import backups as root_backups
 from app import catalogue as package_catalogue
 from app import registry_images
 from app import snapshots as root_snapshots
+from app import ca_bundle
 from app.model_metrics import parse_prometheus
 from app import openshell_backend as osh
 from app.images import image_allowed
@@ -159,10 +160,11 @@ HOST_PROC = os.getenv("NESTBOX_HOST_PROC", "/proc")
 # `control` network on purpose — a sandbox must not reach the database or the
 # control API just because it may reach the internet.
 DIRECT_NETWORK = os.getenv("NESTBOX_DIRECT_NETWORK", "nestbox-sandbox-direct")
-# The deployment CA, as this container sees it. Mounted into a sandbox only when
-# that sandbox's egress mode reads TLS; the file itself is never in an image.
+# The deployment CA, as this container sees it. Mounted into a sandbox in every
+# mode that uses the proxy; the file itself is never in an image. The target is
+# owned by `app/ca_bundle.py`, which mounts it together with the bundle.
 EGRESS_CA_HOST = os.getenv("NESTBOX_EGRESS_CA", "/run/egress/ca.crt")
-EGRESS_CA_TARGET = "/run/secrets/egress-ca.crt"
+EGRESS_CA_TARGET = ca_bundle.EGRESS_CA_TARGET
 
 
 
@@ -204,6 +206,12 @@ class SandboxRequest(BaseModel):
     tool_profile: str = "development-default"
     environment: dict[str, str] = Field(default_factory=dict)
     memory_limit: str = "1g"
+    # A reservation is not a limit: it is what the scheduler may count on, so a
+    # sandbox is placed where that much memory is really free without being
+    # capped at it. `cpu_shares` is relative weight, not a quota, and it only
+    # matters when the node is contended.
+    memory_reservation: str | None = None
+    cpu_shares: int | None = None
     cpu_limit: float = Field(default=1.0, gt=0, le=8)
     pids_limit: int = Field(default=256, ge=32, le=4096)
     ports: dict[str, int] = Field(default_factory=dict)
@@ -689,31 +697,21 @@ def create_sandbox(body: SandboxRequest) -> dict[str, Any]:
         pass
     mounts = [validate_mount(m) for m in body.mounts]
     direct = body.egress_mode == "direct"
-    inspects_tls = body.egress_mode in ("transparent", "hybrid")
     if direct:
         # Before the container exists: `network=` with a name Docker does not
         # know is a create that fails with a message about a network.
         ensure_direct_network()
-    if inspects_tls:
-        # Only a sandbox whose traffic is actually read is given the CA. The
-        # file is public, but trusting it is a decision, and the decision is the
-        # mode.
-        public_ca = publish_egress_ca()
-        if public_ca:
-            mounts.append(
-                {
-                    "type": "bind",
-                    "source": public_ca,
-                    "target": EGRESS_CA_TARGET,
-                    "read_only": True,
-                }
-            )
-        else:
-            logger.warning(
-                "egress mode %s needs the node CA, but %s does not exist",
-                body.egress_mode,
-                EGRESS_CA_HOST,
-            )
+    # Every mode that uses the proxy gets the CA and the bundle beside it; the
+    # file is public, but trusting it is a decision, and the decision is the
+    # mode. `direct` has no proxy, so it is given neither.
+    public_ca = publish_egress_ca()
+    if not direct and not public_ca:
+        logger.warning(
+            "egress mode %s needs the node CA, but %s does not exist",
+            body.egress_mode,
+            EGRESS_CA_HOST,
+        )
+    mounts.extend(ca_bundle.ca_mounts(body.egress_mode, public_ca, ca_bundle.publish_ca_bundle(public_ca)))
     extra: dict[str, Any] = {}
     if mounts:
         from docker.types import Mount as DockerMount
@@ -722,6 +720,14 @@ def create_sandbox(body: SandboxRequest) -> dict[str, Any]:
             DockerMount(target=m["target"], source=m["source"], type="bind", read_only=m["read_only"])
             for m in mounts
         ]
+    # A reservation lets the scheduler count this sandbox without capping it, and
+    # shares decide who wins when the node is contended. Both are optional; a
+    # request without them keeps Docker's defaults, which is what every sandbox
+    # created before this field existed already has.
+    if body.memory_reservation:
+        extra["mem_reservation"] = body.memory_reservation
+    if body.cpu_shares:
+        extra["cpu_shares"] = body.cpu_shares
     if body.gpu_count > 0:
         if not container_gpu_available():
             raise HTTPException(422, "this node cannot give a container a GPU: no NVIDIA container runtime")
@@ -785,14 +791,13 @@ def create_openshell_sandbox(body: SandboxRequest) -> dict[str, Any]:
     except NotFound:
         pass
     mounts = [validate_mount(mount) for mount in body.mounts]
-    # A mode that reads TLS needs the node CA inside the sandbox, as on Docker:
-    # only then, and only the public half.
-    if body.egress_mode in ("transparent", "hybrid"):
-        public_ca = publish_egress_ca()
-        if public_ca:
-            mounts.append({"type": "bind", "source": public_ca, "target": EGRESS_CA_TARGET, "read_only": True})
-        else:
-            logger.warning("egress mode %s needs the node CA, but %s does not exist", body.egress_mode, EGRESS_CA_HOST)
+    # A mode that uses the proxy needs the node CA inside the sandbox, as on
+    # Docker: every such mode, and only then, and only the public half plus the
+    # bundle built from it.
+    public_ca = publish_egress_ca()
+    if body.egress_mode != "direct" and not public_ca:
+        logger.warning("egress mode %s needs the node CA, but %s does not exist", body.egress_mode, EGRESS_CA_HOST)
+    mounts.extend(ca_bundle.ca_mounts(body.egress_mode, public_ca, ca_bundle.publish_ca_bundle(public_ca)))
     # The gateway runs the command it is given *instead of* the image's entrypoint
     # (Docker would pass it as arguments to it). A recipe image's entrypoint is the
     # script that starts its supervisor and agents, so it has to be named, or the
@@ -800,6 +805,8 @@ def create_openshell_sandbox(body: SandboxRequest) -> dict[str, Any]:
     command = body.command
     if body.image.startswith("nestbox-recipe/"):
         command = ["/usr/local/bin/nestbox-entrypoint"]
+    # `memory_reservation` and `cpu_shares` are not passed on: OpenShell 0.1.6 has
+    # no reservation or shares, only the hard `--memory` and `--cpu` limits below.
     try:
         osh.create(
             name=body.name,
