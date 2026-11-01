@@ -90,7 +90,7 @@ def wait_ready(seconds: int = 240) -> None:
     started = time.time()
     while time.time() - started < seconds:
         try:
-            with urllib.request.urlopen(BASE + "/healthz", timeout=5) as answer:
+            with urllib.request.urlopen(BASE + "/api/v1/healthz", timeout=5) as answer:
                 if answer.status == 200:
                     return
         except OSError:
@@ -109,7 +109,7 @@ def api(path: str, method: str = "GET", body: object | None = None, timeout: int
 
     def attempt() -> tuple[int, bytes]:
         request = urllib.request.Request(
-            BASE + path,
+            BASE + "/api/v1" + path,
             data=data,
             method=method,
             headers={"authorization": f"Bearer {TOKEN}", "accept": "application/json", "content-type": "application/json"},
@@ -633,13 +633,15 @@ def summary() -> int:
 def sandbox_prefix(raw: str | None) -> str:
     """The name prefix under which this run creates its sandboxes."""
     if raw is None:
-        return f"wb-acc-{time.strftime('%H%M')}-{secrets.token_hex(2)}"
+        # An OpenShell sandbox name is at most 19 characters, and the scene adds
+        # a suffix: keep the prefix at eight.
+        return f"wb{time.strftime('%H%M')}{secrets.token_hex(1)}"
     # A sandbox name is a DNS label: lowercase ASCII letters, digits and hyphens.
     cleaned = "".join(
         character if character.isascii() and (character.isalnum() or character == "-") else "-"
         for character in raw.lower()
     ).strip("-")
-    return cleaned or f"wb-acc-kept-{secrets.token_hex(2)}"
+    return cleaned or f"wbk{secrets.token_hex(3)}"
 
 
 def run(title: str, function, *arguments) -> None:

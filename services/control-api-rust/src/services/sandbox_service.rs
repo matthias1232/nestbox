@@ -671,6 +671,14 @@ pub async fn create(
     require(principal, Permission::SandboxWrite)?;
 
     let name = SandboxName::new(&request.name).map_err(ApiError::validation)?;
+    // The gateway is stricter than a container: it derives a workload name from
+    // the sandbox name, and refuses more than 19 characters. Saying that here is
+    // a clear 422 instead of a runtime rejection after the row was written.
+    if openshell_runtime() && name.as_str().chars().count() > 19 {
+        return Err(ApiError::validation(
+            "An OpenShell sandbox name is at most 19 characters; the gateway derives its workload name from it.",
+        ));
+    }
 
     // Normalise before anything is stored, so the spec holds exactly what the
     // runtime was asked for and a later restart cannot reinterpret it.
