@@ -1,0 +1,246 @@
+/* Workbox primitives: switch, segmented, countdown, dialog, banner, presence.
+ *
+ * These six appear on every Workbox card, so they are styled once here instead of
+ * once per card. Colours come from `tokens.css` only: a "denied" toggle and a
+ * "denied" badge must not be two different reds.
+ *
+ * Loaded by the components themselves (`components/Switch.jsx` and friends), not by
+ * `main.jsx`, so the styles travel with the controls that need them.
+ */
+
+/* Switch -------------------------------------------------------------- */
+
+.nb-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.nb-switch input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  margin: 0;
+}
+
+.nb-switch-track {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 34px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-strong);
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.nb-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--fg-muted);
+  transition: left 120ms ease, background 120ms ease;
+}
+
+.nb-switch input:checked + .nb-switch-track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.nb-switch input:checked + .nb-switch-track .nb-switch-thumb {
+  left: 18px;
+  background: var(--accent-fg);
+}
+
+.nb-switch input:focus-visible + .nb-switch-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.nb-switch:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Segmented ----------------------------------------------------------- */
+
+.nb-segmented {
+  display: inline-flex;
+  gap: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-inset);
+}
+
+.nb-seg {
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  padding: var(--space-1) var(--space-3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.nb-seg:last-child {
+  border-right: 0;
+}
+
+.nb-seg:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--border);
+  background: var(--bg-raised);
+}
+
+.nb-seg.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-weight: 600;
+}
+
+.nb-seg.active.tone-warn {
+  background: var(--warn);
+  color: var(--bg);
+}
+
+.nb-seg.active.tone-bad {
+  background: var(--bad);
+  color: var(--bg);
+}
+
+.nb-seg.active.tone-ok {
+  background: var(--ok);
+  color: var(--bg);
+}
+
+.nb-seg:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Countdown ----------------------------------------------------------- */
+
+.nb-countdown {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+/* Confirm dialog ------------------------------------------------------ */
+
+.nb-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 20;
+}
+
+.nb-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(520px, 92vw);
+  max-width: 520px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: var(--space-5);
+  z-index: 21;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+}
+
+.nb-dialog h3 {
+  margin: 0 0 var(--space-3);
+  font-size: 15px;
+}
+
+.nb-dialog-body {
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.nb-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+
+/* Banner -------------------------------------------------------------- */
+
+.nb-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--info);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  font-size: 13px;
+}
+
+.nb-banner.warn {
+  border-left-color: var(--warn);
+}
+
+.nb-banner.bad {
+  border-left-color: var(--bad);
+}
+
+.nb-banner.info {
+  border-left-color: var(--info);
+}
+
+.nb-banner-text {
+  min-width: 0;
+}
+
+.nb-banner-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex: none;
+}
+
+/* Presence ------------------------------------------------------------ */
+
+.nb-people {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.nb-person {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-strong);
+  color: var(--fg);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: default;
+}
+
+.nb-person-more {
+  color: var(--fg-muted);
+}

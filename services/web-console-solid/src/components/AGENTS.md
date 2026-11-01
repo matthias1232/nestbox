@@ -36,6 +36,14 @@ not gateways and sandboxes.
 | `Empty.jsx` | A consistent empty state |
 | `LogViewer.jsx` | One log panel for a sandbox, a supervisor (filtered) and an appliance component: follow, filter, copy; stops following after a failed read |
 | `PendingPanel.jsx` | A tab body that a later package fills: what belongs there, which endpoint, who owns it |
+| `Switch.jsx` | A two-state switch, a hidden checkbox under a styled track |
+| `Segmented.jsx` | A radio group of styled buttons, one active |
+| `Countdown.jsx` | A live "time left" label; no end time reads as "unlimited" |
+| `countdown.js` | Time formatting behind `Countdown`, pure and node-tested |
+| `ConfirmDialog.jsx` | A centred modal whose buttons the caller names |
+| `Banner.jsx` | A one-line notice coloured by tone |
+| `PresenceDots.jsx` | Who is in a sandbox, as up to five initials plus "+N" |
 
 Workbox primitives: `Switch`, `Segmented`, `Countdown`, `ConfirmDialog`, `Banner`, `PresenceDots`.
-They hold no rules: the caller decides, the component draws.
+They hold no rules: the caller decides, the component draws. Their shared styles live in
+`styles/controls.css`, which each of them imports.

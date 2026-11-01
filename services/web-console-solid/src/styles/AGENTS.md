@@ -16,6 +16,7 @@ a new colour asks for a token; it does not invent a hex value.
 | `sandbox-resources.css` | The create form's node budget and the Agents tab |
 | `recipes-persist.css` | Recipe table, editor, and detail; persistent roots and their mounts |
 | `builder.css` | The builder's sections: baseline, tools, agents, resources, node, mounts |
+| `controls.css` | Workbox primitives: switch, segmented, countdown, dialog, banner, presence dots; imported by those components |
 
 A screen-specific file is the exception, not the pattern: it exists where a
 feature says something app.css has no word for. Import it from the module that
