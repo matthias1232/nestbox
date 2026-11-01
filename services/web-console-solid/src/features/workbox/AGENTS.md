@@ -13,8 +13,9 @@ evaluation windows, plus live chats, the topology and the shared terminals.
 | `AgentsCard.jsx` | one row per agent: subscription ↔ gateway, sessions, restart |
 | `NetworkCard.jsx` | the four proxy modes and the evaluation windows |
 | `AllowAllBanner.jsx` | the loud banner while everything is allowed |
-| `SessionsPanel.jsx` | all shared terminal tabs and the desktop |
-| `TerminalPopout.jsx`, `DesktopPopout.jsx` | the pop-out windows without a sidebar |
+| `SessionsPanel.jsx` | all shared terminal tabs ("Connected now" from `control.presence`, then terminals and desktop behind two tabs) |
+| `sessions.js`, `sessions.test.js` | pure logic of the shared tabs: `mergeTabs` (my list + everybody's, each tab once), `sshCommand`, `puttyHint`; tested with `node --test sessions.test.js` |
+| `TerminalPopout.jsx`, `DesktopPopout.jsx` | the pop-out windows without a sidebar: one tab with its viewers, or the desktop, each filling the window |
 | `LiveChatsPanel.jsx` | the agents' conversation, live |
 | `TopologyPanel.jsx` | the live topology of the sandbox |
 | `ModelsCard.jsx` | the models the sandbox may use, with warm-up |
@@ -30,3 +31,9 @@ because a second terminal and a second desktop would be a second truth.
 
 Every panel receives its data as props or loads it through `api/`, never by
 reaching into another feature's state.
+
+`sessions.js` is the reverse of the exception above: `features/sandboxes/` takes
+that one module from here, because the tab strip in the Admin Center and in the
+Workbox is the same list. It is pure logic — no JSX, no state, no API call — so
+it cannot become a second truth. The same holds for `useLive.js`, which a
+terminal imports for its presence events so a page keeps one event stream.

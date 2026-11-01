@@ -64,8 +64,8 @@ on it.
 | `DashboardTab.jsx` | Metrics, top processes, last blocks, MCP servers (`feat/admin-console-shell`) |
 | `TrafficTab.jsx` | Live table, filters, "allow this", temporary window (`feat/console-traffic`) |
 | `McpTab.jsx` | Servers, tools, calls, visibility per transport (`feat/console-mcp`) |
-| `TerminalTab.jsx` | xterm.js over the terminal WebSocket; the tab list is read from and written to the server, so a reload reopens the same shells (`feat/console-terminal`) |
-| `DesktopTab.jsx` | noVNC over the desktop WebSocket; only a sandbox built with the desktop pack has one. Offers to attach the `chrome-browser` MCP server |
+| `TerminalTab.jsx` | xterm.js over the terminal WebSocket; my tab list is read from and written to the server, so a reload reopens the same shells. `showAll` (on by default) merges everybody's tabs from `presence.tabsAll` with who is in each, `fixedTab` shows one tab alone for a pop-out. A tab menu offers pop-out, the SSH/PuTTY line, "close for me" (my list only, the shell keeps running) and "close for everyone" (`feat/console-terminal`, workbox) |
+| `DesktopTab.jsx` | noVNC over the desktop WebSocket; only a sandbox built with the desktop pack has one. "watch only" reopens the stream with `?view=1` so the server drops the input, `fullWindow` fills a pop-out. Offers to attach the `chrome-browser` MCP server |
 | `CommandsTab.jsx` | New processes with their way in (terminal, ssh, inside), polled every 2 s while open |
 | `ConnectionsTab.jsx` | Sockets and owning processes, filtered by where they go (internet, SSH, name lookups), polled every 2.5 s |
 | `ChatsTab.jsx`, `chats.js` | Model conversations read from the recorded bodies (Anthropic, OpenAI chat, OpenAI responses; SSE stitched back). Needs an inspecting egress mode |

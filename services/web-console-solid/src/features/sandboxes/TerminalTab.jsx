@@ -7,7 +7,14 @@
 // server also knows whether the image has tmux at all, and the tab strip says so
 // instead of quietly starting a shell that cannot survive the next reload.
 //
-// Closing a tab explicitly ends only that terminal session.
+// Three things this file learned from the shared shell:
+//  * a tab is one tmux session, so several people may sit in it. The strip shows
+//    everybody's tabs, each with who is in it, so a tab is joinable instead of
+//    invisible;
+//  * closing a tab for yourself only forgets it. The old `exit` typed into the
+//    shell killed the session under everybody's feet, and it was the browser
+//    closing that did it, not a person deciding to;
+//  * ending a shell for everyone is its own explicit action, behind a question.
 
 import { For, Show, createSignal, onCleanup, onMount } from 'solid-js';
 import { Terminal } from '@xterm/xterm';
@@ -53,7 +60,18 @@ function legacyCopy(text) {
   return done;
 }
 import * as api from '../../api/sandboxes.js';
+import * as presence from '../../api/presence.js';
+import PresenceDots from '../../components/PresenceDots.jsx';
+import ConfirmDialog from '../../components/ConfirmDialog.jsx';
+// The tab strip is the same list in the Workbox and in the Admin Center, so the
+// merge and the SSH lines are shared rather than written twice. `sessions.js` is
+// pure logic (no JSX, no state), which is the one kind of module a feature may
+// take from another: it cannot create a second truth.
+import { mergeTabs, sshCommand, puttyHint } from '../workbox/sessions.js';
+// One EventSource per page: the stream is shared with every other workbox panel.
+import { onControl } from '../workbox/useLive.js';
 import '../../styles/deck.css';
+import '../../styles/workbox-sessions.css';
 
 // `crypto.randomUUID` only exists in a secure context. The appliance is also
 // served over plain HTTP on a LAN address, where the property is undefined and
@@ -78,8 +96,18 @@ export default function TerminalTab(props) {
   let term;
   let fit;
   let observer;
-  const [tabs, setTabs] = createSignal([]);
-  const [active, setActive] = createSignal(null);
+  // The tab a pop-out window shows, and nothing else.
+  const fixed = () => props.fixedTab || null;
+  // On by default, so the Workbox and the Admin Center show the same list and a
+  // tab somebody else opened is joinable in both. `showAll={false}` is the plain
+  // own-tabs-only view.
+  const showAll = () => props.showAll !== false;
+  // My own tabs, as the server stores them for me; everybody's, from the presence
+  // endpoint. The strip is the merge of the two.
+  const [mine, setMine] = createSignal([]);
+  const [everyone, setEveryone] = createSignal([]);
+  const tabs = () => mergeTabs(mine(), showAll() ? everyone() : []);
+  const [active, setActive] = createSignal(fixed());
   const [state, setState] = createSignal('connecting');
   // Text the browser refused to copy by itself; shown so it can be copied by hand.
   const [copyFallback, setCopyFallback] = createSignal(null);
@@ -90,6 +118,13 @@ export default function TerminalTab(props) {
   const [note, setNote] = createSignal(null);
   const [durable, setDurable] = createSignal(null);
   const [loading, setLoading] = createSignal(true);
+  // The tab whose little menu is open, and the tab whose SSH line is shown.
+  const [menu, setMenu] = createSignal(null);
+  const [sshFor, setSshFor] = createSignal(null);
+  const [confirmTab, setConfirmTab] = createSignal(null);
+  // How to reach this sandbox from outside, read the first time somebody asks for
+  // the SSH line. The answer costs a runtime query, so it is not asked for before.
+  const [access, setAccess] = createSignal(null);
 
   const closeSocket = () => {
     try {
@@ -142,7 +177,7 @@ export default function TerminalTab(props) {
 
   /** Persist the set, then render what the server stored. */
   async function persist(next) {
-    setTabs(next);
+    setMine(next);
     try {
       const saved = await api.saveTerminalTabs(props.sandbox.id, next);
       setDurable(saved.durable ?? durable());
@@ -151,8 +186,31 @@ export default function TerminalTab(props) {
     }
   }
 
+  /**
+   * Everybody's tabs of this sandbox, for the strip and the presence chips.
+   *
+   * A failure keeps my own list working: merging an empty answer is my list, and
+   * a sandbox that cannot answer this question should not lose its terminals
+   * over it.
+   */
+  async function refreshAll() {
+    if (!showAll() || fixed()) return;
+    try {
+      const answer = await presence.tabsAll(props.sandbox.id);
+      setEveryone(Array.isArray(answer) ? answer : answer?.items || []);
+    } catch {
+      setEveryone([]);
+    }
+  }
+
   /** Read the server's list and open the first tab's shell. */
   async function load() {
+    if (fixed()) {
+      // A pop-out shows exactly the tab it was opened for, and reads no list.
+      setLoading(false);
+      connect(fixed());
+      return;
+    }
     setLoading(true);
     try {
       const answer = await api.terminalTabs(props.sandbox.id);
@@ -168,45 +226,119 @@ export default function TerminalTab(props) {
         items = [freshTab(1)];
         await api.saveTerminalTabs(props.sandbox.id, items).catch(() => null);
       }
-      setTabs(items);
+      setMine(items);
       setActive(items[0].id);
       connect(items[0].id);
     } catch (failure) {
       setNote(`The tab list could not be read: ${failure.message}`);
       const fallback = [freshTab(1)];
-      setTabs(fallback);
+      setMine(fallback);
       setActive(fallback[0].id);
       connect(fallback[0].id);
     } finally {
       setLoading(false);
     }
+    refreshAll();
   }
 
   function add() {
-    const next = [...tabs(), freshTab(tabs().length + 1)];
+    const next = [...mine(), freshTab(mine().length + 1)];
     persist(next);
     setActive(next.at(-1).id);
     queueMicrotask(() => connect(next.at(-1).id));
   }
 
   function select(id) {
+    setMenu(null);
+    setSshFor(null);
     if (id === active()) return;
     setActive(id);
     connect(id);
   }
 
-  function closeTab(id) {
-    const item = tabs().find((tab) => tab.id === id);
-    if (!item) return;
-    if (!window.confirm(`Close ${item.label}? Its shell and foreground command will end.`)) return;
-    if (id === active() && socket?.readyState === WebSocket.OPEN) socket.send('exit\r');
+  /** Show whichever tab is left, or nothing when none is. */
+  function goTo(remaining, next) {
+    const target = remaining[0]?.id ?? next[0]?.id ?? null;
+    if (!target) {
+      closeSocket();
+      setActive(null);
+      return;
+    }
     closeSocket();
-    let next = tabs().filter((tab) => tab.id !== id);
-    if (!next.length) next = [freshTab(1)];
-    persist(next);
-    setActive(next[0].id);
-    queueMicrotask(() => connect(next[0].id));
+    setActive(target);
+    queueMicrotask(() => connect(target));
   }
+
+  /**
+   * Remove one tab from my list. The shell keeps running: it may be somebody
+   * else's application, and the old `exit` killed it for every viewer.
+   */
+  function closeMine(id) {
+    setMenu(null);
+    const remaining = tabs().filter((tab) => tab.id !== id);
+    let next = mine().filter((tab) => tab.id !== id);
+    if (!next.length && !remaining.length) next = [freshTab(1)];
+    const wasActive = id === active();
+    persist(next);
+    if (wasActive) goTo(remaining, next);
+  }
+
+  /**
+   * End one tab for everybody: the tmux session stops and every viewer leaves.
+   * The only action that destroys work, therefore behind a question.
+   */
+  async function closeForAll(id) {
+    if (!id) return;
+    setConfirmTab(null);
+    setMenu(null);
+    const label = tabs().find((tab) => tab.id === id)?.label || id;
+    try {
+      await presence.closeTabForAll(props.sandbox.id, id);
+      const remaining = tabs().filter((tab) => tab.id !== id);
+      let next = mine().filter((tab) => tab.id !== id);
+      if (!next.length && !remaining.length) next = [freshTab(1)];
+      const wasActive = id === active();
+      persist(next);
+      if (wasActive) goTo(remaining, next);
+      setNote(`“${label}” was closed for everyone.`);
+      refreshAll();
+    } catch (failure) {
+      setNote(`The tab could not be closed for everyone: ${failure.message}`);
+    }
+  }
+
+  /** Its own window, so a terminal can fill a screen beside another one. */
+  function popOut(id) {
+    setMenu(null);
+    window.open(
+      `/box/${props.sandbox.id}/terminal/${id}`,
+      `nb-term-${id}`,
+      'popup,width=1200,height=800',
+    );
+  }
+
+  /** Ask for the address and port the first time, then show the line. */
+  async function showSsh(id) {
+    if (sshFor() === id) {
+      setSshFor(null);
+      return;
+    }
+    setMenu(null);
+    setSshFor(id);
+    if (access()) return;
+    try {
+      setAccess(await api.connect(props.sandbox.id));
+    } catch {
+      setAccess(null);
+    }
+  }
+
+  // The host is what a client dials: the node's public address, else its
+  // hostname. The port is the published SSH port, not the container's 22.
+  const sshHost = () => access()?.host || access()?.hostname || access()?.address || null;
+  const sshPort = () =>
+    (access()?.ports || []).find((port) => port.purpose === 'ssh')?.public_port || null;
+  const sshLine = () => sshCommand(sshHost(), sshPort(), sshFor(), access()?.ssh_user);
 
   onMount(() => {
     // A terminal that cannot attach must explain itself on its own tab instead
@@ -280,40 +412,89 @@ export default function TerminalTab(props) {
       setLoading(false);
       return;
     }
+    // Others join and leave tabs without telling this browser; the strip is
+    // refreshed every ten seconds and immediately on a presence event.
+    const timer = setInterval(() => refreshAll(), 10000);
+    cleanups.push(() => clearInterval(timer));
     load();
   });
+
+  // Who is in which tab changes without this tab doing anything, so the strip
+  // follows the live stream. A presence event is exactly that change; a restart
+  // tells the same story (a session may have been respawned).
+  const stopLive = onControl(
+    () => props.sandbox.id,
+    (event) => {
+      if (event.what === 'presence' || event.what === 'restart') refreshAll();
+    },
+  );
 
   onCleanup(() => {
     cleanups.forEach((undo) => undo());
     observer?.disconnect();
+    stopLive?.();
     closeSocket();
     term?.dispose();
   });
 
   return (
-    <section class="tab-panel">
-      <div class="controls">
-        <Show when={!loading()} fallback={<span class="muted small">Reading the tabs…</span>}>
-          <For each={tabs()}>
-            {(tab) => (
-              <span class={`terminal-tab ${active() === tab.id ? 'active' : ''}`}>
-                <button class="tiny" onClick={() => select(tab.id)}>
-                  {tab.label}
-                  <Show when={tab.alive === false && tabs().length > 0}>
-                    <span class="muted" title="The shell is not running; connecting starts it again">
-                      {' '}· ended
+    <section class={`tab-panel ${fixed() ? 'sessions-fill' : ''}`}>
+      <Show when={!fixed()}>
+        <div class="controls">
+          <Show when={!loading()} fallback={<span class="muted small">Reading the tabs…</span>}>
+            <For each={tabs()}>
+              {(tab) => (
+                <span class={`terminal-tab ${active() === tab.id ? 'active' : ''}`}>
+                  <button
+                    class="tiny"
+                    onClick={() => select(tab.id)}
+                    title={tab.created_by_name ? `Opened by ${tab.created_by_name}` : undefined}
+                  >
+                    {tab.label}
+                    <Show when={tab.alive === false}>
+                      <span class="muted" title="The shell is not running; connecting starts it again">
+                        {' '}· ended
+                      </span>
+                    </Show>
+                  </button>
+                  <Show when={tab.people.length > 0}>
+                    <PresenceDots people={tab.people} />
+                  </Show>
+                  <button
+                    class="tiny ghost"
+                    title="Pop out, SSH, or close this tab"
+                    aria-label={`Options for ${tab.label}`}
+                    onClick={() => setMenu(menu() === tab.id ? null : tab.id)}
+                  >
+                    ⋯
+                  </button>
+                  <Show when={menu() === tab.id}>
+                    <span class="terminal-tab-menu">
+                      <button class="tiny" onClick={() => popOut(tab.id)}>Pop out</button>
+                      <button class="tiny" onClick={() => showSsh(tab.id)}>SSH</button>
+                      <button
+                        class="tiny"
+                        title="Remove the tab from your list; the shell keeps running for everyone else"
+                        onClick={() => closeMine(tab.id)}
+                      >
+                        Close for me
+                      </button>
+                      <button
+                        class="tiny danger"
+                        title="End the shell for everybody who is in it"
+                        onClick={() => setConfirmTab(tab.id)}
+                      >
+                        Close for everyone
+                      </button>
                     </span>
                   </Show>
-                </button>
-                <button class="tiny danger" title="Close terminal" onClick={() => closeTab(tab.id)}>
-                  ×
-                </button>
-              </span>
-            )}
-          </For>
-          <button class="tiny" onClick={add}>+ Terminal</button>
-        </Show>
-      </div>
+                </span>
+              )}
+            </For>
+            <button class="tiny" onClick={add}>+ Terminal</button>
+          </Show>
+        </div>
+      </Show>
       <div class="controls">
         <span class={`badge ${state() === 'open' ? 'ok' : state() === 'connecting' ? 'warn' : 'muted'}`}>
           <i />
@@ -327,9 +508,22 @@ export default function TerminalTab(props) {
         </label>
         <span class="muted small">
           Tabs are stored on the server, so a reload or another machine reopens the same shells.
-          Closing the browser detaches; × ends only that terminal.
+          Leaving the browser detaches; × removes the tab from your list and leaves the shell running.
         </span>
       </div>
+      <Show when={sshFor()}>
+        <div class="sessions-ssh">
+          <Show
+            when={sshLine()}
+            fallback={<span class="muted small">Reading how to reach this sandbox…</span>}
+          >
+            <span class="small">Attach to “{sshFor()}” from your own machine:</span>
+            <pre class="mono">{sshLine()}</pre>
+            <button class="tiny" onClick={() => copyText(sshLine(), setCopyFallback)}>Copy</button>
+            <p class="muted small">{puttyHint(sshHost(), sshPort(), sshFor())}</p>
+          </Show>
+        </div>
+      </Show>
       <Show when={durable() === false}>
         <p class="warn-note">
           This image has no <code>tmux</code>, so a tab cannot survive a reload: reconnecting starts a
@@ -356,6 +550,20 @@ export default function TerminalTab(props) {
       <div class="term-wrap">
         <div ref={host} style="height:100%" />
       </div>
+      <ConfirmDialog
+        open={confirmTab() !== null}
+        title="Close this tab for everyone?"
+        onClose={() => setConfirmTab(null)}
+        actions={[
+          { label: 'Close for everyone', tone: 'danger', onClick: () => closeForAll(confirmTab()) },
+          { label: 'Keep it', tone: 'secondary', onClick: () => setConfirmTab(null) },
+        ]}
+      >
+        <p class="small">
+          The shell of “{confirmTab()}” and whatever runs in it end for every person connected to it.
+          Closing it only for yourself leaves it running.
+        </p>
+      </ConfirmDialog>
     </section>
   );
 }

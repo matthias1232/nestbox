@@ -16,6 +16,7 @@ a new colour asks for a token; it does not invent a hex value.
 | `sandbox-resources.css` | The create form's node budget and the Agents tab |
 | `recipes-persist.css` | Recipe table, editor, and detail; persistent roots and their mounts |
 | `builder.css` | The builder's sections: baseline, tools, agents, resources, node, mounts |
+| `workbox-sessions.css` | The shared terminal tab strip with its per-tab menu and SSH line, the desktop panel, and the two pop-out layouts; imported by `TerminalTab`, `DesktopTab`, `SessionsPanel` and the pop-outs |
 
 A screen-specific file is the exception, not the pattern: it exists where a
 feature says something app.css has no word for. Import it from the module that
