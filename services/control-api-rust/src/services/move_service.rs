@@ -94,7 +94,7 @@ async fn fail(ctx: &ServiceContext, move_id: Uuid, step: &str, error: &ApiError)
 }
 
 /// The password of the data center's repository, made on first use and kept in the vault.
-async fn repository_password(ctx: &ServiceContext, principal: &Principal) -> Result<String, ApiError> {
+pub(crate) async fn repository_password(ctx: &ServiceContext, principal: &Principal) -> Result<String, ApiError> {
     let name = "restic-repository";
     if let Ok(existing) = secret_service::reveal(ctx, principal.environment_id, name).await {
         return Ok(existing);

@@ -138,3 +138,33 @@ def restore(body: RestoreRequest) -> dict[str, Any]:
     restic(body.repo, body.password, "restore", f"{body.snapshot}:{source}", "--target", str(target))
     files = sum(1 for _ in target.rglob("*"))
     return {"restored_to": str(target), "set_aside": str(aside) if aside else None, "entries": files}
+
+
+REPO_BASE = Path(os.getenv("NESTBOX_RESTIC_BASE", "/var/lib/nestbox/restic"))
+
+
+class PruneRequest(BaseModel):
+    # A directory name under the repository base, never a path: the runner only prunes repositories
+    # the control plane's own snapshot server holds, and only through the filesystem.
+    name: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9-]+$")
+    password: str = Field(min_length=8, max_length=200)
+    keep_last: int = Field(default=20, ge=1, le=1000)
+    keep_daily: int = Field(default=14, ge=0, le=366)
+
+
+@router.post("/v1/snapshots/prune")
+def prune(body: PruneRequest) -> dict[str, Any]:
+    """Forget old snapshots of one data center's repository and reclaim the space.
+
+    The snapshot server is append-only, so no node can do this; it runs where the files are: on the
+    control plane's own runner, against the directory the server writes.
+    """
+    repo = REPO_BASE / body.name
+    if not repo.is_dir():
+        raise HTTPException(404, "that repository does not exist on this node")
+    arguments = ["forget", "--prune", "--group-by", "host,tags", "--keep-last", str(body.keep_last)]
+    if body.keep_daily:
+        arguments += ["--keep-daily", str(body.keep_daily)]
+    result = restic(str(repo), body.password, *arguments)
+    tail = [line for line in result.stdout.splitlines() if line.strip()][-3:]
+    return {"repository": body.name, "summary": tail}

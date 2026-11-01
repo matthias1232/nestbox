@@ -35,6 +35,7 @@ pub mod proxy_service;
 pub mod sandbox_service;
 pub mod selection;
 pub mod session_service;
+pub mod snapshot_service;
 pub mod secret_service;
 pub mod stack_topology_service;
 pub mod telemetry_service;

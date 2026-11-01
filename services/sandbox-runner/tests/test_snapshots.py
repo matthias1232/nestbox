@@ -26,5 +26,16 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(snapshots.parse_summary("garbage\n{not json\n"), {})
 
 
+class PruneTests(unittest.TestCase):
+    def test_a_repository_name_cannot_be_a_path(self):
+        from pydantic import ValidationError
+        for bad in ("../etc", "a/b", "", "x" * 81):
+            with self.assertRaises(ValidationError, msg=bad):
+                snapshots.PruneRequest(name=bad, password="longenough")
+
+    def test_a_plain_name_is_accepted(self):
+        self.assertEqual(snapshots.PruneRequest(name="00000000-0000-0000-0000-000000000002", password="longenough").keep_last, 20)
+
+
 if __name__ == "__main__":
     unittest.main()

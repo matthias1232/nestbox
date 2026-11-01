@@ -116,3 +116,28 @@ pub async fn moves(State(state): State<AppState>, auth: Auth) -> Result<Json<ser
 pub async fn get_move(State(state): State<AppState>, auth: Auth, Path(id): Path<Uuid>) -> Result<Json<crate::services::move_service::MoveView>, ApiError> {
     Ok(Json(crate::services::move_service::get(&state.services, &auth.principal, id).await?))
 }
+
+/// The snapshots of one persistent folder.
+pub async fn root_snapshots(State(state): State<AppState>, auth: Auth, Path(id): Path<Uuid>) -> Result<Json<serde_json::Value>, ApiError> {
+    let items = crate::services::snapshot_service::list(&state.services, &auth.principal, id).await?;
+    Ok(Json(serde_json::json!({ "items": items })))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct PruneRequest {
+    #[serde(default = "keep_last")]
+    pub keep_last: i32,
+    #[serde(default = "keep_daily")]
+    pub keep_daily: i32,
+}
+fn keep_last() -> i32 {
+    20
+}
+fn keep_daily() -> i32 {
+    14
+}
+
+/// Forget old snapshots of this data center and reclaim the space.
+pub async fn prune_snapshots(State(state): State<AppState>, auth: Auth, Json(body): Json<PruneRequest>) -> Result<Json<serde_json::Value>, ApiError> {
+    Ok(Json(crate::services::snapshot_service::prune(&state.services, &auth.principal, body.keep_last, body.keep_daily).await?))
+}

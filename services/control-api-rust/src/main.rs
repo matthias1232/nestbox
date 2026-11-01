@@ -85,6 +85,25 @@ async fn main() {
         });
     }
 
+    // Snapshots of folders that work away from home, every NESTBOX_SNAPSHOT_MINUTES (default 15),
+    // (pruning old ones is an administrator action: POST /api/v1/snapshots/prune, ADR 0049).
+    {
+        let services = state.services.clone();
+        let config = state.config.clone();
+        tokio::spawn(async move {
+            let minutes: i64 = std::env::var("NESTBOX_SNAPSHOT_MINUTES").ok().and_then(|v| v.parse().ok()).unwrap_or(15).max(1);
+            tokio::time::sleep(std::time::Duration::from_secs(90)).await;
+            loop {
+                match nestbox_control_api::services::snapshot_service::tick(&services, &config, minutes).await {
+                    Ok(0) => {}
+                    Ok(taken) => tracing::info!(taken, "scheduled snapshots were taken"),
+                    Err(error) => tracing::debug!(code = error.code.0, "snapshot pass skipped"),
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            }
+        });
+    }
+
     // Images: each joined node holds what it was assigned (ADR 0048).
     {
         let services = state.services.clone();

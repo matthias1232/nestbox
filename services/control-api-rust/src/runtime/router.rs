@@ -305,6 +305,9 @@ impl RuntimeAdapter for RuntimeRouter {
     async fn images(&self) -> Result<Vec<crate::domain::runtime::NodeImageFact>, RuntimeError> {
         self.local.images().await
     }
+    async fn prune_snapshots(&self, name: &str, password: &str, keep_last: i32, keep_daily: i32) -> Result<serde_json::Value, RuntimeError> {
+        self.local.prune_snapshots(name, password, keep_last, keep_daily).await
+    }
     async fn snapshot_backup(&self, repo: &str, password: &str, path: &str, tags: &[String]) -> Result<crate::domain::runtime::SnapshotFact, RuntimeError> {
         self.local.snapshot_backup(repo, password, path, tags).await
     }

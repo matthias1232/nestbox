@@ -366,6 +366,8 @@ services:
       - /var/lib/nestbox/models:/var/lib/nestbox/models
       # Backups of persistent roots: one tar.gz each, written and read only by the runner.
       - /var/lib/nestbox/backups:/var/lib/nestbox/backups
+      # The snapshot server's files, so the control plane can prune what the append-only server keeps.
+      - ./data/restic:/var/lib/nestbox/restic
       - /proc:/host/proc:ro
       - ./secrets/node:/run/node:ro
       # The public CA copy the runner writes for sandboxes; same path in and out.

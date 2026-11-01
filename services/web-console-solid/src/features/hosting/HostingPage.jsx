@@ -136,6 +136,8 @@ export default function HostingPage(props) {
             <label class="field"><span>Provider</span>
               <select value={account().kind} onChange={(e) => setAccount({ ...account(), kind: e.currentTarget.value })}>
                 <option value="hetzner">Hetzner Cloud</option>
+                <option value="digitalocean">DigitalOcean</option>
+                <option value="vultr">Vultr</option>
                 <option value="proxmox">Proxmox VE (your own)</option>
               </select>
             </label>

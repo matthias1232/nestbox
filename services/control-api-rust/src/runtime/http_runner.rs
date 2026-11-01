@@ -668,6 +668,11 @@ impl RuntimeAdapter for HttpRunner {
         self.send(reqwest::Method::POST, "/v1/snapshots/restore", Some(&body)).await
     }
 
+    async fn prune_snapshots(&self, name: &str, password: &str, keep_last: i32, keep_daily: i32) -> Result<serde_json::Value, RuntimeError> {
+        let body = serde_json::json!({ "name": name, "password": password, "keep_last": keep_last, "keep_daily": keep_daily });
+        self.send(reqwest::Method::POST, "/v1/snapshots/prune", Some(&body)).await
+    }
+
     async fn images(&self) -> Result<Vec<crate::domain::runtime::NodeImageFact>, RuntimeError> {
         #[derive(Deserialize)]
         struct Listing {

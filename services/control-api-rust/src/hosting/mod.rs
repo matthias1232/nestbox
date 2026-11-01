@@ -1,7 +1,9 @@
 //! Provider drivers (ADR 0050). See `AGENTS.md`.
 
+pub mod digitalocean;
 pub mod hetzner;
 pub mod proxmox;
+pub mod vultr;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -89,12 +91,21 @@ pub fn driver_for(kind: &str, config: &serde_json::Value, secret: &str) -> Resul
             secret,
         ))),
         "proxmox" => Ok(Box::new(proxmox::Proxmox::from_config(config, secret)?)),
-        other => Err(HostError::Invalid(format!("There is no driver for '{other}'. Supported: hetzner, proxmox."))),
+        "digitalocean" => Ok(Box::new(digitalocean::DigitalOcean::new(
+            config.get("api_url").and_then(|v| v.as_str()).unwrap_or("https://api.digitalocean.com/v2"),
+            secret,
+        ))),
+        "vultr" => Ok(Box::new(vultr::Vultr::new(
+            config.get("api_url").and_then(|v| v.as_str()).unwrap_or("https://api.vultr.com/v2"),
+            secret,
+            config.get("os_id").and_then(|v| v.as_u64()).unwrap_or(2284),
+        ))),
+        other => Err(HostError::Invalid(format!("There is no driver for '{other}'. Supported: hetzner, digitalocean, vultr, proxmox."))),
     }
 }
 
 /// Providers a console can offer.
-pub const KINDS: [&str; 2] = ["hetzner", "proxmox"];
+pub const KINDS: [&str; 4] = ["hetzner", "digitalocean", "vultr", "proxmox"];
 
 #[cfg(test)]
 mod tests {

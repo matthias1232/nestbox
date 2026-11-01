@@ -321,6 +321,10 @@ pub trait RuntimeAdapter: Send + Sync {
     ) -> Result<serde_json::Value, RuntimeError> {
         Err(RuntimeError::Unavailable("this runtime cannot restore snapshots".into()))
     }
+    /// Forget old snapshots in a repository held on this node's disk.
+    async fn prune_snapshots(&self, _name: &str, _password: &str, _keep_last: i32, _keep_daily: i32) -> Result<serde_json::Value, RuntimeError> {
+        Err(RuntimeError::Unavailable("this runtime cannot prune snapshots".into()))
+    }
     /// The tagged images this node holds.
     async fn images(&self) -> Result<Vec<NodeImageFact>, RuntimeError> {
         Err(RuntimeError::Unavailable("this runtime does not report images".into()))

@@ -87,7 +87,7 @@ pub async fn add_account(
 ) -> Result<AccountView, ApiError> {
     require(principal, Permission::ProviderWrite)?;
     if !drivers::KINDS.contains(&kind) {
-        return Err(ApiError::validation("A provider is hetzner or proxmox."));
+        return Err(ApiError::validation("A provider is hetzner, digitalocean, vultr or proxmox."));
     }
     let name = name.trim().to_lowercase();
     if crate::domain::tenancy::slugify(&name).as_deref() != Some(name.as_str()) {
