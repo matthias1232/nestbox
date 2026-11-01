@@ -10,12 +10,14 @@
 set -eu
 export DEBIAN_FRONTEND=noninteractive
 
+# tmux carries the shared terminals: every console tab attaches to its own
+# session, and a tab outlives the browser that opened it.
 apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates curl gnupg python3 \
   tigervnc-standalone-server tigervnc-common \
   xfce4 xfce4-terminal dbus-x11 x11-utils xauth xdg-utils \
-  libnss3-tools \
+  libnss3-tools tmux \
   fonts-dejavu-core fonts-liberation fonts-noto-color-emoji xz-utils
 
 # Google Chrome comes from Google's own repository: Ubuntu's chromium is a snap,
