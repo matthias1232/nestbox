@@ -32,6 +32,9 @@ the codebase where SQL appears.
 | `auth.rs` | Users, sessions, API tokens, scopes |
 | `policies.rs` | Policy documents, versions, network rules, drafts, the compiled rule-set hash, traffic windows (open, list, revoke, the environment's `max_window_minutes`) |
 | `egress.rs` | Compilation hash record, decisions, open windows for the decider, node token locator, deployment comparison |
+| `policies.rs` | Policy documents, versions, network rules, drafts, the compiled rule-set hash |
+| `egress.rs` | Compilation hash record, decisions, open windows, node token locator, deployment comparison |
+| `egress_live.rs` | The tenant list and the due revert timers the live-mode revert loop walks before `policies.rs` writes one mode |
 | `telemetry.rs` | Event insert, query, batch insert, ingest's node lookup, MCP tool calls, partition maintenance |
 | `gateways.rs` | Gateways, supervisors, sync state |
 | `models.rs` | Model catalog, hardware profiles, inference rows, the catalog-sync upsert |
