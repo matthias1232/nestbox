@@ -109,6 +109,10 @@ pub struct CreateRequest {
     pub cpu_limit: f64,
     #[serde(default = "default_pids")]
     pub pids_limit: i64,
+    /// GPUs to hand to the container. Omitted means none; a node that cannot hand
+    /// them out refuses the request.
+    #[serde(default)]
+    pub gpu_count: Option<u32>,
     /// The node to place the sandbox on, by name. Omitted means the local node.
     #[serde(default)]
     pub node: Option<String>,
@@ -146,6 +150,7 @@ pub async fn create(
             memory_limit: body.memory_limit,
             cpu_limit: body.cpu_limit,
             pids_limit: body.pids_limit,
+            gpu_count: body.gpu_count,
             node: body.node,
             parent_id: body.parent_id,
             login: body.login,
