@@ -154,14 +154,16 @@ pub async fn start(
         return Err(ApiError::conflict(ErrorCode::SANDBOX_INVALID_STATE, "Only a running or stopped sandbox can be moved."));
     }
     let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO sandbox_moves (environment_id, sandbox_id, sandbox_name, from_node_id, to_node_id, started_by)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+        "INSERT INTO sandbox_moves (environment_id, sandbox_id, sandbox_name, from_node_id, to_node_id, from_node_name, to_node_name, started_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
     )
     .bind(scope.environment_id())
     .bind(sandbox.id)
     .bind(&sandbox.name)
     .bind(from.id)
     .bind(to.id)
+    .bind(&from.name)
+    .bind(&to.name)
     .bind(principal.user_id)
     .fetch_one(scope.connection())
     .await
@@ -341,9 +343,9 @@ async fn list_where(ctx: &ServiceContext, principal: &Principal, only: Option<Uu
     // A member sees the moves of sandboxes they can see: the join to `sandboxes` runs under their
     // row-level security. A move whose sandbox is gone is for administrators.
     let rows = sqlx::query_as::<_, (Uuid, Option<Uuid>, String, String, String, String, String, serde_json::Value, i64, Option<String>, DateTime<Utc>, Option<DateTime<Utc>>)>(
-        "SELECT m.id, m.sandbox_id, m.sandbox_name, f.name, t.name, m.state, m.step, m.log, m.bytes_moved, m.error, m.started_at, m.finished_at
+        "SELECT m.id, m.sandbox_id, m.sandbox_name, coalesce(f.name, m.from_node_name, '?'), coalesce(t.name, m.to_node_name, '?'), m.state, m.step, m.log, m.bytes_moved, m.error, m.started_at, m.finished_at
            FROM sandbox_moves m
-           JOIN nodes f ON f.id = m.from_node_id JOIN nodes t ON t.id = m.to_node_id
+           LEFT JOIN nodes f ON f.id = m.from_node_id LEFT JOIN nodes t ON t.id = m.to_node_id
           WHERE m.environment_id = $1 AND ($2::uuid IS NULL OR m.id = $2)
             AND ($3 OR EXISTS (SELECT 1 FROM sandboxes s WHERE s.id = m.sandbox_id))
           ORDER BY m.started_at DESC LIMIT 100",
