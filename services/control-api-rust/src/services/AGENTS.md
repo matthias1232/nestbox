@@ -282,7 +282,7 @@ uses to find it.
 | `tenancy_service.rs` | Customers, data centers, sites, sandbox grants, invitations |
 | `oidc_service.rs` | Sign-in through an identity provider: PKCE flow, profile parsing, who a stranger is |
 | `node_join_service.rs` | Join tokens, the join script, overlay addresses, the hub's peer list, the sync loop |
-| `node_join/` | The script and the compose file a joined node runs (embedded with `include_str!`) |
+| `node_join/` | The scripts and the compose file a joined node runs (embedded with `include_str!`): `prepare.sh` installs and makes the key, `apply.sh` brings up the tunnel, the egress lock and the node package, `join.sh` is both with the join request in the middle |
 | `image_sync_service.rs` | Image assignments, the images x nodes matrix, the pull loop |
 | `move_service.rs` | Moving a sandbox and its folders to another node with restic snapshots |
 | `provision_service.rs` | Provider accounts, renting machines, the budget, the reaper |
