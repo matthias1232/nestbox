@@ -54,6 +54,7 @@ const GENERATOR_VERSION: u32 = 7;
 /// Dockerfile, so a change to either must change the image's content hash.
 const DESKTOP_INSTALL: &str = include_str!("../../../tool-images/desktop/install.sh");
 const DESKTOP_START: &str = include_str!("../../../tool-images/desktop/nestbox-desktop");
+const DESKTOP_IDFIX: &str = include_str!("../../../tool-images/desktop/idfix.c");
 
 /// The supervisor program shipped inside every image the builder produces.
 ///
@@ -1866,9 +1867,14 @@ fn install_step(install: &PackInstall) -> Result<String, String> {
              # The X server compiles its keymap into this directory. It is root's\n\
              # by default, and the desktop does not run as root. Its own layer, so\n\
              # the cached install above stays valid.\n\
-             RUN mkdir -p /var/lib/xkb && chmod 1777 /var/lib/xkb\n",
+             RUN mkdir -p /var/lib/xkb && chmod 1777 /var/lib/xkb\n\
+             # A gateway sandbox refuses setuid(getuid()), which the X server calls\n\
+             # before it starts xkbcomp: a small preload library answers it (idfix.c).\n\
+             # The compiler goes in and out in one layer.\n\
+             RUN echo {idfix} | base64 -d > /tmp/idfix.c \\\n && apt-get update \\\n && apt-get install -y --no-install-recommends gcc libc6-dev \\\n && gcc -shared -fPIC -O2 -o /usr/local/lib/nestbox-idfix.so /tmp/idfix.c -ldl \\\n && apt-get purge -y gcc libc6-dev \\\n && rm -rf /var/lib/apt/lists/* /tmp/idfix.c\n",
             install = dockerfile_payload(DESKTOP_INSTALL),
             start = dockerfile_payload(DESKTOP_START),
+            idfix = dockerfile_payload(DESKTOP_IDFIX),
         ),
         PackInstall::Npm(spec) => {
             let spec = validate_spec(spec)?;
@@ -1945,6 +1951,7 @@ pub fn content_hash(
                         "kind": "desktop",
                         "install": DESKTOP_INSTALL,
                         "start": DESKTOP_START,
+                        "idfix": DESKTOP_IDFIX,
                     }),
                 },
                 "homes": agent.home_directories,
