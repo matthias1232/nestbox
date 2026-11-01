@@ -12,6 +12,7 @@ FROM node:22-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 ARG CLAUDE_CODE_VERSION=2.1.312
+ARG CODEX_VERSION=0.166.0
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -43,5 +44,13 @@ ENV PATH=/home/nestbox/.local/bin:${PATH}
 
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     && claude --version
+
+# Codex CLI: its sign-in (ChatGPT or gateway) is switched by the Nestbox launcher.
+#
+# Installed into the same user prefix as Claude Code, so both agents are found on
+# PATH by `docker exec` and the SSH door without a login shell. Pinned like every
+# other tool here: a silent upgrade would change what the sandbox's agent sees.
+RUN npm install -g "@openai/codex@${CODEX_VERSION}" \
+    && codex --version
 
 CMD ["sleep", "infinity"]
