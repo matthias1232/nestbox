@@ -28,6 +28,14 @@ use crate::store::TenantScope;
 const SCRIPT: &str = include_str!("node_join/join.sh");
 const COMPOSE: &str = include_str!("node_join/compose.yml");
 
+/// The first half of an install: packages, Docker and this machine's WireGuard key. Run over SSH
+/// on a machine that is not a node yet; it prints `NESTBOX_PUBKEY=<key>` (ADR 0057).
+pub const PREPARE_SCRIPT: &str = include_str!("node_join/prepare.sh");
+
+/// The second half of an install: the tunnel, the egress lock and the node package. Run over SSH
+/// with the `NB_*` environment an answer from [`join_with_key`] produces (ADR 0057).
+pub const APPLY_SCRIPT: &str = include_str!("node_join/apply.sh");
+
 fn db(error: sqlx::Error) -> ApiError {
     ApiError::from(crate::store::map_sqlx_error(error))
 }
@@ -55,6 +63,8 @@ pub struct JoinAnswer {
     pub registry: String,
     pub control_url: String,
     pub node_token: String,
+    /// The egress lock the node applies once its tunnel is up: `strict` or `exit_local`.
+    pub egress_lock: String,
 }
 
 /// Whether joining is set up on this installation: a hub directory and an endpoint.
@@ -90,12 +100,50 @@ pub fn valid_wg_key(key: &str) -> bool {
 }
 
 /// The peers file the hub applies: one `[Peer]` per node, reachable at its address only.
-pub fn render_peers(nodes: &[(String, String, String)]) -> String {
+///
+/// A node the hub dials (a machine behind NAT, ADR 0057) also carries an `Endpoint`, and then
+/// the hub keeps the tunnel alive itself: a node that only listens cannot send a keepalive the
+/// hub would need to answer.
+pub fn render_peers(nodes: &[(String, String, String, Option<String>)]) -> String {
     let mut out = String::from("# Written by the control plane. Do not edit: the next join rewrites it.\n");
-    for (name, key, ip) in nodes {
+    for (name, key, ip, endpoint) in nodes {
         out.push_str(&format!("\n# {name}\n[Peer]\nPublicKey = {key}\nAllowedIPs = {ip}/32\n"));
+        if let Some(endpoint) = endpoint {
+            out.push_str(&format!("Endpoint = {endpoint}\nPersistentKeepalive = 25\n"));
+        }
     }
     out
+}
+
+/// A node name as it is stored, or the one sentence that says why it cannot be.
+///
+/// One function so the token route and the "connect by address" route cannot drift apart on
+/// what a node may be called.
+pub fn valid_node_name(raw: &str) -> Result<String, ApiError> {
+    let node_name = raw.trim().to_lowercase();
+    if tenancy::slugify(&node_name).as_deref() != Some(node_name.as_str()) || node_name.len() > 42 {
+        return Err(ApiError::validation(
+            "A node name uses lowercase letters, digits and dashes, up to 42 characters.",
+        ));
+    }
+    Ok(node_name)
+}
+
+/// The node package exactly as `script()` embeds it, so a base64 copy sent to a machine over SSH
+/// and the heredoc in `join.sh` produce the same file.
+pub fn compose_text() -> &'static str {
+    COMPOSE.trim_end()
+}
+
+/// A script without its first line (the `#!` shebang).
+///
+/// `join.sh` is assembled inside a shell that is already running, and a second shebang in the
+/// middle of a script is a comment at best and a surprise at worst.
+fn without_shebang(script: &str) -> &str {
+    match script.split_once('\n') {
+        Some((_, rest)) => rest,
+        None => script,
+    }
 }
 
 /// Ask for a token that lets one machine join one site of this data center.
@@ -113,10 +161,7 @@ pub async fn create_token(
             "Joining nodes is not set up: NESTBOX_OVERLAY_DIR and NESTBOX_OVERLAY_ENDPOINT are empty.",
         ));
     }
-    let node_name = node_name.trim().to_lowercase();
-    if tenancy::slugify(&node_name).as_deref() != Some(node_name.as_str()) || node_name.len() > 42 {
-        return Err(ApiError::validation("A node name uses lowercase letters, digits and dashes, up to 42 characters."));
-    }
+    let node_name = valid_node_name(node_name)?;
     let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
     let site: Option<Uuid> = sqlx::query_scalar("SELECT id FROM sites WHERE id = $1 AND environment_id = $2")
         .bind(site_id)
@@ -223,11 +268,16 @@ pub async fn script(ctx: &ServiceContext, config: &Config, token: &str) -> Resul
     Ok(SCRIPT
         .replace("__CONTROL_URL__", &base)
         .replace("__TOKEN__", token)
-        .replace("__COMPOSE__", COMPOSE.trim_end()))
+        .replace("__COMPOSE__", compose_text())
+        .replace("__PREPARE__", without_shebang(PREPARE_SCRIPT))
+        .replace("__APPLY__", without_shebang(APPLY_SCRIPT)))
 }
 
 /// Trade a token for an identity. Single-use: the token is spent in the same transaction that
 /// makes the node, so two machines racing on one token get one node and one refusal.
+///
+/// This is the node's own path: the node dials the hub, and its egress lock is the one it had
+/// before the lock existed (`exit_local`).
 pub async fn join(
     ctx: &ServiceContext,
     config: &Config,
@@ -235,11 +285,31 @@ pub async fn join(
     public_key: &str,
     hostname: &str,
 ) -> Result<JoinAnswer, ApiError> {
+    join_with_key(ctx, config, token, public_key, hostname, None, "exit_local").await
+}
+
+/// Trade a token for an identity, with the tunnel direction and the egress lock the caller wants.
+///
+/// `endpoint` is the address the hub dials when the control plane installs the machine itself
+/// (`connect`): the hub then holds `Endpoint` and a keepalive for that peer. `None` keeps the
+/// node-dials-hub direction, which is what a script the node runs follows.
+pub async fn join_with_key(
+    ctx: &ServiceContext,
+    config: &Config,
+    token: &str,
+    public_key: &str,
+    hostname: &str,
+    endpoint: Option<(String, u16)>,
+    lock: &str,
+) -> Result<JoinAnswer, ApiError> {
     if !enabled(config) {
         return Err(ApiError::unavailable(ErrorCode::NODE_RUNTIME_UNAVAILABLE, "Joining nodes is not set up."));
     }
     if !valid_wg_key(public_key.trim()) {
         return Err(ApiError::validation("That is not a WireGuard public key."));
+    }
+    if !matches!(lock, "strict" | "exit_local") {
+        return Err(ApiError::validation("A lock is 'strict' or 'exit_local'."));
     }
     let hub_public_key = std::fs::read_to_string(config.overlay.dir.join("hub.pub"))
         .map(|k| k.trim().to_string())
@@ -313,6 +383,17 @@ pub async fn join(
     .await
     .map_err(db)?;
     sqlx::query("UPDATE node_join_tokens SET node_id = $2 WHERE id = $1").bind(token_id).bind(node_id).execute(&mut *tx).await.map_err(db)?;
+    // How the hub reaches this node and how the node should leave: the gateway columns. Written in
+    // the same transaction as the row, so a node never exists half described.
+    crate::store::postgres::node_gateway::store_gateway(
+        &mut tx,
+        node_id,
+        endpoint.as_ref().map(|(host, _port)| host.as_str()),
+        endpoint.as_ref().map(|(_host, port)| i32::from(*port)),
+        lock,
+    )
+    .await
+    .map_err(ApiError::from)?;
     tx.commit().await.map_err(db)?;
 
     // The vault holds the token the control plane presents to this node's runner. If this
@@ -334,6 +415,7 @@ pub async fn join(
         registry: config.overlay.registry.clone(),
         control_url: config.overlay.control_url.clone(),
         node_token,
+        egress_lock: lock.to_string(),
     })
 }
 
@@ -357,8 +439,11 @@ pub async fn compose_for(ctx: &ServiceContext, node_id: Uuid, presented: &str) -
 /// Rewrite the hub's peer list from the nodes table. Atomic: written beside and renamed, so the
 /// hub never reads half a file.
 pub async fn write_peers(pool: &sqlx::PgPool, dir: &Path) -> Result<(), ApiError> {
-    let rows: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT name, wg_public_key, overlay_ip FROM nodes
+    let rows: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT name, wg_public_key, overlay_ip,
+                CASE WHEN public_endpoint IS NOT NULL
+                     THEN public_endpoint || ':' || wg_listen_port END
+           FROM nodes
           WHERE wg_public_key IS NOT NULL AND overlay_ip IS NOT NULL ORDER BY overlay_ip",
     )
     .fetch_all(pool)
@@ -562,9 +647,29 @@ mod tests {
 
     #[test]
     fn the_peer_file_names_each_node_at_its_own_address_only() {
-        let text = render_peers(&[("gpu-1".into(), "KEY1=".into(), "10.77.1.2".into())]);
+        let text = render_peers(&[("gpu-1".into(), "KEY1=".into(), "10.77.1.2".into(), None)]);
         assert!(text.contains("[Peer]\nPublicKey = KEY1=\nAllowedIPs = 10.77.1.2/32"));
         assert!(!text.contains("0.0.0.0"));
+        // A node the hub does not dial carries no endpoint: its tunnel is the node's business.
+        assert!(!text.contains("Endpoint"));
+    }
+
+    #[test]
+    fn a_hub_dialled_node_carries_its_endpoint_and_a_keepalive() {
+        let text = render_peers(&[(
+            "far-1".into(),
+            "KEY2=".into(),
+            "10.77.1.3".into(),
+            Some("1.2.3.4:51820".into()),
+        )]);
+        assert!(text.contains("Endpoint = 1.2.3.4:51820"));
+        assert!(text.contains("PersistentKeepalive = 25"));
+    }
+
+    #[test]
+    fn a_shebang_is_dropped_from_an_inlined_script() {
+        assert_eq!(without_shebang("#!/bin/sh\nset -eu\necho hi\n"), "set -eu\necho hi\n");
+        assert_eq!(without_shebang("no newline"), "no newline");
     }
 
     #[test]

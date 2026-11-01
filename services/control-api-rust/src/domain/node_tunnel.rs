@@ -142,7 +142,7 @@ mod tests {
 
     const DUMP: &str = "abcdef\tprivate\t51820\toff\n\
 key-one\t(none)\t1.2.3.4:51820\t10.77.1.2/32\t1700000000\t120\t340\t25\n\
-key-two\t(none)\t10.9.9.9:5000\t10.77.2.2/32\t0\t0\t0\toff\n";
+key-two\t(none)\t(none)\t10.77.2.2/32\t0\t0\t0\toff\n";
 
     #[test]
     fn the_interface_line_is_skipped() {
@@ -155,8 +155,10 @@ key-two\t(none)\t10.9.9.9:5000\t10.77.2.2/32\t0\t0\t0\toff\n";
     fn an_empty_endpoint_is_no_endpoint() {
         let peers = parse_wg_dump(DUMP);
         assert_eq!(peers[0].endpoint.as_deref(), Some("1.2.3.4:51820"));
-        assert_eq!(peers[1].endpoint.as_deref(), Some("10.9.9.9:5000"));
+        // A peer that never answered has no endpoint, written as `(none)` by `wg`.
+        assert_eq!(peers[1].endpoint, None);
         assert_eq!(peers[0].rx_bytes, 120);
+        assert_eq!(peers[1].tx_bytes, 0);
     }
 
     #[test]

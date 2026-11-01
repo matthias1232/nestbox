@@ -289,6 +289,8 @@ uses to find it.
 | `oidc_service.rs` | Sign-in through an identity provider: PKCE flow, profile parsing, who a stranger is |
 | `node_join_service.rs` | Join tokens, the join script, overlay addresses, the hub's peer list, the sync loop |
 | `node_join/` | The scripts and the compose file a joined node runs (embedded with `include_str!`): `prepare.sh` installs and makes the key, `apply.sh` brings up the tunnel, the egress lock and the node package, `join.sh` is both with the join request in the middle |
+| `node_join_service.rs` | Join tokens, the join script, overlay addresses, the hub's peer list, the sync loop; `join_with_key` also stores the endpoint the hub dials |
+| `node_join/` | The three scripts (`join.sh`, `prepare.sh`, `apply.sh`) and the compose file a joined node runs (embedded with `include_str!`) |
 | `image_sync_service.rs` | Image assignments, the images x nodes matrix, the pull loop |
 | `move_service.rs` | Moving a sandbox and its folders to another node with restic snapshots |
 | `provision_service.rs` | Provider accounts, renting machines, the budget, the reaper |
@@ -304,7 +306,7 @@ uses to find it.
 | `presence_service` | who is connected to a sandbox now |
 | `model_grant_service` | which models a sandbox may use, and where they are served |
 | `model_readiness_service` | starting and warming those models before they are used |
-| `node_connect_service` | joining a machine by address, tunnels, the egress lock |
+| `node_connect_service` | joining a machine by address (prepare, join, apply over SSH, credentials never stored), tunnels from the hub's `status.tsv`, the egress lock |
 | `rule_bulk_service` | turning observation into rule drafts |
 | `control_service` | the one summary the workbox and the admin list read |
 
