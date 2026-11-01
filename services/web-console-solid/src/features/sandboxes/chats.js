@@ -59,7 +59,7 @@ function salvageRequest(text) {
 /** The id of the conversation a call belongs to, when the client names one. */
 export function sessionOf(text) {
   if (!text) return null;
-  const direct = /"nestbox_session"\s*:\s*"([0-9a-f-]{8,})"/.exec(text);
+  const direct = /"nestbox_conversation"\s*:\s*"([0-9a-f-]{8,})"/.exec(text);
   if (direct) return direct[1];
   // Claude Code: `metadata.user_id` is a JSON string, so its quotes are escaped.
   const escaped = /session_id\\?"\s*:\s*\\?"([0-9a-f-]{8,})/.exec(text);

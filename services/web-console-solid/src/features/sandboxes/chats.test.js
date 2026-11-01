@@ -30,7 +30,7 @@ function pick(actual, expected) {
 test('finds the session of a Claude Code call and a title answer', () => {
   const raw = '{"metadata":{"user_id":"{\\"device_id\\":\\"d\\",\\"session_id\\":\\"27a41161-b693-419a-850f-a5f2565bd848\\"}"}}';
   assert.equal(sessionOf(raw), '27a41161-b693-419a-850f-a5f2565bd848');
-  assert.equal(sessionOf('{"nestbox_session":"abcd1234-aa","messages":[]}'), 'abcd1234-aa');
+  assert.equal(sessionOf('{"nestbox_conversation":"abcd1234-aa","messages":[]}'), 'abcd1234-aa');
   assert.equal(sessionOf('{"messages":[]}'), null);
   assert.equal(titleOf('{"title": "Fix the \\"login\\" bug"}'), 'Fix the "login" bug');
   assert.equal(titleOf('hello'), null);
