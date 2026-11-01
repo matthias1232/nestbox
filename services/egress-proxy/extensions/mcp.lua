@@ -122,7 +122,7 @@ local function last_message_digest(bytes)
   -- Claude Code names its session inside `metadata.user_id`, which is itself a
   -- JSON string, so the quotes around the id are escaped. Kept so the console
   -- can put a conversation's calls together.
-  local session = string.match(bytes, 'session_id\\":\\"([%x%-]+)\\"') or string.match(bytes, '"session_id"%s*:%s*"([%x%-]+)"')
+  local session = string.match(bytes, 'session_id\\"%s*:%s*\\"([%x%-]+)\\"') or string.match(bytes, '"session_id"%s*:%s*"([%x%-]+)"')
   return string.format(
     '{"model":%s,"nestbox_history":%d,"nestbox_session":%s,"messages":[%s]}',
     model and ('"' .. model .. '"') or "null",
