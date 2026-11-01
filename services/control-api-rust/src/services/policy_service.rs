@@ -1824,6 +1824,28 @@ async fn attached_mcp_rules(
 /// the console reaches the supervisor within one pass, and a restart of this process
 /// re-sends everything once. The last pushed fingerprint is kept in memory only: it
 /// is an optimisation, and losing it costs one idempotent `policy set`.
+/// Whether a sandbox's rules are suspended: the proxy is off, or a window on the
+/// OpenShell channel covers it.
+async fn evaluation_mode(scope: &mut TenantScope<'_>, sandbox_id: Uuid) -> Result<bool, ApiError> {
+    let mode = store::egress_mode_for_sandbox(scope, sandbox_id)
+        .await
+        .map_err(ApiError::from)?
+        .map(|setting| setting.mode)
+        .unwrap_or(crate::domain::policy::EgressMode::ForwardProxy);
+    if mode.allows_everything() {
+        return Ok(true);
+    }
+    let windows = egress_store::open_windows(scope, Some(sandbox_id))
+        .await
+        .map_err(ApiError::from)?;
+    Ok(windows.iter().any(|window| {
+        matches!(
+            window.channel,
+            crate::domain::egress::WindowChannel::All | crate::domain::egress::WindowChannel::Openshell
+        )
+    }))
+}
+
 pub async fn sync_openshell_policies(ctx: &ServiceContext) -> Result<u64, ApiError> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
@@ -1859,7 +1881,14 @@ pub async fn sync_openshell_policies(ctx: &ServiceContext) -> Result<u64, ApiErr
         let mut work = Vec::new();
         for (id, name) in rows.into_iter().filter(|(_, name)| on_gateway.contains(name)) {
             let rules = effective_rules(&mut scope, id, environment_id).await?;
-            work.push((id, name, crate::domain::openshell_policy::compile(&rules)));
+            let mut compiled = crate::domain::openshell_policy::compile(&rules);
+            // A sandbox whose proxy is off, or that an open window covers on the
+            // OpenShell channel, gets the allow-all policy in audit mode: the
+            // supervisor then records instead of refusing (ADR 0054).
+            if evaluation_mode(&mut scope, id).await? {
+                compiled = crate::domain::openshell_policy::allow_all(&compiled);
+            }
+            work.push((id, name, compiled));
         }
         scope.commit().await.map_err(ApiError::from)?;
         for (id, name, compiled) in work {

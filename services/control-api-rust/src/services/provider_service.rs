@@ -618,6 +618,33 @@ pub async fn environment_for_sandbox(
 ) -> Result<BTreeMap<String, String>, ApiError> {
     let mut environment = environment_for_pack(ctx, environment_id, pack_key).await?;
     if let Some(proxy) = accounting_proxy_url() {
+        // The granted models decide which dialect an agent is offered before the
+        // base URLs are rewritten: `NESTBOX_MODEL_ROUTER=1` makes the accounting
+        // proxy choose the upstream from the request's model (ADR 0057).
+        let models = crate::services::model_grant_service::effective_by_name(ctx, environment_id, sandbox_name)
+            .await
+            .unwrap_or_default();
+        if !models.is_empty() {
+            let names: Vec<&str> = models.iter().map(|model| model.model_name.as_str()).collect();
+            let default = models
+                .iter()
+                .find(|model| model.is_default)
+                .map(|model| model.model_name.clone())
+                .unwrap_or_else(|| models[0].model_name.clone());
+            environment.insert("NESTBOX_MODEL_ROUTER".into(), "1".into());
+            environment.insert("NESTBOX_MODEL_LIST".into(), names.join(","));
+            environment.insert("NESTBOX_MODEL_DEFAULT".into(), default);
+            // A placeholder, because an OpenAI client refuses to start without one.
+            // The router replaces the header with the granted model's credential.
+            environment.insert("OPENAI_API_KEY".into(), "nestbox".into());
+            environment.insert("ANTHROPIC_AUTH_TOKEN".into(), "nestbox".into());
+            if !environment.contains_key("OPENAI_BASE_URL") {
+                environment.insert("OPENAI_BASE_URL".into(), proxy.clone());
+            }
+            if !environment.contains_key("ANTHROPIC_BASE_URL") {
+                environment.insert("ANTHROPIC_BASE_URL".into(), proxy.clone());
+            }
+        }
         crate::domain::agent_config::route_through_accounting(&mut environment, &proxy, sandbox_name);
     }
     Ok(environment)

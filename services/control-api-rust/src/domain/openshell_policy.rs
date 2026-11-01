@@ -71,6 +71,38 @@ pub fn compile(rules: &[NetworkRule]) -> Compiled {
     Compiled { document, skipped }
 }
 
+/// The policy of a sandbox whose rules are suspended: everything allowed, everything logged.
+///
+/// Used for the `off_allow_all` egress mode and for an open window on the OpenShell
+/// channel (ADR 0054). The allow-all entry is an address range rather than a host
+/// wildcard, because a wildcard host is not a destination OpenShell can resolve;
+/// every base entry stays, so the policy only grows. `enforcement: audit` makes the
+/// supervisor report instead of refuse, which is the whole point of the mode.
+pub fn allow_all(base: &Compiled) -> Compiled {
+    let mut document = base.document.clone();
+    let Some(policies) = document.get_mut("network_policies").and_then(Value::as_object_mut) else {
+        return base.clone();
+    };
+    // Idempotent: a second pass (every 30 s) must not stack entries.
+    if policies.contains_key("nb_allow_all") {
+        return Compiled { document, skipped: base.skipped.clone() };
+    }
+    policies.insert(
+        "nb_allow_all".to_string(),
+        json!({
+            "name": "Everything allowed (evaluation mode)",
+            "endpoints": [{
+                "allowed_ips": ["0.0.0.0/0"],
+                "protocol": "rest",
+                "enforcement": "audit",
+                "access": "full",
+            }],
+            "binaries": [{ "path": "/**" }],
+        }),
+    );
+    Compiled { document, skipped: base.skipped.clone() }
+}
+
 fn is_denied(allow: &NetworkRule, denies: &[&NetworkRule]) -> bool {
     denies.iter().any(|deny| {
         deny.priority <= allow.priority
@@ -340,5 +372,58 @@ mod tests {
         let b = compile(&[rule("A", RuleAction::Allow, "b.example.com", Some(443), RuleProtocol::Rest)]);
         assert_eq!(a.fingerprint(), a_again.fingerprint());
         assert_ne!(a.fingerprint(), b.fingerprint());
+    }
+}
+
+#[cfg(test)]
+mod allow_all_tests {
+    use super::*;
+    use crate::domain::policy::{Enforcement, RuleProtocol};
+
+    fn allow_rule(name: &str, host: &str) -> NetworkRule {
+        NetworkRule {
+            id: uuid::Uuid::new_v4(),
+            environment_id: uuid::Uuid::nil(),
+            policy_id: None,
+            sandbox_id: None,
+            name: name.to_string(),
+            action: RuleAction::Allow,
+            host: host.to_string(),
+            port: Some(443),
+            protocol: RuleProtocol::Rest,
+            methods: vec![],
+            binaries: vec![],
+            matchers: vec![],
+            enforcement: Enforcement::Enforced,
+            priority: 10,
+            enabled: true,
+            version: 1,
+        }
+    }
+
+    #[test]
+    fn allow_all_keeps_the_rules_and_adds_one_audited_entry() {
+        let base = compile(&[allow_rule("omniroute", "10.90.92.30")]);
+        let wide = allow_all(&base);
+        let policies = wide.document["network_policies"].as_object().expect("policies");
+        assert!(policies.contains_key("nb_allow_all"));
+        assert_eq!(policies.len(), base.document["network_policies"].as_object().expect("base").len() + 1);
+        let entry = &policies["nb_allow_all"]["endpoints"][0];
+        assert_eq!(entry["enforcement"], "audit");
+        assert_eq!(entry["allowed_ips"][0], "0.0.0.0/0");
+    }
+
+    #[test]
+    fn allow_all_is_idempotent() {
+        let base = compile(&[]);
+        let once = allow_all(&base);
+        let twice = allow_all(&once);
+        assert_eq!(once.document, twice.document);
+    }
+
+    #[test]
+    fn the_fingerprint_changes_so_the_sync_pushes() {
+        let base = compile(&[allow_rule("omniroute", "10.90.92.30")]);
+        assert_ne!(base.fingerprint(), allow_all(&base).fingerprint());
     }
 }
