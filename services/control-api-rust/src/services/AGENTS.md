@@ -148,6 +148,39 @@ created through a different path, and a path that forgot the proxy would be a
 sandbox that is isolated and therefore useless, with nothing in the UI saying
 why.
 
+## Trust files, agent files, and where a sign-in mode acts
+
+The container is built once and never gains a mount, so everything a later mode
+switch could need is present from the start:
+
+1. **Both CA files, mounted by the runner, referenced by `create`/`recreate`.**
+   `EGRESS_CA_IN_SANDBOX` is the CA alone and is what `NODE_EXTRA_CA_CERTS` gets;
+   `CA_BUNDLE_IN_SANDBOX` is the public roots plus that CA and is what the clients
+   which *replace* their store get (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`,
+   `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `AWS_CA_BUNDLE`). `egress_environment_for`
+   adds the trust variables for every mode with `uses_proxy()`, not only for the
+   modes that read TLS today, so switching to `transparent` needs no recreate.
+2. **The container keeps the gateway keys.** A sign-in mode is a launcher's
+   decision (ADR 0054): `write_agent_files` strips the gateway settings from the
+   map that feeds the *config files*, and the launcher strips the variables for a
+   `subscription` agent. `apply_login_choice` is for config files only.
+3. **`sandbox_service::write_agent_files` is the one place that writes agent
+   files**, for create, recreate, `reconfigure_pack` and a mode switch. It reads
+   the sandbox, its egress mode and every pack it holds (the pack's own plus one
+   per recipe agent), builds the environment from `provider_service`, strips by
+   mode, adds the proxy variables, writes each pack's files with the MCP servers,
+   and installs the launcher. It returns `Ok(0)` for a sandbox that is not
+   running: the files are written the next time it runs.
+4. **The spec, not the request, is what a recreate reproduces.** `command`,
+   `gpu_count`, `memory_reservation` and `cpu_shares` are stored at create and
+   read back in `recreate`. A GPU request on a node with `container_gpu == false`
+   is a 409 before a row exists.
+5. **Sign-in rules come from one place.** `create` calls
+   `agent_auth_service::sync_login_rules` after the commit instead of inserting
+   `Sign-in: <host>` rules itself, so a mode switch and a create cannot disagree.
+6. **Model readiness is spawned, not awaited**, after create, recreate and a
+   successful start.
+
 ## Persistence rules
 
 1. A mount source is never taken from a request. `persist_service` derives the
