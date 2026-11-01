@@ -246,12 +246,20 @@ impl RuntimeAdapter for RuntimeRouter {
         self.adapter_for(name).await.inventory(name).await
     }
     async fn download_model(&self, request: ModelDownload) -> Result<ModelDownloadResult, RuntimeError> {
-        self.local.download_model(request).await
+        // The artefact has to land on the machine that will serve it: a joined
+        // node has its own disk and its own model base, so fetching here would
+        // leave the node with no file to start. The install names the node.
+        self.for_node(request.node_id).download_model(request).await
     }
     async fn serve_model(&self, request: ModelServe) -> Result<ModelServeResult, RuntimeError> {
-        self.local.serve_model(request).await
+        // The same node as the download, because that is where the file is.
+        self.for_node(request.node_id).serve_model(request).await
     }
     async fn stop_model(&self, model_key: &str) -> Result<(), RuntimeError> {
+        // A model is named by its key alone, and two nodes may serve the same
+        // key, so there is nothing to choose with. Stopping stays local; a
+        // server on a joined node keeps running until that runner is asked
+        // directly (see the B17 report).
         self.local.stop_model(model_key).await
     }
     async fn open_terminal(&self, name: &str, tab_id: &str) -> Result<BoxTerminal, RuntimeError> {

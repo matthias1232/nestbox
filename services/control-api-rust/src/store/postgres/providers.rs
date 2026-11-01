@@ -170,6 +170,35 @@ pub async fn set_status(
     Ok(())
 }
 
+/// Point an install's profile at the address its server is really published on.
+///
+/// The profile is written when the install starts, before any container exists,
+/// and on a joined node the port is chosen only when the server starts. This is
+/// the correction step: until it runs, the row holds a placeholder, and every
+/// sandbox that selects the profile would be pointed at an address nobody
+/// answers on. Only the endpoint moves; the status stays what the probe found.
+pub async fn set_endpoint(
+    scope: &mut TenantScope<'_>,
+    id: Uuid,
+    endpoint: &str,
+) -> Result<(), StoreError> {
+    let affected = sqlx::query(
+        "UPDATE provider_profiles
+            SET endpoint = $3, version = version + 1, updated_at = now()
+          WHERE environment_id = $1 AND id = $2",
+    )
+    .bind(scope.environment_id())
+    .bind(id)
+    .bind(endpoint)
+    .execute(scope.connection())
+    .await?
+    .rows_affected();
+    if affected == 0 {
+        return Err(StoreError::NotFound);
+    }
+    Ok(())
+}
+
 /// Names of the sandboxes that select this profile.
 ///
 /// A profile a sandbox still points at is not deleted quietly: the sandbox

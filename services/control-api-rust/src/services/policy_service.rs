@@ -835,6 +835,20 @@ pub async fn close_window(
         .await
         .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
+    // Closing a window changes what a sandbox may reach exactly like opening one
+    // does, so the OpenShell policy is pushed again and every console hears it.
+    let ctx2 = ctx.clone();
+    tokio::spawn(async move {
+        if let Err(error) = sync_openshell_policies(&ctx2).await {
+            tracing::warn!(code = error.code.0, "OpenShell policies not pushed after a window closed");
+        }
+    });
+    ctx.bus.publish(crate::domain::telemetry::LiveEvent::SandboxControlChanged {
+        sandbox_id: None,
+        environment_id: principal.environment_id,
+        what: "window".to_string(),
+        detail: serde_json::json!({ "closed": id }),
+    });
     Ok(())
 }
 

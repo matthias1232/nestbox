@@ -95,3 +95,7 @@ sandbox goes to the runner of the node it is placed on (looked up once, remember
 its node in the spec; `list` merges every runner that answers. It does not decide placement and does not
 fail a sandbox over to another node. `for_node` gives the adapter of one node for the calls that name a
 node instead of a sandbox (hardware, images, snapshots).
+
+`download_model` and `serve_model` belong to that second group: the request names the install's node,
+so both follow `request.node_id` — a joined node fetches and serves on its own disk. `stop_model`
+stays local because a model is named by its key alone and nothing in the call says which machine.

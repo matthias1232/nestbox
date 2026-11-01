@@ -96,7 +96,18 @@ pub async fn create_for_install(
     // 8080 is the port `model_server_images` starts the server on. The profile
     // is created before the container exists, so the number lives in two
     // places; the install probe is what proves they agree.
-    let endpoint = format!("http://model-{host}:8080/v1");
+    //
+    // On a joined node the container name means nothing: the control plane is
+    // on another machine and reaches the node through the overlay, where the
+    // server is published. That port is chosen when the server starts, so the
+    // endpoint carries `0` until the install writes the real one
+    // (`providers::set_endpoint`).
+    let endpoint = if node.is_local {
+        format!("http://model-{host}:8080/v1")
+    } else {
+        let address = overlay_ip(scope, node.id).await?;
+        format!("http://{address}:0/v1")
+    };
     store::insert_pending_for_install(
         scope,
         &name,
@@ -106,6 +117,25 @@ pub async fn create_for_install(
         install.id,
     )
     .await
+}
+
+/// The overlay address of a joined node.
+///
+/// `domain::node::Node` carries what a node is, not where it sits in the
+/// overlay; the address lives in the row the join service wrote and nothing but
+/// the WireGuard setup reads it back. Reading it here keeps the node type from
+/// growing a field for one caller. A node without an address cannot be reached,
+/// so that is an error rather than a placeholder.
+async fn overlay_ip(scope: &mut TenantScope<'_>, node_id: Uuid) -> Result<String, StoreError> {
+    let address: Option<String> = sqlx::query_scalar(
+        "SELECT overlay_ip FROM nodes WHERE environment_id = $1 AND id = $2",
+    )
+    .bind(scope.environment_id())
+    .bind(node_id)
+    .fetch_optional(scope.connection())
+    .await?
+    .flatten();
+    address.filter(|value| !value.trim().is_empty()).ok_or(StoreError::NotFound)
 }
 
 /// Remove the profile an uninstall leaves behind.
