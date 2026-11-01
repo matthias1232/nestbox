@@ -1862,7 +1862,11 @@ fn install_step(install: &PackInstall) -> Result<String, String> {
         }
         PackInstall::Desktop => format!(
             "RUN echo {install} | base64 -d > /tmp/nestbox-desktop-install.sh \\\n && sh /tmp/nestbox-desktop-install.sh \\\n && rm /tmp/nestbox-desktop-install.sh\n\
-             RUN echo {start} | base64 -d > /usr/local/bin/nestbox-desktop \\\n && chmod 0755 /usr/local/bin/nestbox-desktop\n",
+             RUN echo {start} | base64 -d > /usr/local/bin/nestbox-desktop \\\n && chmod 0755 /usr/local/bin/nestbox-desktop\n\
+             # The X server compiles its keymap into this directory. It is root's\n\
+             # by default, and the desktop does not run as root. Its own layer, so\n\
+             # the cached install above stays valid.\n\
+             RUN mkdir -p /var/lib/xkb && chmod 1777 /var/lib/xkb\n",
             install = dockerfile_payload(DESKTOP_INSTALL),
             start = dockerfile_payload(DESKTOP_START),
         ),
