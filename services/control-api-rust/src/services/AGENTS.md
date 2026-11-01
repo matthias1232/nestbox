@@ -78,7 +78,7 @@ that push (ADR 0053).
 | `model_service.rs` | Hardware probing through a node's runner (CPU, RAM, GPU, unified pool), fit against a node's free budget, facets, catalog filters, installs and their reservations (fetched and served on the install's own node, profile corrected to the published address), editing an install (reserved RAM, on/off; off frees the memory) |
 | `node_service.rs` | The nodes list, one node with its budget, a node's sandboxes, name-or-id resolution, display rename |
 | `pack_service.rs` | Baselines, agent packs, and tool catalog as data; pack defaults by row, baseline compatibility, package-name resolution |
-| `builder_service.rs` | Recipes: validation against the catalogs, the Dockerfile generator, content hash, build job, package verification, instantiate with MCP attachments |
+| `builder_service.rs` | Recipes: validation against the catalogs, the Dockerfile generator, content hash, build job, package verification, instantiate with MCP attachments, and `recreate_in_place` for an existing recipe sandbox (a move) |
 | `catalogue_service.rs` | The live package catalogue: permission, baseline resolution, fragment validation, delegation to the runtime |
 | `template_service.rs` | Image templates: sharing and default rules, validation, apply-to-recipe |
 | `selection.rs` | The one validation for package names, repository URLs/keys and template names |
@@ -325,7 +325,7 @@ uses to find it.
 | `node_join_service.rs` | Join tokens, the join script, overlay addresses, the hub's peer list, the sync loop; `join_with_key` also stores the endpoint the hub dials |
 | `node_join/` | The three scripts (`join.sh`, `prepare.sh`, `apply.sh`) and the compose file a joined node runs (embedded with `include_str!`) |
 | `image_sync_service.rs` | Image assignments, the images x nodes matrix, the pull loop |
-| `move_service.rs` | Moving a sandbox and its folders to another node with restic snapshots |
+| `move_service.rs` | Moving a sandbox and its folders to another node with restic snapshots; the preflight that says whether it can work, the rollback after a failed cutover, and the model warm-up on the target |
 | `provision_service.rs` | Provider accounts, renting machines, the budget, the reaper |
 
 ## Workbox control (ADR 0052-0057)
