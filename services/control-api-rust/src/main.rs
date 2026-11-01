@@ -68,6 +68,23 @@ async fn main() {
         Err(error) => tracing::warn!(code = error.code.0, "could not settle interrupted moves"),
     }
 
+    // Rented machines: deleted when their lifetime is over or they sit empty (ADR 0050).
+    {
+        let services = state.services.clone();
+        let config = state.config.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(45)).await;
+            loop {
+                match nestbox_control_api::services::provision_service::reap(&services, &config).await {
+                    Ok(0) => {}
+                    Ok(count) => tracing::info!(count, "rented machines were handed back"),
+                    Err(error) => tracing::debug!(code = error.code.0, "reaper pass skipped"),
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            }
+        });
+    }
+
     // Images: each joined node holds what it was assigned (ADR 0048).
     {
         let services = state.services.clone();

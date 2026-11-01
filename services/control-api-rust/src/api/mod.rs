@@ -10,6 +10,7 @@ pub mod auth;
 pub mod cluster;
 pub mod cudax;
 pub mod events;
+pub mod hosting;
 pub mod image_templates;
 pub mod images;
 pub mod inventory;
@@ -447,6 +448,12 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/join/{token}/script", get(node_join::script))
         .route("/api/v1/join/{token}", post(node_join::join))
         .route("/api/v1/node/compose", get(node_join::compose))
+        .route("/api/v1/join/{token}/cloud-init", get(hosting::cloud_init))
+        .route("/api/v1/host-accounts", get(hosting::accounts).post(hosting::add_account))
+        .route("/api/v1/host-accounts/{id}", delete(hosting::remove_account))
+        .route("/api/v1/host-accounts/{id}/types", get(hosting::types))
+        .route("/api/v1/hosts", get(hosting::hosts).post(hosting::burst))
+        .route("/api/v1/hosts/{id}", delete(hosting::destroy))
         .route("/api/v1/nodes/{id}", get(nodes::get).delete(node_join::remove))
         .route("/api/v1/nodes/{id}/sandboxes", get(nodes::sandboxes))
         .route("/api/v1/nodes/{id}/display", put(nodes::update_display))

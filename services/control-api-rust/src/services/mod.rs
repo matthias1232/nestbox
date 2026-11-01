@@ -27,6 +27,7 @@ pub mod model_service;
 pub mod node_service;
 pub mod pack_service;
 pub mod persist_service;
+pub mod provision_service;
 pub mod policy_service;
 pub mod privacy_service;
 pub mod provider_service;

@@ -397,6 +397,49 @@ pub async fn sync(ctx: &ServiceContext, router: &crate::runtime::router::Runtime
     Ok(())
 }
 
+/// Whether anything still lives on a node: sandboxes, models or persistent folders.
+pub async fn node_is_empty(pool: &sqlx::PgPool, node_id: Uuid) -> Result<bool, ApiError> {
+    let busy: i64 = sqlx::query_scalar(
+        "SELECT (SELECT count(*) FROM sandboxes WHERE node_id = $1 AND status <> 'deleted')
+              + (SELECT count(*) FROM model_installs WHERE node_id = $1)
+              + (SELECT count(*) FROM persistent_roots WHERE node_id = $1 AND archived_at IS NULL)",
+    )
+    .bind(node_id)
+    .fetch_one(pool)
+    .await
+    .map_err(db)?;
+    Ok(busy == 0)
+}
+
+/// Delete an empty joined node on the control plane's own initiative (the reaper of rented
+/// machines). Returns false, touching nothing, if anything still lives there.
+pub async fn remove_if_empty(ctx: &ServiceContext, config: &Config, environment_id: Uuid, node_id: Uuid) -> Result<bool, ApiError> {
+    if !node_is_empty(&ctx.pool, node_id).await? {
+        return Ok(false);
+    }
+    let name: Option<String> = sqlx::query_scalar("DELETE FROM nodes WHERE id = $1 AND environment_id = $2 AND wg_public_key IS NOT NULL RETURNING name")
+        .bind(node_id)
+        .bind(environment_id)
+        .fetch_optional(&ctx.pool)
+        .await
+        .map_err(db)?;
+    if let Some(name) = name {
+        sqlx::query("DELETE FROM stored_secrets WHERE name = $1 AND environment_id = $2")
+            .bind(format!("node-{name}"))
+            .bind(environment_id)
+            .execute(&ctx.pool)
+            .await
+            .map_err(db)?;
+    }
+    if enabled(config) {
+        write_peers(&ctx.pool, &config.overlay.dir).await?;
+    }
+    if let Some(router) = &ctx.router {
+        let _ = sync(ctx, router).await;
+    }
+    Ok(true)
+}
+
 /// Remove a joined node: its row, its token and its place on the hub. Refused while sandboxes
 /// or installs still live there, because deleting the row would orphan them.
 pub async fn remove(ctx: &ServiceContext, config: &Config, principal: &Principal, node_id: Uuid) -> Result<(), ApiError> {
