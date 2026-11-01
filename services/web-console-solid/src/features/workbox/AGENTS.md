@@ -14,6 +14,7 @@ evaluation windows, plus live chats, the topology and the shared terminals.
 | `agents.js` | its pure logic: agent labels, the busy sentence of the switch dialog, the login line |
 | `NetworkCard.jsx` | the four proxy modes and the evaluation windows |
 | `AllowAllBanner.jsx` | the loud banner while everything is allowed |
+| `network.js` | the proxy modes, durations and banner sentence; pure, tested with `node --test network.test.js` |
 | `SessionsPanel.jsx` | all shared terminal tabs and the desktop |
 | `TerminalPopout.jsx`, `DesktopPopout.jsx` | the pop-out windows without a sidebar |
 | `LiveChatsPanel.jsx` | the agents' conversation, live |
@@ -31,3 +32,8 @@ because a second terminal and a second desktop would be a second truth.
 
 Every panel receives its data as props or loads it through `api/`, never by
 reaching into another feature's state.
+
+The vocabulary travels the other way once: `features/sandboxes/PoliciesTab.jsx`
+imports the mode labels from `network.js`, so an administrator and a user read
+the same words for the same mode. That module is data and pure functions only —
+no state, no API call.
