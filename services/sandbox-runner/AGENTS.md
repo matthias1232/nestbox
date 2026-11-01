@@ -158,7 +158,9 @@ seconds instead of half an hour.
 | `app/stats.py` | One-shot `docker stats` samples and the poster loop |
 | `app/processes.py` | `docker top` for one sandbox |
 | `app/commands.py` | What starts in a sandbox and by which way in (terminal, ssh, inside), from the parent chain; a ring buffer filled while somebody polls |
-| `app/gateway_exec.py` | Running things inside a sandbox whichever runtime holds it: `exec_run` (probes), `GatewayPty` (terminal through `openshell sandbox exec --tty`), `GatewayStream` (desktop bridge). `docker exec` runs outside a gateway sandbox's boundary, so gateway sandboxes never use it |
+| `app/gateway_exec.py` | Running things inside a sandbox whichever runtime holds it: `exec_run` (probes), `GatewayPty` (terminal through `openshell sandbox exec --tty`; `open_command` for any argv, as the SSH door needs), `GatewayStream` (desktop bridge). `docker exec` runs outside a gateway sandbox's boundary, so gateway sandboxes never use it |
+| `app/ssh_gateway.py` | The SSH door: key auth, no SFTP, no tunnels. A login lands in the tmux tab `nestbox-ssh` (`attach <tab>` joins a browser tab) and a dropped client only detaches; gateway sandboxes go through `GatewayPty.open_command` |
+| `tests/test_ssh_gateway.py` | Frame demux, the tab-versus-command choice, and the end of a session (Ctrl-D without tmux, detach with it), without Docker |
 | `app/connections.py` | The sockets of one sandbox and the process that owns each, by a fixed `sh` probe run as the sandbox user; a sample, not a trace |
 | `app/vnc.py` | The desktop transport: node token, then a fixed `python3` bridge in the container copies bytes between `127.0.0.1:5900` and the WebSocket; nothing is recorded |
 | `app/inventory.py` | Runs the probe and parses its sections |

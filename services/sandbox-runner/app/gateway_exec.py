@@ -96,6 +96,33 @@ class GatewayPty:
         os.close(slave)
         return cls(process, master)
 
+    @classmethod
+    def open_command(cls, name: str, command: list[str]) -> "GatewayPty":
+        """Open an interactive command (not only a terminal tab) inside a gateway sandbox.
+
+        The SSH door needs what a terminal tab cannot express: one command
+        instead of `tmux new-session`, or an explicit tab the caller chose. The
+        argv is built by the caller and is already an argument vector, so
+        nothing here decides what runs.
+        """
+        args = [osh.CLI, "sandbox", "exec", "-n", name, "--tty"]
+        for item in TERMINAL_ENV:
+            args += ["--env", item]
+        args += ["--", *command]
+        master, slave = pty.openpty()
+        fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+        process = subprocess.Popen(  # noqa: S603 - fixed argument vector, argv validated by the caller
+            args,
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            start_new_session=True,
+            close_fds=True,
+            env=os.environ.copy(),
+        )
+        os.close(slave)
+        return cls(process, master)
+
     def read(self, size: int = 8192) -> bytes:
         try:
             return os.read(self._master, size)
