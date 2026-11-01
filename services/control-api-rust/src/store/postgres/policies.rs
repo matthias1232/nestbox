@@ -941,7 +941,13 @@ pub async fn max_window_minutes_for_environment(
     Ok(value.flatten())
 }
 
-/// The windows in force now, newest expiry last.
+/// The windows in force now, the open-ended ones first and then the one that
+/// lives longest.
+///
+/// The order is the order of the decider (`egress::open_windows`): when two
+/// windows cover the same request, the console must show the same one the
+/// decision names, so both reads sort the same way. `NULL` is "until it is
+/// closed", which outlives every deadline, hence `DESC NULLS FIRST`.
 pub async fn list_windows(scope: &mut TenantScope<'_>) -> Result<Vec<WindowRow>, StoreError> {
     let rows = sqlx::query(
         "SELECT w.id, w.sandbox_id, s.name AS sandbox_name, w.scope, w.mode, w.channel,
@@ -951,7 +957,7 @@ pub async fn list_windows(scope: &mut TenantScope<'_>) -> Result<Vec<WindowRow>,
           WHERE w.environment_id = $1
             AND w.revoked_at IS NULL
             AND (w.expires_at IS NULL OR w.expires_at > now())
-          ORDER BY w.expires_at ASC NULLS LAST
+          ORDER BY w.expires_at DESC NULLS FIRST
           LIMIT 100",
     )
     .bind(scope.environment_id())

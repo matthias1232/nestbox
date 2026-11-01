@@ -8,12 +8,19 @@
 //!
 //! The order is the rule:
 //!
-//! 1. an open traffic window for the sandbox or the environment → allow;
-//! 2. the first enabled rule, by ascending priority, whose matchers (host,
-//!    suffix, CIDR, port range, protocol, method, binary) all match → its
-//!    action (or `audit` when the rule is
-//!    audit-only);
-//! 3. nothing matched → deny.
+//! 1. the rules are evaluated: the first enabled rule, by ascending priority,
+//!    whose matchers (host, suffix, CIDR, port range, protocol, method, binary)
+//!    all match → its action (or `audit` when the rule is audit-only);
+//! 2. an open traffic window covering the request overrides that answer: a
+//!    bypass window allows, an audit window allows and is recorded as a block,
+//!    and `would_deny` keeps the rule verdict either way;
+//! 3. a sandbox whose proxy is off (`off_allow_all`) turns a deny into an allow
+//!    with the reason `allow_all`, again recording `would_deny`;
+//! 4. nothing matched → deny.
+//!
+//! The rules go first so a window can state what would have happened without it;
+//! that is what makes "allow everything for a while" evidence for the next rule
+//! instead of a blind spot.
 //!
 //! Default deny is the property that makes the policy screen true: a sandbox
 //! with no rule and no window reaches nothing.
@@ -830,6 +837,7 @@ mod tests {
     fn a_bypass_window_over_an_allowed_host_is_not_a_would_deny() {
         let now = Utc::now();
         let r = rule("allowed.example", Some(443), RuleAction::Allow, 10);
+        let rule_id = r.id;
         let out = decide(
             &request("allowed.example", 443),
             &policy(vec![r], vec![window(WindowMode::Bypass, WindowChannel::All, Some(now + Duration::minutes(5)))]),
@@ -837,6 +845,9 @@ mod tests {
         );
         assert_eq!(out.decision, Decision::Allow);
         assert!(!out.would_deny);
+        // The window answered, but the rule that also allowed it is still named,
+        // so the traffic view can say why the request was never at risk.
+        assert_eq!(out.rule_id, Some(rule_id));
     }
 
     #[test]
@@ -894,6 +905,7 @@ mod tests {
     #[test]
     fn a_window_beats_every_rule_until_it_expires() {
         let deny = rule("*", None, RuleAction::Deny, 1);
+        let deny_id = deny.id;
         let now = Utc::now();
         let window = OpenWindow {
             id: Uuid::new_v4(),
@@ -903,9 +915,15 @@ mod tests {
             mode: WindowMode::Bypass,
             channel: WindowChannel::All,
         };
+        let window_id = window.id;
         let out = decide(&request("anything.net", 80), &policy(vec![deny.clone()], vec![window.clone()]), now);
         assert_eq!(out.decision, Decision::Allow);
         assert_eq!(out.reason, DecisionReason::Window);
+        assert_eq!(out.window_id, Some(window_id));
+        // The rule said no and the window said yes: that is what `would_deny`
+        // records, and the deny rule it came from is still named.
+        assert!(out.would_deny);
+        assert_eq!(out.rule_id, Some(deny_id));
 
         let later = decide(&request("anything.net", 80), &policy(vec![deny], vec![window]), now + Duration::minutes(11));
         assert_eq!(later.decision, Decision::Deny);

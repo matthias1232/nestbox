@@ -57,6 +57,11 @@ shape it:
    hash, and a cache TTL of zero; a database failure is a 5xx, which the proxy's
    `ext_authz` filter turns into a refusal on its own.
 
+Opening or closing a window is a control change: `open_window` publishes
+`SandboxControlChanged { what: "window" }` and pushes the OpenShell policy in the
+background, because an `openshell` window only reaches the supervisor through
+that push (ADR 0053).
+
 ## Files
 
 | File | Responsibility |

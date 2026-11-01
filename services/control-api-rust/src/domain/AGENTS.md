@@ -57,7 +57,7 @@ microseconds is that it has none.
 | `auth.rs` | User, role, permission |
 | `metrics.rs` | `docker stats` sample, node ingest batch, one-minute bucket, window with its point budget, process table, inventory probe |
 | `access.rs` | SSH key record (locator, never material), published port, inventory, session |
-| `egress.rs` | The pure `decide` function, compiled rule set, traffic event, map edge |
+| `egress.rs` | The pure `decide` function (rules, then a covering window, then the allow-all answer, each with `would_deny`), compiled rule set, traffic event, map edge |
 | `geography.rs` | Reading a country, an AS number, and an owner out of an RDAP record; pure |
 | `pack_access.rs` | A pack's words for its ports and SSH line, joined with what the runner reports is open; pure |
 | `stack_topology.rs` | The stack diagram in nine layers, arranged from facts; the status vocabulary |

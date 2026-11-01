@@ -765,6 +765,20 @@ pub async fn open_window(
     .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
 
+    // An `openshell` window is compiled into the sandbox's own OpenShell policy
+    // (ADR 0053), so the change only reaches the supervisor once it is pushed.
+    // In the background: the window is already open in the store, and a sandbox
+    // that is not on a gateway must not delay the answer.
+    let ctx2 = ctx.clone();
+    tokio::spawn(async move {
+        if let Err(error) = sync_openshell_policies(&ctx2).await {
+            tracing::warn!(
+                code = error.code.0,
+                "OpenShell policies not pushed after a window was opened"
+            );
+        }
+    });
+
     // A window that changes what a sandbox may reach is a control change the
     // console and every other viewer hear about at once.
     ctx.bus.publish(crate::domain::telemetry::LiveEvent::SandboxControlChanged {
