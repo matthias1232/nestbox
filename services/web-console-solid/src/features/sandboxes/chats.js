@@ -69,7 +69,7 @@ export function readRequest(text) {
     model: body.model || null,
     system: textOf(body.system) || undefined,
     prompt: newest ? textOf(newest.content) : input,
-    history: messages.length,
+    history: body.nestbox_history ?? messages.length,
     stream: body.stream === true,
     tools: Array.isArray(body.tools) ? body.tools.length : 0,
   };

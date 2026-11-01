@@ -58,13 +58,85 @@ end
 -- marks a longer body as truncated, so the proxy never ships more than that.
 local BODY_LIMIT = 65536
 
+-- The newest message of a chat request, cut out of a body that is too long to
+-- keep whole.
+--
+-- Claude sends `messages` first and a very large `tools` list after it, so the
+-- end of the body is not where the question is, and neither is the start. This
+-- walks the `messages` array (strings and nesting respected), remembers where
+-- its last element starts and ends, and returns a small JSON document with the
+-- model, the number of messages and that last message. nil when the body has no
+-- such array, so the caller falls back to head and tail.
+local function last_message_digest(bytes)
+  local _, array_open = string.find(bytes, '"messages"%s*:%s*%[')
+  if not array_open then
+    return nil
+  end
+  local pos, depth, count = array_open + 1, 1, 0
+  local element_start, last_start, last_end
+  while true do
+    local i = string.find(bytes, '[%[%]{}"]', pos)
+    if not i then
+      return nil
+    end
+    local c = string.sub(bytes, i, i)
+    if c == '"' then
+      local j = i + 1
+      while true do
+        local q = string.find(bytes, '["\\]', j)
+        if not q then
+          return nil
+        end
+        if string.sub(bytes, q, q) == "\\" then
+          j = q + 2
+        else
+          j = q + 1
+          break
+        end
+      end
+      pos = j
+    else
+      if c == "[" or c == "{" then
+        if depth == 1 and c == "{" then
+          count = count + 1
+          element_start = i
+        end
+        depth = depth + 1
+      else
+        depth = depth - 1
+        if depth == 1 and element_start then
+          last_start, last_end = element_start, i
+          element_start = nil
+        end
+        if depth == 0 then
+          break
+        end
+      end
+      pos = i + 1
+    end
+  end
+  if not last_start then
+    return nil
+  end
+  local model = string.match(bytes, '"model"%s*:%s*"([^"]+)"')
+  return string.format(
+    '{"model":%s,"nestbox_history":%d,"messages":[%s]}',
+    model and ('"' .. model .. '"') or "null",
+    count,
+    string.sub(bytes, last_start, last_end)
+  )
+end
+
 -- Record a body for the access log as base64 under `name`.
 local function record_body(handle, name, bytes)
   if bytes == nil or bytes == "" then
     return
   end
   if #bytes > BODY_LIMIT then
-    if name == "request_body" then
+    local digest = name == "request_body" and last_message_digest(bytes) or nil
+    if digest then
+      bytes = digest
+    elseif name == "request_body" then
       -- A long chat request carries the model and system prompt at the start
       -- and the newest message at the end; the middle is history. Keep both
       -- ends, so the console can still show what was asked just now.

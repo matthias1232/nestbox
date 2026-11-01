@@ -58,7 +58,13 @@ export default function ChatsTab(props) {
         cache.set(item.id, { id: item.id, ts: item.ts, host: item.host, path: item.path, status: item.status, ask: { prompt: '' }, answer: { text: '' }, unreadable: true });
       }
     }
-    setTurns([...cache.values()].sort((a, b) => String(b.ts).localeCompare(String(a.ts))));
+    // Calls with neither a question nor an answer (a model that only "thought",
+    // a title request) are bookkeeping of the client, not a conversation.
+    setTurns(
+      [...cache.values()]
+        .filter((turn) => turn.unreadable || turn.ask.prompt || turn.answer.text || turn.answer.error)
+        .sort((a, b) => String(b.ts).localeCompare(String(a.ts))),
+    );
   }
 
   const poll = usePolling(refresh, { everyMs: 3000, onData: () => setError(null), onError: (e) => setError(e.message) });
