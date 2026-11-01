@@ -86,3 +86,5 @@ exists (`Probe::accounts`).
 session; `model_grant.rs` a grant and the inheritance rule; `node_tunnel.rs` a node's tunnel, the
 `status.tsv` dump parser and the "connect by address" request. `egress.rs` decides with `would_deny`
 and the `off_allow_all` answer.
+`openshell_policy.rs` compiles rules into an OpenShell policy; `allow_hosts` adds the destinations a
+suspended sandbox may still reach, in audit mode, because OpenShell 0.1.6 has no host wildcard.

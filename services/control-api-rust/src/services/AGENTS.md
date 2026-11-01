@@ -352,3 +352,6 @@ base64-encoded, so no shell quoting of the payload is needed, and every file is 
 target and moved into place, so a shell never sources half a script. A mode change does not
 reinstall anything: the launcher reads `.nestbox/mode/<agent>` at start, and `write_mode` writes
 that one line.
+`policy_service::sync_openshell_policies` pushes each sandbox's compiled policy and, while the rules
+are suspended (`off_allow_all`, or an open `all`/`openshell` window), the destinations it has been
+seen reaching, in audit mode: OpenShell logs them instead of blocking.
