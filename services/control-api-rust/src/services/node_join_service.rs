@@ -451,16 +451,20 @@ pub async fn remove_if_empty(ctx: &ServiceContext, config: &Config, environment_
         .fetch_optional(&ctx.pool)
         .await
         .map_err(db)?;
-    if let Some(name) = name {
-        sqlx::query("DELETE FROM stored_secrets WHERE name = $1 AND environment_id = $2")
-            .bind(format!("node-{name}"))
-            .bind(environment_id)
-            .execute(&ctx.pool)
-            .await
-            .map_err(db)?;
-    }
+    // The peer list first: a node that is gone from the table must be gone from the hub even if
+    // the clean-up below fails.
     if enabled(config) {
         write_peers(&ctx.pool, &config.overlay.dir).await?;
+    }
+    if let Some(name) = name {
+        // `stored_secrets` is row-level secured: delete inside the data center's scope.
+        let mut scope = TenantScope::begin(&ctx.pool, environment_id).await.map_err(ApiError::from)?;
+        sqlx::query("DELETE FROM stored_secrets WHERE name = $1")
+            .bind(format!("node-{name}"))
+            .execute(scope.connection())
+            .await
+            .map_err(db)?;
+        scope.commit().await.map_err(ApiError::from)?;
     }
     if let Some(router) = &ctx.router {
         let _ = sync(ctx, router).await;
