@@ -113,10 +113,13 @@ pub fn effective(grants: &[ModelGrant]) -> Vec<EffectiveModel> {
 
     // Several scopes may ask for a default; the narrowest one decides. Ties keep
     // the first of the name-sorted list, so the answer is stable.
+    // Several scopes may ask for a default; the narrowest one decides. Within one
+    // scope the newest wins, because "I just marked this one" is what an operator
+    // means, and a name ordering would silently pick the older grant.
     let default_name = winners
         .iter()
         .filter(|grant| grant.is_default)
-        .min_by_key(|grant| scope_rank(&grant.scope))
+        .min_by_key(|grant| (scope_rank(&grant.scope), std::cmp::Reverse(grant.created_at)))
         .map(|grant| grant.model_name.clone())
         .or_else(|| winners.first().map(|grant| grant.model_name.clone()));
 

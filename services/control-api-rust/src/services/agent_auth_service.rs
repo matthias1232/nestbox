@@ -300,10 +300,11 @@ pub async fn restart(
         scope.commit().await.map_err(ApiError::from)?;
     }
 
-    if sandbox.status == SandboxStatus::Running {
-        apply_restart(ctx, &sandbox, agent, when).await?;
-    } else if when == RestartPolicy::Later {
+    if when == RestartPolicy::Later {
+        // "Only for new sessions": nothing restarts, the agent is marked waiting.
         set_pending(ctx, sandbox.environment_id, sandbox_id, agent, true).await?;
+    } else if sandbox.status == SandboxStatus::Running {
+        apply_restart(ctx, &sandbox, agent, when).await?;
     }
 
     ctx.bus
@@ -763,9 +764,22 @@ async fn set_pending(
     let mut scope = TenantScope::begin(&ctx.pool, environment_id)
         .await
         .map_err(ApiError::from)?;
-    auth_store::set_pending(&mut scope, sandbox_id, agent, pending)
+    let updated = auth_store::set_pending(&mut scope, sandbox_id, agent, pending)
         .await
         .map_err(ApiError::from)?;
+    if updated == 0 {
+        // No row yet: the sandbox still has the create-time default, which this
+        // change does not alter, so the row is written with that mode.
+        let mode = modes_for(ctx, environment_id, sandbox_id)
+            .await?
+            .into_iter()
+            .find(|(kind, _)| *kind == agent)
+            .map(|(_, mode)| mode)
+            .unwrap_or(AgentAuthMode::Gateway);
+        auth_store::upsert(&mut scope, sandbox_id, agent, mode, pending, None)
+            .await
+            .map_err(ApiError::from)?;
+    }
     scope.commit().await.map_err(ApiError::from)?;
     Ok(())
 }

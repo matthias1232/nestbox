@@ -81,8 +81,8 @@ pub async fn set_pending(
     sandbox_id: Uuid,
     agent: AgentKind,
     pending: bool,
-) -> Result<(), StoreError> {
-    sqlx::query(
+) -> Result<u64, StoreError> {
+    let affected = sqlx::query(
         "UPDATE sandbox_agent_auth SET pending_restart = $4, updated_at = now()
           WHERE environment_id = $1 AND sandbox_id = $2 AND agent = $3",
     )
@@ -91,8 +91,9 @@ pub async fn set_pending(
     .bind(agent.as_str())
     .bind(pending)
     .execute(scope.connection())
-    .await?;
-    Ok(())
+    .await?
+    .rows_affected();
+    Ok(affected)
 }
 
 /// Sandboxes of this environment with an agent waiting for a restart.
