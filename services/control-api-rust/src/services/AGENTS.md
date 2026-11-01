@@ -89,6 +89,7 @@ shape it:
 | `media_service.rs` | Media settings, the effective model per sandbox, the provider call, renders and their assets |
 | `persist_service.rs` | Persistent roots: derived host paths, mounts, the one-read-write rule, honest usage |
 | `terminal_service.rs` | The browser terminal: permission, the four-per-sandbox and twenty-per-user limits, the idle clock, the session row and its two audit events, and the stored tab list a reload reopens (`feat/terminal`) |
+| `session_service.rs` | The login overview of running sandboxes: the in-sandbox probe, the assessed login, and per agent the chosen mode with `signed_in` |
 
 ## Probing a node
 
