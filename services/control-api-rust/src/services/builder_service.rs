@@ -48,7 +48,7 @@ use crate::store::postgres::{
 /// Bump this when the Dockerfile template changes in a way that must produce a
 /// new image for an unchanged recipe. Without it a code deploy would keep
 /// reusing the previous template's image because no recipe field moved.
-const GENERATOR_VERSION: u32 = 6;
+const GENERATOR_VERSION: u32 = 7;
 
 /// The desktop pack's install and start scripts. Part of the generated
 /// Dockerfile, so a change to either must change the image's content hash.
@@ -1747,6 +1747,25 @@ pub fn dockerfile(plan: &ImagePlan) -> Result<String, String> {
     out.push_str("COPY nestbox-supervisor.sh /usr/local/bin/nestbox-supervisor\n");
     out.push_str("COPY nestbox-agent-supervisor /usr/local/bin/nestbox-agent-supervisor\n");
     out.push_str("RUN chmod 0755 /usr/local/bin/nestbox-entrypoint /usr/local/bin/nestbox-supervisor /usr/local/bin/nestbox-agent-supervisor\n");
+    // The sandbox does not run as root. A gateway (OpenShell) sandbox refuses a
+    // working directory its user cannot write, and an agent that signs in on a
+    // root account has the whole container to damage. The user comes last, after
+    // every install step above, so the heavy layers stay cached and the installers
+    // keep the rights they need.
+    let owned = directories
+        .iter()
+        .map(|directory| shell_quote(directory))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let add_user = match manager {
+        PackageManager::Apk => "adduser -D -u 10001 -h /home/nestbox -s /bin/sh nestbox".to_string(),
+        _ => "useradd -m -d /home/nestbox -u 10001 -s /bin/bash nestbox".to_string(),
+    };
+    out.push_str(&format!(
+        "RUN id -u nestbox >/dev/null 2>&1 || {add_user}\n"
+    ));
+    out.push_str(&format!("RUN mkdir -p {owned} && chown -R nestbox {owned}\n"));
+    out.push_str("USER nestbox\n");
     out.push_str(&format!("WORKDIR {home}\n"));
     out.push_str("ENTRYPOINT [\"/usr/local/bin/nestbox-entrypoint\"]\n");
     out.push_str("CMD [\"sleep\", \"infinity\"]\n");
@@ -2322,6 +2341,12 @@ mod tests {
             port: None,
         });
         let text = dockerfile(&desktop).expect("a desktop dockerfile");
+        // The user comes after every install step, so the layers stay cached and a
+        // gateway sandbox gets a working directory its user can write.
+        let install_at = text.find("nestbox-desktop-install.sh").expect("install step");
+        let user_at = text.find("USER nestbox").expect("a non-root user");
+        assert!(install_at < user_at, "{text}");
+        assert!(text.contains("chown -R nestbox"), "{text}");
         assert!(text.contains("nestbox-desktop-install.sh"), "{text}");
         assert!(text.contains("> /usr/local/bin/nestbox-desktop"), "{text}");
         let plain = plan(PackageManager::Apt, &["vim"]);
