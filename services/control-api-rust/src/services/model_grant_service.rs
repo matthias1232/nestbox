@@ -1,52 +1,26 @@
-//! Which models a sandbox may use, and where they are served (ADR 0057).
+//! Which models a sandbox may use, and what it sees of them (ADR 0056).
 //!
-//! A grant names a provider profile and the name the agent uses. Inheritance is
-//! environment → user (of the owner) → sandbox, and the narrower scope wins. The
-//! effective list feeds two readers: the agent configuration (so a new model is
-//! visible without a new container) and the accounting proxy's model router (so a
-//! request reaches whatever node serves the model).
+//! Grants are inherited environment → user → sandbox; the effective list feeds
+//! the agent configuration and the accounting proxy's model router. An
+//! environment or user grant is an administrator's decision, a sandbox grant is
+//! its owner's: the console must not let a member widen their own models, which
+//! is why the scope decides the permission rather than the route.
 
 use uuid::Uuid;
 
 use super::{require, ServiceContext};
+use crate::domain::agent_auth::{AgentKind, RestartPolicy};
 use crate::domain::auth::{Permission, Principal, Role};
-use crate::domain::model_grant::{effective, EffectiveModel, ModelGrant, NewModelGrant};
+use crate::domain::model_grant::{EffectiveModel, ModelGrant, NewModelGrant};
 use crate::error::{ApiError, ErrorCode};
+use crate::store::postgres::model_grants as store;
 use crate::store::TenantScope;
 
-/// What the console calls the scopes; anything else is refused.
-const SCOPES: [&str; 3] = ["environment", "user", "sandbox"];
-
-fn validate(request: &NewModelGrant) -> Result<(), ApiError> {
-    if !SCOPES.contains(&request.scope.as_str()) {
-        return Err(ApiError::validation(
-            "A grant is for the environment, a user or a sandbox.",
-        ));
-    }
-    let shape = match request.scope.as_str() {
-        "environment" => request.user_id.is_none() && request.sandbox_id.is_none(),
-        "user" => request.user_id.is_some() && request.sandbox_id.is_none(),
-        _ => request.sandbox_id.is_some() && request.user_id.is_none(),
-    };
-    if !shape {
-        return Err(ApiError::validation(
-            "An environment grant names no user and no sandbox, a user grant a user, a sandbox grant a sandbox.",
-        ));
-    }
-    if !(1..=120).contains(&request.model_name.len())
-        || !request
-            .model_name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "._:/@-".contains(c))
-    {
-        return Err(ApiError::validation(
-            "A model name is 1 to 120 characters of letters, digits and ._:/@-.",
-        ));
-    }
-    Ok(())
-}
-
-/// The grants the caller may see.
+/// The grants visible to the caller, optionally filtered.
+///
+/// An administrator sees every scope; everybody else sees the grants of a
+/// sandbox they can read, or their own, because the environment-wide list names
+/// models the caller may not use.
 pub async fn list(
     ctx: &ServiceContext,
     principal: &Principal,
@@ -54,64 +28,104 @@ pub async fn list(
     user_id: Option<Uuid>,
 ) -> Result<Vec<ModelGrant>, ApiError> {
     require(principal, Permission::SandboxRead)?;
-    if principal.role != Role::Admin {
-        if user_id.is_some() && user_id != Some(principal.user_id) {
-            return Err(ApiError::forbidden(Permission::SandboxRead.code()));
-        }
-        if let Some(id) = sandbox_id {
-            let mut scope = TenantScope::begin_for(&ctx.pool, principal)
-                .await
-                .map_err(ApiError::from)?;
-            // Row-level security decides whether this sandbox is the caller's.
-            crate::store::postgres::sandboxes::get(&mut scope, id)
-                .await
-                .map_err(ApiError::from)?;
-            scope.commit().await.map_err(ApiError::from)?;
-        }
-    }
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
-    let rows = crate::store::postgres::model_grants::list(
-        &mut scope,
-        sandbox_id,
-        if principal.role == Role::Admin { user_id } else { user_id.or(Some(principal.user_id)) },
-    )
-    .await
-    .map_err(ApiError::from)?;
+    if principal.role != Role::Admin {
+        match (sandbox_id, user_id) {
+            (Some(id), _) => {
+                // Row-level security decides whether this sandbox is the
+                // caller's; the read is also what makes "no such sandbox" a 404
+                // rather than an empty list that looks like a permission bug.
+                crate::store::postgres::sandboxes::get(&mut scope, id)
+                    .await
+                    .map_err(ApiError::from)?;
+            }
+            (None, Some(user)) if user == principal.user_id => {}
+            _ => return Err(ApiError::forbidden(Permission::SandboxRead.code())),
+        }
+    }
+    let grants = store::list(&mut scope, sandbox_id, user_id)
+        .await
+        .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
-    Ok(rows)
+    Ok(grants)
 }
 
-/// Grant a model to the environment, a user or one sandbox.
+/// Grant a model.
+///
+/// Environment and user grants are admin-only; a sandbox grant needs write
+/// access to that sandbox. The profile must exist in this environment, because a
+/// grant that points at another tenant's endpoint would route a sandbox into it.
 pub async fn create(
     ctx: &ServiceContext,
     principal: &Principal,
     request: NewModelGrant,
 ) -> Result<ModelGrant, ApiError> {
-    validate(&request)?;
-    match request.scope.as_str() {
-        "sandbox" => require(principal, Permission::SandboxWrite)?,
-        _ => require(principal, Permission::EnvironmentManage)?,
-    }
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
-    if let Some(sandbox_id) = request.sandbox_id {
-        crate::store::postgres::sandboxes::get(&mut scope, sandbox_id)
-            .await
-            .map_err(ApiError::from)?;
-    }
-    // A grant may only point at a provider profile this environment knows.
-    crate::store::postgres::providers::get(&mut scope, request.provider_profile_id)
-        .await
-        .map_err(|error| match error {
-            crate::error::StoreError::NotFound => {
-                ApiError::validation("Unknown provider profile for this grant.")
+    let request = match request.scope.as_str() {
+        "environment" => {
+            if principal.role != Role::Admin {
+                return Err(ApiError::forbidden("model.grant"));
             }
-            other => ApiError::from(other),
-        })?;
-    let grant = crate::store::postgres::model_grants::insert(&mut scope, &request, Some(principal.user_id))
+            if request.user_id.is_some() || request.sandbox_id.is_some() {
+                return Err(ApiError::validation(
+                    "An environment grant names neither a user nor a sandbox.",
+                ));
+            }
+            request
+        }
+        "user" => {
+            if principal.role != Role::Admin {
+                return Err(ApiError::forbidden("model.grant"));
+            }
+            if request.user_id.is_none() || request.sandbox_id.is_some() {
+                return Err(ApiError::validation(
+                    "A user grant names a user and no sandbox.",
+                ));
+            }
+            request
+        }
+        "sandbox" => {
+            require(principal, Permission::SandboxWrite)?;
+            let Some(sandbox_id) = request.sandbox_id else {
+                return Err(ApiError::validation("A sandbox grant names a sandbox."));
+            };
+            if request.user_id.is_some() {
+                return Err(ApiError::validation("A sandbox grant names no user."));
+            }
+            // The read is the permission check: row-level security only returns a
+            // sandbox this caller owns or was granted.
+            crate::store::postgres::sandboxes::get(&mut scope, sandbox_id)
+                .await
+                .map_err(ApiError::from)?;
+            request
+        }
+        _ => {
+            return Err(ApiError::validation(
+                "A grant's scope is environment, user or sandbox.",
+            ))
+        }
+    };
+    if !valid_model_name(&request.model_name) {
+        return Err(ApiError::validation(
+            "A model name is 1 to 120 letters, digits or one of . _ : / @ -.",
+        ));
+    }
+    match crate::store::postgres::providers::get(&mut scope, request.provider_profile_id).await {
+        Ok(_) => {}
+        Err(crate::error::StoreError::NotFound) => {
+            return Err(ApiError::validation("Unknown provider profile."))
+        }
+        Err(error) => return Err(ApiError::from(error)),
+    }
+
+    let grant = store::insert(&mut scope, &request, Some(principal.user_id))
+        .await
+        .map_err(ApiError::from)?;
+    let affected = store::sandboxes_affected(&mut scope, &grant)
         .await
         .map_err(ApiError::from)?;
     crate::store::postgres::audit::record(
@@ -124,40 +138,70 @@ pub async fn create(
             subject_id: Some(grant.id),
             detail: &serde_json::json!({
                 "scope": grant.scope,
+                "user_id": grant.user_id,
+                "sandbox_id": grant.sandbox_id,
                 "model_name": grant.model_name,
-                "profile": grant.provider_profile_id,
+                "provider_profile_id": grant.provider_profile_id,
+                "is_default": grant.is_default,
             }),
             request_id: None,
         },
     )
     .await
     .map_err(ApiError::from)?;
-    let affected = crate::store::postgres::model_grants::affected_sandboxes(&mut scope, &grant)
-        .await
-        .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
-    apply_change(ctx, principal.environment_id, &affected).await;
+
+    apply_change(ctx, principal, principal.environment_id, &affected).await;
     Ok(grant)
 }
 
 /// Revoke a grant.
+///
+/// The row's scope decides who may revoke it, so an administrator's environment
+/// grant cannot be removed by the owner of one sandbox.
 pub async fn remove(ctx: &ServiceContext, principal: &Principal, id: Uuid) -> Result<(), ApiError> {
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
-    let existing = crate::store::postgres::model_grants::list(&mut scope, None, None)
-        .await
-        .map_err(ApiError::from)?
-        .into_iter()
-        .find(|grant| grant.id == id)
-        .ok_or_else(|| ApiError::not_found(ErrorCode::NOT_FOUND, "No such model grant."))?;
-    match existing.scope.as_str() {
-        "sandbox" => require(principal, Permission::SandboxWrite)?,
-        _ => require(principal, Permission::EnvironmentManage)?,
+    let Some(grant) = store::get(&mut scope, id).await.map_err(ApiError::from)? else {
+        return Err(ApiError::not_found(
+            ErrorCode::NOT_FOUND,
+            "No such model grant.",
+        ));
+    };
+    match grant.scope.as_str() {
+        "environment" | "user" => {
+            if principal.role != Role::Admin {
+                return Err(ApiError::forbidden("model.grant"));
+            }
+        }
+        _ => {
+            require(principal, Permission::SandboxWrite)?;
+            let Some(sandbox_id) = grant.sandbox_id else {
+                return Err(ApiError::not_found(
+                    ErrorCode::NOT_FOUND,
+                    "No such model grant.",
+                ));
+            };
+            crate::store::postgres::sandboxes::get(&mut scope, sandbox_id)
+                .await
+                .map_err(ApiError::from)?;
+        }
     }
-    let removed = crate::store::postgres::model_grants::delete(&mut scope, id)
+
+    let affected = store::sandboxes_affected(&mut scope, &grant)
         .await
         .map_err(ApiError::from)?;
+    if store::delete(&mut scope, id)
+        .await
+        .map_err(ApiError::from)?
+        .is_none()
+    {
+        return Err(ApiError::not_found(
+            ErrorCode::NOT_FOUND,
+            "No such model grant.",
+        ));
+    }
     crate::store::postgres::audit::record(
         &mut scope,
         crate::store::postgres::audit::NewAuditEvent {
@@ -166,19 +210,20 @@ pub async fn remove(ctx: &ServiceContext, principal: &Principal, id: Uuid) -> Re
             kind: "model.revoke",
             subject_type: Some("model_grant"),
             subject_id: Some(id),
-            detail: &serde_json::json!({ "model_name": existing.model_name }),
+            detail: &serde_json::json!({
+                "scope": grant.scope,
+                "user_id": grant.user_id,
+                "sandbox_id": grant.sandbox_id,
+                "model_name": grant.model_name,
+            }),
             request_id: None,
         },
     )
     .await
     .map_err(ApiError::from)?;
-    let affected = crate::store::postgres::model_grants::affected_sandboxes(&mut scope, &existing)
-        .await
-        .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
-    if removed.is_some() {
-        apply_change(ctx, principal.environment_id, &affected).await;
-    }
+
+    apply_change(ctx, principal, principal.environment_id, &affected).await;
     Ok(())
 }
 
@@ -192,20 +237,22 @@ pub async fn effective_for_sandbox(
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
-    crate::store::postgres::sandboxes::get(&mut scope, sandbox_id)
+    let sandbox = store::sandbox_ref(&mut scope, sandbox_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::not_found(ErrorCode::SANDBOX_NOT_FOUND, "No such sandbox."))?;
+    let grants = store::for_sandbox(&mut scope, sandbox_id, sandbox.owner_user_id)
         .await
         .map_err(ApiError::from)?;
-    let owner = crate::store::postgres::model_grants::owner_of(&mut scope, sandbox_id)
-        .await
-        .map_err(ApiError::from)?;
-    let grants = crate::store::postgres::model_grants::for_sandbox(&mut scope, sandbox_id, owner)
-    .await
-    .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
-    Ok(effective(&grants))
+    Ok(crate::domain::model_grant::effective(&grants))
 }
 
-/// The models one sandbox may use, looked up by name (system path).
+/// The models one sandbox may use, looked up by its name (system path).
+///
+/// A sandbox the name does not resolve to has no grants: this path configures a
+/// sandbox that already exists, so an unknown name is an empty list rather than
+/// an error that would fail a create.
 pub async fn effective_by_name(
     ctx: &ServiceContext,
     environment_id: Uuid,
@@ -214,106 +261,184 @@ pub async fn effective_by_name(
     let mut scope = TenantScope::begin(&ctx.pool, environment_id)
         .await
         .map_err(ApiError::from)?;
-    let Some((sandbox_id, owner)) =
-        crate::store::postgres::model_grants::sandbox_by_name(&mut scope, sandbox_name)
-            .await
-            .map_err(ApiError::from)?
+    let Some(sandbox) = store::sandbox_ref_by_name(&mut scope, sandbox_name)
+        .await
+        .map_err(ApiError::from)?
     else {
-        scope.commit().await.map_err(ApiError::from)?;
         return Ok(Vec::new());
     };
-    let grants = crate::store::postgres::model_grants::for_sandbox(&mut scope, sandbox_id, owner)
+    let grants = store::for_sandbox(&mut scope, sandbox.id, sandbox.owner_user_id)
         .await
         .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
-    Ok(effective(&grants))
+    Ok(crate::domain::model_grant::effective(&grants))
 }
 
 /// What the accounting proxy needs to route a sandbox's requests by model.
 ///
-/// The authorization is resolved here and sent over the internal hop only: the
-/// key never reaches a sandbox, a log line or a response the console sees.
+/// The proxy reaches this over the appliance token, so the environment comes
+/// from the sandbox row the proxy named, exactly as the usage record path does.
+/// The credential is resolved here and travels in the answer, never into the
+/// database and never into a log line.
 pub async fn routes_for_accounting(
     ctx: &ServiceContext,
     sandbox_name: &str,
 ) -> Result<serde_json::Value, ApiError> {
-    let mut scope = TenantScope::begin(&ctx.pool, primary_environment(ctx).await?)
+    let environment_id = crate::services::media_service::bridge_environment(ctx).await?;
+    let mut scope = TenantScope::begin(&ctx.pool, environment_id)
         .await
         .map_err(ApiError::from)?;
-    let Some((sandbox_id, owner)) =
-        crate::store::postgres::model_grants::sandbox_by_name(&mut scope, sandbox_name)
-            .await
-            .map_err(ApiError::from)?
+    let Some(sandbox) = store::sandbox_ref_by_name(&mut scope, sandbox_name)
+        .await
+        .map_err(ApiError::from)?
     else {
-        scope.commit().await.map_err(ApiError::from)?;
-        return Ok(serde_json::json!({ "default": null, "models": [] }));
+        return Err(ApiError::not_found(
+            ErrorCode::SANDBOX_NOT_FOUND,
+            "No such sandbox in this environment.",
+        ));
     };
-    let environment_id = scope.environment_id();
-    let grants = crate::store::postgres::model_grants::for_sandbox(&mut scope, sandbox_id, owner)
+    let grants = store::for_sandbox(&mut scope, sandbox.id, sandbox.owner_user_id)
         .await
         .map_err(ApiError::from)?;
-    let models = effective(&grants);
-    let mut out = Vec::new();
+    let models = crate::domain::model_grant::effective(&grants);
+
+    let mut routes = Vec::with_capacity(models.len());
     for model in &models {
-        let Ok(profile) = crate::store::postgres::providers::get(&mut scope, model.provider_profile_id).await
-        else {
-            continue;
-        };
-        let authorization = match profile.secret_ref.as_deref() {
-            Some(locator) => crate::services::secret_service::credential(ctx, environment_id, locator)
+        let profile =
+            crate::store::postgres::providers::get(&mut scope, model.provider_profile_id)
                 .await
-                .ok()
-                .map(|key| format!("Bearer {key}")),
+                .map_err(ApiError::from)?;
+        let authorization = match profile.secret_ref.as_deref() {
+            Some(locator) => crate::services::secret_service::credential(
+                ctx,
+                environment_id,
+                locator,
+            )
+            .await
+            .ok()
+            .map(|key| format!("Bearer {key}")),
             None => None,
         };
-        if authorization.is_none() {
-            // A model whose key cannot be resolved would be a 401 the user cannot
-            // explain; it is left out and the caller falls back to the gateway.
-            tracing::warn!(provider = %profile.name, "model grant skipped: no credential");
-            continue;
-        }
-        let base = profile
-            .endpoint
-            .trim_end_matches('/')
-            .trim_end_matches("/v1")
-            .to_string();
-        out.push(serde_json::json!({
+        routes.push(serde_json::json!({
             "model_name": model.model_name,
-            "upstream_base": base,
+            "upstream_base": upstream_base(&profile.endpoint),
             "upstream_model": model.upstream_model,
             "authorization": authorization,
         }));
     }
+    scope.commit().await.map_err(ApiError::from)?;
+
     let default = models
         .iter()
         .find(|model| model.is_default)
         .map(|model| model.model_name.clone());
-    scope.commit().await.map_err(ApiError::from)?;
-    Ok(serde_json::json!({ "default": default, "models": out }))
+    Ok(serde_json::json!({ "default": default, "models": routes }))
 }
 
-/// The first environment: the internal hop names only a sandbox name.
-async fn primary_environment(ctx: &ServiceContext) -> Result<Uuid, ApiError> {
-    sqlx::query_scalar("SELECT id FROM environments ORDER BY created_at, id LIMIT 1")
-        .fetch_one(&ctx.pool)
-        .await
-        .map_err(|error| ApiError::from(crate::error::StoreError::Database(error)))
+/// A model name the table's `CHECK` accepts, rejected here so a bad name is a
+/// 422 with a message rather than a 500 from a constraint.
+fn valid_model_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 120
+        && name
+            .chars()
+            .all(|symbol| symbol.is_ascii_alphanumeric() || matches!(symbol, '.' | '_' | ':' | '/' | '@' | '-'))
 }
 
-/// Rewrite the agent configuration of every affected running sandbox.
-async fn apply_change(ctx: &ServiceContext, environment_id: Uuid, sandboxes: &[Uuid]) {
-    for sandbox_id in sandboxes {
-        let ctx2 = ctx.clone();
-        let sandbox_id = *sandbox_id;
-        tokio::spawn(async move {
-            if let Err(error) = super::sandbox_service::write_agent_files(&ctx2, environment_id, sandbox_id).await {
-                tracing::warn!(code = error.code.0, %sandbox_id, "agent files not refreshed after a model grant");
+/// The base URL an upstream is called at: no trailing `/v1`, no trailing slash.
+///
+/// The proxy appends the family's own path (`/v1/chat/completions` or
+/// `/v1/messages`), so a profile that stores its OpenAI base with `/v1` would
+/// otherwise produce `/v1/v1/...`.
+fn upstream_base(endpoint: &str) -> String {
+    let trimmed = endpoint.trim().trim_end_matches('/');
+    trimmed.strip_suffix("/v1").unwrap_or(trimmed).to_string()
+}
+
+/// Make a change reach the sandboxes it covers, without blocking the request.
+///
+/// The files of a running sandbox are rewritten (the agent config carries the
+/// model list), the console is told, and an agent that reads its config once at
+/// start (openchamber, opencode) is restarted when it is idle. A stopped sandbox
+/// gets the same files the next time it starts, so nothing is spawned for it.
+async fn apply_change(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    environment_id: Uuid,
+    affected: &[Uuid],
+) {
+    for sandbox_id in affected.iter().copied() {
+        let facts = match read_sandbox(ctx, environment_id, sandbox_id).await {
+            Ok(Some(facts)) => facts,
+            Ok(None) => continue,
+            Err(error) => {
+                tracing::warn!(
+                    sandbox = %sandbox_id,
+                    reason = %error,
+                    "model grant change could not read a sandbox"
+                );
+                continue;
             }
-            ctx2.bus.publish(crate::domain::telemetry::LiveEvent::ModelsChanged {
-                sandbox_id: Some(sandbox_id),
-                environment_id,
-                detail: serde_json::json!({}),
-            });
+        };
+        if facts.status != "running" {
+            continue;
+        }
+
+        let writer = ctx.clone();
+        tokio::spawn(async move {
+            if let Err(error) =
+                crate::services::sandbox_service::write_agent_files(&writer, environment_id, sandbox_id)
+                    .await
+            {
+                tracing::warn!(
+                    code = error.code.0,
+                    "agent files not rewritten after a model grant change"
+                );
+            }
         });
+
+        ctx.bus.publish(crate::domain::telemetry::LiveEvent::ModelsChanged {
+            sandbox_id: Some(sandbox_id),
+            environment_id,
+            detail: serde_json::json!({}),
+        });
+
+        if matches!(facts.pack_key.as_str(), "openchamber" | "opencode") {
+            let restarter = ctx.clone();
+            let caller = principal.clone();
+            tokio::spawn(async move {
+                if let Err(error) = crate::services::agent_auth_service::restart(
+                    &restarter,
+                    &caller,
+                    sandbox_id,
+                    AgentKind::Opencode,
+                    RestartPolicy::Idle,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        code = error.code.0,
+                        "agent restart after a model grant change failed"
+                    );
+                }
+            });
+        }
     }
+}
+
+/// Read one sandbox's facts in a system scope; the caller has already proven
+/// access, and the effect reaches files rather than the caller's own view.
+async fn read_sandbox(
+    ctx: &ServiceContext,
+    environment_id: Uuid,
+    sandbox_id: Uuid,
+) -> Result<Option<store::SandboxRef>, String> {
+    let mut scope = TenantScope::begin(&ctx.pool, environment_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let facts = store::sandbox_ref(&mut scope, sandbox_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    scope.commit().await.map_err(|error| error.to_string())?;
+    Ok(facts)
 }

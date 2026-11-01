@@ -38,3 +38,4 @@ Two different jobs:
 | `telemetry_ingest.rs` | The proxy batch against a database: node token fail-closed, network/dns rows, redacted bodies, MCP calls, the batch cap, tenant scope (`feat/proxy-telemetry`) |
 | `traffic.rs` | The traffic log: rows, aggregates, the map, and the scoped reads |
 | `agent_auth.rs` | Agent sign-in modes against a database: the default from the old `login` choice, a switch stored as waiting, a restart that keeps the mode, and the sign-in rules appearing and disappearing with the mode |
+| `model_grants.rs` | Model grants against a database: an environment grant reaching a sandbox, a member refused the environment scope, the narrower sandbox grant winning, and the accounting router payload |

@@ -55,6 +55,7 @@ the codebase where SQL appears.
 | `terminal_tabs.rs` | The named terminal tabs one user keeps in one sandbox: list, replace. Never content |
 | `login_rules.rs` | The per-sandbox `Sign-in (<agent>): <host>` rules that open an agent's own-account hosts: delete for a sandbox, insert one host, list the environments the restart loop walks |
 | `agent_activity.rs` | Whether a sandbox talked to a model in the last 30 seconds, from `telemetry_events` |
+| `model_grants.rs` | `model_grants`: list, one row, the grants that apply to a sandbox, insert, delete, the sandboxes a change reaches, and the owner/pack/status facts of one sandbox |
 
 ## Reading the traffic log
 

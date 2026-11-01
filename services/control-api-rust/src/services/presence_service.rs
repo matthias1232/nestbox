@@ -52,6 +52,49 @@ pub async fn close_tab_for_all(
     sandbox_id: Uuid,
     tab_id: &str,
 ) -> Result<(), ApiError> {
-    let _ = (ctx, principal, sandbox_id, tab_id);
-    Err(ApiError::not_implemented("closing a shared tab"))
+    require(principal, Permission::SandboxExec)?;
+    if tab_id.is_empty()
+        || tab_id.len() > 64
+        || !tab_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(ApiError::validation("A tab id is 1 to 64 characters of A-Z, 0-9, _ and -."));
+    }
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
+        .await
+        .map_err(ApiError::from)?;
+    let sandbox = crate::store::postgres::sandboxes::get(&mut scope, sandbox_id)
+        .await
+        .map_err(ApiError::from)?;
+    if tab_id != "ssh" {
+        let command = vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "tmux kill-session -t \"nestbox-$1\" 2>/dev/null || true".to_string(),
+            "sh".to_string(),
+            tab_id.to_string(),
+        ];
+        if let Err(error) = ctx.runtime.exec(&sandbox.name, &command, 15).await {
+            tracing::warn!(%sandbox_id, %tab_id, error = %error, "tmux session not ended");
+        }
+    }
+    crate::store::postgres::terminal_tabs::delete_for_all(&mut scope, sandbox_id, tab_id)
+        .await
+        .map_err(ApiError::from)?;
+    crate::store::postgres::audit::record(
+        &mut scope,
+        crate::store::postgres::audit::NewAuditEvent {
+            actor_id: Some(principal.user_id),
+            actor_label: &principal.display_name,
+            kind: "sandbox.terminal_tab_closed",
+            subject_type: Some("sandbox"),
+            subject_id: Some(sandbox_id),
+            detail: &serde_json::json!({ "tab": tab_id }),
+            request_id: None,
+        },
+    )
+    .await
+    .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    announce(ctx, principal.environment_id, sandbox_id);
+    Ok(())
 }

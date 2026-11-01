@@ -109,3 +109,60 @@ mod tests {
         assert_eq!(MAX_TABS, 16);
     }
 }
+
+/// One tab of a sandbox, with who created it: the shared view of the tab strip.
+#[derive(Debug, Clone)]
+pub struct SharedTab {
+    /// The tab id, the tmux session name after `nestbox-`.
+    pub tab_id: String,
+    /// The title the creator gave it.
+    pub title: String,
+    /// The creator's display name, when known.
+    pub created_by_name: Option<String>,
+}
+
+/// Every user's tabs of one sandbox, one row per tab id.
+pub async fn list_all(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+) -> Result<Vec<SharedTab>, StoreError> {
+    let rows = sqlx::query(
+        "SELECT DISTINCT ON (t.tab_id) t.tab_id, t.title, u.display_name AS created_by_name
+           FROM sandbox_terminal_tabs t
+           LEFT JOIN users u ON u.id = t.user_id
+          WHERE t.environment_id = $1 AND t.sandbox_id = $2
+          ORDER BY t.tab_id, t.created_at",
+    )
+    .bind(scope.environment_id())
+    .bind(sandbox_id)
+    .fetch_all(scope.connection())
+    .await?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(SharedTab {
+            tab_id: row.try_get("tab_id")?,
+            title: row.try_get("title")?,
+            created_by_name: row.try_get("created_by_name")?,
+        });
+    }
+    Ok(out)
+}
+
+/// Remove one tab for every user of the sandbox.
+pub async fn delete_for_all(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+    tab_id: &str,
+) -> Result<u64, StoreError> {
+    let affected = sqlx::query(
+        "DELETE FROM sandbox_terminal_tabs
+          WHERE environment_id = $1 AND sandbox_id = $2 AND tab_id = $3",
+    )
+    .bind(scope.environment_id())
+    .bind(sandbox_id)
+    .bind(tab_id)
+    .execute(scope.connection())
+    .await?
+    .rows_affected();
+    Ok(affected)
+}

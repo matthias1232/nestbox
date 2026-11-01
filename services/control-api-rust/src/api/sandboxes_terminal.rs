@@ -41,6 +41,14 @@ const SUBPROTOCOL: &str = "nestbox-terminal";
 #[derive(Debug, Deserialize)]
 pub struct TerminalQuery { pub tab: Option<String> }
 
+/// The tab-list read: `all=1` shows every user's tabs of the sandbox.
+#[derive(Debug, serde::Deserialize)]
+pub struct TabsQuery {
+    /// Any value means "everybody's tabs".
+    #[serde(default)]
+    pub all: Option<u8>,
+}
+
 /// One tab in a PUT body.
 #[derive(Debug, Deserialize)]
 pub struct TabSpec {
@@ -65,8 +73,9 @@ pub async fn tabs(
     State(state): State<AppState>,
     auth: Auth,
     Path(id): Path<Uuid>,
+    Query(query): Query<TabsQuery>,
 ) -> Result<Json<terminal_service::TerminalTabs>, ApiError> {
-    let tabs = terminal_service::tabs(&state.services, &auth.principal, id).await?;
+    let tabs = terminal_service::tabs(&state.services, &auth.principal, id, query.all.is_some()).await?;
     Ok(Json(tabs))
 }
 

@@ -617,6 +617,7 @@ pub async fn environment_for_sandbox(
     sandbox_name: &str,
 ) -> Result<BTreeMap<String, String>, ApiError> {
     let mut environment = environment_for_pack(ctx, environment_id, pack_key).await?;
+    apply_model_grants(ctx, environment_id, sandbox_name, &mut environment).await;
     if let Some(proxy) = accounting_proxy_url() {
         // The granted models decide which dialect an agent is offered before the
         // base URLs are rewritten: `NESTBOX_MODEL_ROUTER=1` makes the accounting
@@ -648,6 +649,73 @@ pub async fn environment_for_sandbox(
         crate::domain::agent_config::route_through_accounting(&mut environment, &proxy, sandbox_name);
     }
     Ok(environment)
+}
+
+/// Point an agent at the model router when the sandbox has been granted models.
+///
+/// The grants decide *which* models exist and which one is the default; the
+/// proxy decides where each of them is served. So the agent's base URLs become
+/// the router's path (`…/s/<sandbox>/r`, with `/v1` for the OpenAI family) and
+/// the old gateway endpoint is replaced rather than kept: two base URLs would
+/// mean some traffic bypasses the router and the grant list would be a
+/// suggestion. Without a proxy URL there is nothing to route through, so only
+/// the three `NESTBOX_MODEL_*` keys are set for an agent that wants the list.
+///
+/// A grant read that fails leaves the sandbox with its mapped model
+/// environment rather than without one: a sandbox that cannot start is worse
+/// than one running on the gateway's default.
+async fn apply_model_grants(
+    ctx: &ServiceContext,
+    environment_id: Uuid,
+    sandbox_name: &str,
+    environment: &mut BTreeMap<String, String>,
+) {
+    let models = match super::model_grant_service::effective_by_name(ctx, environment_id, sandbox_name)
+        .await
+    {
+        Ok(models) => models,
+        Err(error) => {
+            tracing::warn!(code = error.code.0, "model grants could not be read for a sandbox");
+            return;
+        }
+    };
+    let Some(first) = models.first() else {
+        return;
+    };
+
+    let names = models
+        .iter()
+        .map(|model| model.model_name.clone())
+        .collect::<Vec<_>>()
+        .join(",");
+    let default = models
+        .iter()
+        .find(|model| model.is_default)
+        .unwrap_or(first)
+        .model_name
+        .clone();
+
+    environment.insert("NESTBOX_MODEL_ROUTER".into(), "1".into());
+    environment.insert("NESTBOX_MODEL_LIST".into(), names);
+    environment.insert("NESTBOX_MODEL_DEFAULT".into(), default);
+    let Some(proxy) = accounting_proxy_url() else {
+        return;
+    };
+    let router = format!("{}/s/{}/r", proxy.trim_end_matches('/'), sandbox_name);
+    environment.insert("ANTHROPIC_BASE_URL".into(), router.clone());
+    environment.insert("OPENAI_BASE_URL".into(), format!("{router}/v1"));
+    // Kept equal to the OpenAI base, as the mapped environment does: some agents
+    // read one name and some the other.
+    environment.insert("OPENAI_API_BASE".into(), format!("{router}/v1"));
+    // Placeholders, not credentials: the router sets the real authorization from
+    // the profile the chosen model points at, and an agent refuses to start
+    // without a value.
+    environment
+        .entry("OPENAI_API_KEY".into())
+        .or_insert_with(|| "nestbox".into());
+    environment
+        .entry("ANTHROPIC_AUTH_TOKEN".into())
+        .or_insert_with(|| "nestbox".into());
 }
 
 /// The environment for a pack, by what it speaks.

@@ -32,7 +32,14 @@ use crate::store::postgres::terminal_sessions as session_store;
 use crate::store::postgres::terminal_tabs as tab_store;
 
 /// Terminals allowed in one sandbox at the same time.
-pub const MAX_PER_SANDBOX: usize = 4;
+/// Open terminals in one sandbox across everybody. One sandbox is a machine with
+/// one owner and, usually, one administrator watching: four was a limit that two
+/// people working together reached by accident.
+pub const MAX_PER_SANDBOX: usize = 12;
+
+/// Open terminals one person may keep in one sandbox: the number a person can
+/// actually watch, small enough that one tab strip stays readable.
+pub const MAX_PER_USER_IN_SANDBOX: usize = 4;
 
 /// Terminals one user may hold open across all sandboxes.
 pub const MAX_PER_USER: usize = 20;
@@ -309,6 +316,29 @@ pub async fn open(
         })));
     }
 
+    let mine_in_sandbox = session_store::count_open_for_user_in_sandbox(
+        &mut scope,
+        sandbox_id,
+        principal.user_id,
+        limits.stale_after(),
+    )
+    .await
+    .map_err(ApiError::from)?;
+    if mine_in_sandbox >= MAX_PER_USER_IN_SANDBOX as i64 {
+        scope.commit().await.map_err(ApiError::from)?;
+        return Err(ApiError::too_many(
+            ErrorCode::SANDBOX_TERMINAL_LIMIT,
+            format!(
+                "You already have {mine_in_sandbox} terminals in this sandbox (limit {MAX_PER_USER_IN_SANDBOX}). Close one and try again."
+            ),
+        )
+        .with_details(serde_json::json!({
+            "limit": MAX_PER_USER_IN_SANDBOX,
+            "open": mine_in_sandbox,
+            "scope": "user_in_sandbox",
+        })));
+    }
+
     let for_user =
         session_store::count_open_for_user(&mut scope, principal.user_id, limits.stale_after())
             .await
@@ -329,9 +359,18 @@ pub async fn open(
         })));
     }
 
-    let session_id = session_store::open(&mut scope, sandbox_id, principal.user_id)
-        .await
-        .map_err(ApiError::from)?;
+    // The row is presence as well as quota: it names the tab, so the console can
+    // say who is in which shell (ADR 0056).
+    let session_id = crate::store::postgres::presence::open_session(
+        &mut scope,
+        sandbox_id,
+        Some(principal.user_id),
+        "terminal",
+        Some(&tab_id),
+        false,
+    )
+    .await
+    .map_err(ApiError::from)?;
 
     let opened_at = chrono::Utc::now();
     audit_store::record(
@@ -362,6 +401,7 @@ pub async fn open(
     .await
     .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
+    crate::services::presence_service::announce(ctx, principal.environment_id, sandbox_id);
 
     Ok(Ticket {
         session_id,
@@ -589,6 +629,12 @@ fn dimension(value: Option<&serde_json::Value>, default: u16) -> u16 {
 pub struct TerminalTab {
     pub tab_id: String,
     pub title: String,
+    /// Who created the tab, for the shared strip (absent in the old shape).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by_name: Option<String>,
+    /// Who is in the tab right now.
+    #[serde(default)]
+    pub viewers: Vec<serde_json::Value>,
     /// Whether the named tmux session exists in the sandbox right now. A tab
     /// whose shell ended is still listed: it is a place to reconnect to, and
     /// hiding it would look like the tab had been closed.
@@ -637,6 +683,7 @@ pub async fn tabs(
     ctx: &ServiceContext,
     principal: &Principal,
     sandbox_id: Uuid,
+    all: bool,
 ) -> Result<TerminalTabs, ApiError> {
     require(principal, Permission::SandboxExec)?;
 
@@ -644,7 +691,33 @@ pub async fn tabs(
         .await
         .map_err(ApiError::from)?;
     let sandbox = load_sandbox(&mut scope, sandbox_id).await?;
-    let stored = tab_store::list(&mut scope, sandbox_id, principal.user_id)
+    // With `all` the strip is the sandbox's, not the caller's: an owner and an
+    // administrator see the same tabs and can join the same shell (ADR 0056).
+    let stored = if all {
+        tab_store::list_all(&mut scope, sandbox_id)
+            .await
+            .map_err(ApiError::from)?
+            .into_iter()
+            .map(|tab| tab_store::TabRow {
+                tab_id: tab.tab_id,
+                title: tab.title,
+                position: 0,
+                last_seen_at: chrono::Utc::now(),
+            })
+            .collect::<Vec<_>>()
+    } else {
+        tab_store::list(&mut scope, sandbox_id, principal.user_id)
+            .await
+            .map_err(ApiError::from)?
+    };
+    let shared = if all {
+        tab_store::list_all(&mut scope, sandbox_id)
+            .await
+            .map_err(ApiError::from)?
+    } else {
+        Vec::new()
+    };
+    let presence = crate::store::postgres::presence::list_open(&mut scope, sandbox_id, 35 * 60)
         .await
         .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
@@ -661,10 +734,29 @@ pub async fn tabs(
 
     let items = stored
         .into_iter()
-        .map(|row| TerminalTab {
-            alive: sessions.iter().any(|name| name == &format!("nestbox-{}", row.tab_id)),
-            tab_id: row.tab_id,
-            title: row.title,
+        .map(|row| {
+            let creator = shared
+                .iter()
+                .find(|tab| tab.tab_id == row.tab_id)
+                .and_then(|tab| tab.created_by_name.clone());
+            let viewers: Vec<serde_json::Value> = presence
+                .iter()
+                .filter(|entry| entry.tab_id.as_deref() == Some(row.tab_id.as_str()))
+                .map(|entry| {
+                    serde_json::json!({
+                        "user_name": entry.user_name,
+                        "kind": entry.kind,
+                        "view_only": entry.view_only,
+                    })
+                })
+                .collect();
+            TerminalTab {
+                alive: sessions.iter().any(|name| name == &format!("nestbox-{}", row.tab_id)),
+                tab_id: row.tab_id,
+                title: row.title,
+                created_by_name: creator,
+                viewers,
+            }
         })
         .collect();
 
@@ -727,6 +819,8 @@ pub async fn save_tabs(
                 alive: false,
                 tab_id: row.tab_id,
                 title: row.title,
+                created_by_name: None,
+                viewers: Vec::new(),
             })
             .collect(),
         durable: None,
