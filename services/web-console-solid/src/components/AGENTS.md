@@ -34,6 +34,7 @@ not gateways and sandboxes.
 | `ModelFitCell.jsx` | Badge, compact bars, and the shortfall in words |
 | `Tabs.jsx` | Accessible tab strip |
 | `Empty.jsx` | A consistent empty state |
+| `LoginBadge.jsx` | One sandbox's sign-in state, one mode per agent when the entry carries `agents`, else the single summary badge |
 | `LogViewer.jsx` | One log panel for a sandbox, a supervisor (filtered) and an appliance component: follow, filter, copy; stops following after a failed read |
 | `PendingPanel.jsx` | A tab body that a later package fills: what belongs there, which endpoint, who owns it |
 | `Switch.jsx` | A two-state switch, a hidden checkbox under a styled track |
