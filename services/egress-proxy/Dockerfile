@@ -43,7 +43,13 @@ COPY envoy.yaml /etc/envoy/envoy.yaml
 COPY extensions/ /etc/envoy/extensions/
 
 COPY --from=mitm /out/egress-mitm /usr/local/bin/egress-mitm
-COPY --from=roots /tmp/cacert.pem /etc/envoy/mozilla-ca.pem
+COPY --from=roots /tmp/cacert.pem /tmp/mozilla-ca.pem
+# Both lists, not one: BoringSSL follows the chain a server sends. api.anthropic.com
+# sends GTS Root R4 cross-signed by GlobalSign, which only the older list still
+# has; a server on a 2025 Let's Encrypt chain needs the newer one. OpenSSL finds
+# either path, Envoy does not, so the trust file is the union.
+RUN cat /etc/ssl/certs/ca-certificates.crt /tmp/mozilla-ca.pem > /etc/envoy/mozilla-ca.pem \
+ && rm /tmp/mozilla-ca.pem
 COPY start-egress-proxy.sh /usr/local/bin/start-egress-proxy.sh
 RUN chmod 0755 /usr/local/bin/start-egress-proxy.sh /usr/local/bin/egress-mitm
 
