@@ -49,6 +49,7 @@ the codebase where SQL appears.
 | `geography.rs` | `host_geography`: the cached country and AS per destination host (global table, pool not scope) |
 | `terminal_sessions.rs` | Terminal sessions in `sandbox_sessions`: open, count for the limits, close. Never content (ADR 0023) |
 | `terminal_tabs.rs` | The named terminal tabs one user keeps in one sandbox: list, replace. Never content |
+| `model_grants.rs` | `model_grants`: list, one row, the grants that apply to a sandbox, insert, delete, the sandboxes a change reaches, and the owner/pack/status facts of one sandbox |
 
 ## Reading the traffic log
 

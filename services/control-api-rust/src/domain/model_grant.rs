@@ -91,6 +91,9 @@ fn scope_rank(scope: &str) -> u8 {
 ///
 /// Same `model_name` from two scopes keeps the narrower one; exactly one model
 /// is the default (the narrowest grant that asks for it, else the first name).
+/// The list reads by name so that two lists built from the same rows cannot
+/// order differently, which would reorder the console and the agent's model list
+/// on every restart.
 pub fn effective(grants: &[ModelGrant]) -> Vec<EffectiveModel> {
     let mut winners: Vec<&ModelGrant> = Vec::new();
     for grant in grants {
@@ -106,15 +109,14 @@ pub fn effective(grants: &[ModelGrant]) -> Vec<EffectiveModel> {
             None => winners.push(grant),
         }
     }
-    winners.sort_by(|left, right| {
-        scope_rank(&left.scope)
-            .cmp(&scope_rank(&right.scope))
-            .then_with(|| left.model_name.cmp(&right.model_name))
-    });
+    winners.sort_by(|left, right| left.model_name.cmp(&right.model_name));
 
+    // Several scopes may ask for a default; the narrowest one decides. Ties keep
+    // the first of the name-sorted list, so the answer is stable.
     let default_name = winners
         .iter()
-        .find(|grant| grant.is_default)
+        .filter(|grant| grant.is_default)
+        .min_by_key(|grant| scope_rank(&grant.scope))
         .map(|grant| grant.model_name.clone())
         .or_else(|| winners.first().map(|grant| grant.model_name.clone()));
 
@@ -184,5 +186,33 @@ mod tests {
         row.upstream_model = Some("qwen3:1.7b".to_string());
         let models = effective(&[row]);
         assert_eq!(models[0].upstream_model, "qwen3:1.7b");
+    }
+
+    #[test]
+    fn the_list_reads_by_name_whatever_scope_a_model_came_from() {
+        let models = effective(&[
+            grant("sandbox", "zeta", 1, false),
+            grant("environment", "alpha", 2, false),
+            grant("user", "kilo", 3, false),
+        ]);
+        let names: Vec<&str> = models.iter().map(|m| m.model_name.as_str()).collect();
+        assert_eq!(names, vec!["alpha", "kilo", "zeta"]);
+    }
+
+    #[test]
+    fn two_defaults_make_the_narrower_scope_the_default() {
+        let models = effective(&[
+            grant("environment", "a", 1, true),
+            grant("sandbox", "b", 2, true),
+            grant("user", "c", 3, true),
+        ]);
+        assert!(!models[0].is_default);
+        assert!(models[1].is_default, "the sandbox grant is the narrowest");
+        assert!(!models[2].is_default);
+    }
+
+    #[test]
+    fn no_grant_is_no_model() {
+        assert!(effective(&[]).is_empty());
     }
 }
