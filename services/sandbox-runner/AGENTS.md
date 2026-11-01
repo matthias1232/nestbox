@@ -164,7 +164,9 @@ seconds instead of half an hour.
 | `app/inventory.py` | Runs the probe and parses its sections |
 | `app/inventory.sh` | The fixed probe script, executed inside the container |
 | `app/terminal.py` | The browser terminal: node token, PTY pump, resize, idle close |
+| `app/telemetry_shipper.py` | Reads the egress proxy's JSON access log from its container output and posts it as batches; the field map is pure, including the `would_deny` verdict |
 | `tests/test_terminal.py` | The pump and the frame rules, without FastAPI and without Docker (`python3 -m unittest discover -s tests -t .`) |
+| `tests/test_telemetry_shipper.py` | The access-log field map, the batch size cut, and the ship/drop/retry rule, without Docker |
 | `Dockerfile` | Image build |
 
 ## Samples, processes, inventory
