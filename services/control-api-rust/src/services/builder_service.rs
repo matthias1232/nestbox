@@ -1839,8 +1839,8 @@ pub fn supervisor_script(plan: &ImagePlan) -> Result<String, String> {
     let command = crate::domain::builder::entrypoint_command(&launches);
     match command.as_slice() {
         // The shebang is not decoration: without it the kernel hands the file
-        // to /bin/sh, dash has no `wait -n`, and the sandbox dies at start with
-        // "wait: Illegal option -n".
+        // to /bin/sh, and the sandbox runs under a shell that is not the bash
+        // the pack commands assume.
         [shell, flag, script] if shell == "/bin/bash" && flag == "-c" => {
             Ok(format!("#!/bin/bash\n{script}"))
         }
@@ -2552,8 +2552,8 @@ mod tests {
         let (_, supervisor) = &request.files[1];
         assert!(supervisor.starts_with("#!/bin/bash\n"), "the kernel needs the shebang");
         assert!(supervisor.contains("mkdir -p /home/nestbox"));
-        assert!(supervisor.contains("exec sleep infinity"));
-        assert!(supervisor.contains("wait -n"));
+        assert!(supervisor.contains("    sleep infinity &"));
+        assert!(supervisor.contains("while true; do"));
         assert!(supervisor.contains("export OPENAI_API_KEY="));
     }
 

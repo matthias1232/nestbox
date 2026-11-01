@@ -51,7 +51,7 @@ microseconds is that it has none.
 | `model_install.rs` | One model on one node; reservation rule and the free budget the fit runs against |
 | `node.rs` | Node, kind, status, budget (total / reserved / free) |
 | `pack.rs` | Baseline, agent pack, pack defaults, tool and package-manager resolution |
-| `builder.rs` | Recipe, agent spec, home mode, persistence, resource limits |
+| `builder.rs` | Recipe, agent spec, home mode, persistence, resource limits, the supervisor script (one loop per agent, PID file in `/tmp/nestbox-agents`) |
 | `persist.rs` | Persistent root, mount, mount spec, path derivation |
 | `pagination.rs` | Cursor, filter, sort, facet types |
 | `auth.rs` | User, role, permission |
