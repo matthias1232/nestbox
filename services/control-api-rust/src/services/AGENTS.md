@@ -301,3 +301,7 @@ uses to find it.
 | `node_connect_service` | joining a machine by address, tunnels, the egress lock |
 | `rule_bulk_service` | turning observation into rule drafts |
 | `control_service` | the one summary the workbox and the admin list read |
+
+`policy_service::sync_openshell_policies` pushes each sandbox's compiled policy and, while the rules
+are suspended (`off_allow_all`, or an open `all`/`openshell` window), the destinations it has been
+seen reaching, in audit mode: OpenShell logs them instead of blocking.

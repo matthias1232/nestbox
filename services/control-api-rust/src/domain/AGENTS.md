@@ -79,3 +79,5 @@ same change, and update the `CHECK` constraint in the migration.
 `agent_auth.rs` holds the agent kinds, sign-in modes and restart policies; `presence.rs` one open
 session; `model_grant.rs` a grant and the inheritance rule; `node_tunnel.rs` a node's tunnel and the
 "connect by address" request. `egress.rs` decides with `would_deny` and the `off_allow_all` answer.
+`openshell_policy.rs` compiles rules into an OpenShell policy; `allow_hosts` adds the destinations a
+suspended sandbox may still reach, in audit mode, because OpenShell 0.1.6 has no host wildcard.

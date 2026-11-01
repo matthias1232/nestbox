@@ -1831,10 +1831,20 @@ pub async fn sync_openshell_policies(ctx: &ServiceContext) -> Result<u64, ApiErr
         let mut work = Vec::new();
         for (id, name) in rows.into_iter().filter(|(_, name)| on_gateway.contains(name)) {
             let rules = effective_rules(&mut scope, id, environment_id).await?;
-            work.push((id, name, crate::domain::openshell_policy::compile(&rules)));
+            let mut compiled = crate::domain::openshell_policy::compile(&rules);
+            // A sandbox whose rules are suspended gets the destinations it has
+            // been seen reaching, in audit mode, on top of its own entries. The
+            // fingerprint covers that addition, so switching in and out of the
+            // state pushes a policy on the next pass by itself.
+            let suspended = rules_suspended(&mut scope, id).await?;
+            if suspended {
+                let hosts = suspended_hosts(&mut scope, id, &rules).await?;
+                compiled = crate::domain::openshell_policy::allow_hosts(&compiled, &hosts);
+            }
+            work.push((id, name, compiled, suspended));
         }
         scope.commit().await.map_err(ApiError::from)?;
-        for (id, name, compiled) in work {
+        for (id, name, compiled, suspended) in work {
             let fingerprint = compiled.fingerprint();
             if pushed.lock().map(|map| map.get(&id) == Some(&fingerprint)).unwrap_or(false) {
                 continue;
@@ -1845,13 +1855,81 @@ pub async fn sync_openshell_policies(ctx: &ServiceContext) -> Result<u64, ApiErr
                         map.insert(id, fingerprint);
                     }
                     changed += 1;
-                    tracing::info!(sandbox = %name, skipped = compiled.skipped.len(), "pushed the OpenShell policy");
+                    tracing::info!(
+                        sandbox = %name,
+                        skipped = compiled.skipped.len(),
+                        allow_all = suspended,
+                        "pushed the OpenShell policy"
+                    );
                 }
                 Err(error) => tracing::warn!(sandbox = %name, error = %error, "could not push the OpenShell policy"),
             }
         }
     }
     Ok(changed)
+}
+
+/// Whether the sandbox's own rules are suspended, so the supervisor must let
+/// everything through and only record it.
+///
+/// Two ways in: the egress proxy is switched off (`off_allow_all`), or an open
+/// window with channel `all` or `openshell` covers the sandbox. A window on a
+/// narrower channel does not suspend the supervisor: it opens one firewall, not
+/// this one (ADR 0053).
+async fn rules_suspended(scope: &mut TenantScope<'_>, sandbox_id: Uuid) -> Result<bool, ApiError> {
+    let mode = store::egress_mode_for_sandbox(scope, sandbox_id)
+        .await
+        .map_err(ApiError::from)?;
+    if mode.map(|setting| setting.mode.allows_everything()).unwrap_or(false) {
+        return Ok(true);
+    }
+    // `open_windows` filters by the database clock, so an expired window is gone
+    // on the same pass that it expired.
+    let windows = egress_store::open_windows(scope, Some(sandbox_id))
+        .await
+        .map_err(ApiError::from)?;
+    Ok(windows
+        .iter()
+        .any(|window| matches!(window.channel, WindowChannel::All | WindowChannel::Openshell)))
+}
+
+/// The destinations a suspended sandbox may reach: every host its own rules
+/// name, plus every host its telemetry recorded in the last seven days.
+///
+/// OpenShell has no host wildcard (see `openshell_policy::allow_hosts`), so a
+/// policy that allows "everything" has to say what everything is. The rule hosts
+/// are what the operator already allowed; the telemetry hosts are what the
+/// sandbox actually used while it was still blocked, which is the same set the
+/// rule drafts screen offers to turn into rules.
+async fn suspended_hosts(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Uuid,
+    rules: &[NetworkRule],
+) -> Result<Vec<(String, i32)>, ApiError> {
+    use crate::store::postgres::traffic as traffic_store;
+    let mut hosts: Vec<(String, i32)> = rules
+        .iter()
+        .filter(|rule| rule.enabled && !rule.host.is_empty() && !rule.host.contains('*'))
+        .map(|rule| (rule.host.clone(), rule.port.unwrap_or(443)))
+        .collect();
+    let now = Utc::now();
+    let edges = traffic_store::map_edges(
+        scope,
+        sandbox_id,
+        now - chrono::Duration::days(7),
+        now,
+        500,
+    )
+    .await
+    .map_err(ApiError::from)?;
+    for edge in edges {
+        if !edge.host.is_empty() {
+            hosts.push((edge.host, edge.port));
+        }
+    }
+    hosts.sort();
+    hosts.dedup();
+    Ok(hosts)
 }
 
 /// A copy of a policy under a new name, never global: a clone is a starting point an
