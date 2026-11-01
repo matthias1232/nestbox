@@ -153,6 +153,7 @@ seconds instead of half an hour.
 | File | Responsibility |
 |---|---|
 | `app/main.py` | The FastAPI adapter, the sandbox network, the egress wiring, and model serving |
+| `app/ca_bundle.py` | The CA and CA-bundle files a sandbox is given: built here, mounted read-only in every mode that uses the proxy, never in `direct` |
 | `app/images.py` | The one image allowlist shared by sandbox creation and the package catalogue |
 | `app/catalogue.py` | Live package search and post-build verification: fixed scripts, validated query, throwaway container |
 | `app/stats.py` | One-shot `docker stats` samples and the poster loop |
@@ -167,6 +168,7 @@ seconds instead of half an hour.
 | `app/inventory.sh` | The fixed probe script, executed inside the container |
 | `app/terminal.py` | The browser terminal: node token, PTY pump, resize, idle close |
 | `tests/test_terminal.py` | The pump and the frame rules, without FastAPI and without Docker (`python3 -m unittest discover -s tests -t .`) |
+| `tests/test_ca_mounts.py` | Which egress modes get the CA and the bundle, and what the bundle contains |
 | `Dockerfile` | Image build |
 
 ## Samples, processes, inventory
