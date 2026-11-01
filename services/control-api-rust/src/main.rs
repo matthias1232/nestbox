@@ -197,6 +197,11 @@ async fn main() {
                     tracing::debug!(code = error.code.0, "supervisor sync skipped");
                 }
                 if let Err(error) =
+                    nestbox_control_api::services::sandbox_service::heal_crashed(&services).await
+                {
+                    tracing::debug!(code = error.code.0, "crash healing pass skipped");
+                }
+                if let Err(error) =
                     nestbox_control_api::services::policy_service::sync_openshell_policies(&services).await
                 {
                     tracing::debug!(code = error.code.0, "OpenShell policy sync skipped");

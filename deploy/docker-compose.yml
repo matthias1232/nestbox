@@ -171,7 +171,7 @@ services:
       NESTBOX_RUNTIME_NETWORK: ${COMPOSE_PROJECT_NAME:-nestbox}_runtime
       NESTBOX_SECRET_DIR: /secrets
       # "openshell" creates new sandboxes on the OpenShell gateway.
-      NESTBOX_SANDBOX_RUNTIME: ${NESTBOX_SANDBOX_RUNTIME:-docker-development}
+      NESTBOX_SANDBOX_RUNTIME: ${NESTBOX_SANDBOX_RUNTIME:-openshell}
       # Where an agent finds the Nestbox MCP hub. On OpenShell the hub is reached
       # through the host (see the mcp-hub service).
       NESTBOX_MCP_HUB_URL: ${NESTBOX_MCP_HUB_URL:-http://mcp-hub:8080/mcp}

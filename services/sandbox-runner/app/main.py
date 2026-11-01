@@ -674,7 +674,10 @@ def create_sandbox(body: SandboxRequest) -> dict[str, Any]:
     if not image_allowed(body.image):
         raise HTTPException(422, "image is not in the approved phase-1 catalog")
     network = ensure_network()
-    if body.runtime == "openshell":
+    # `direct` means "no proxy, own route to the internet". A gateway sandbox has no
+    # route of its own (its supervisor decides every connection), so that one mode
+    # stays on the Docker runtime instead of being silently turned into another.
+    if body.runtime == "openshell" and body.egress_mode != "direct":
         return create_openshell_sandbox(body)
     registry_images.ensure_image(client, body.image)
     name = container_name(body.name)
@@ -780,6 +783,14 @@ def create_openshell_sandbox(body: SandboxRequest) -> dict[str, Any]:
     except NotFound:
         pass
     mounts = [validate_mount(mount) for mount in body.mounts]
+    # A mode that reads TLS needs the node CA inside the sandbox, as on Docker:
+    # only then, and only the public half.
+    if body.egress_mode in ("transparent", "hybrid"):
+        public_ca = publish_egress_ca()
+        if public_ca:
+            mounts.append({"type": "bind", "source": public_ca, "target": EGRESS_CA_TARGET, "read_only": True})
+        else:
+            logger.warning("egress mode %s needs the node CA, but %s does not exist", body.egress_mode, EGRESS_CA_HOST)
     try:
         osh.create(
             name=body.name,

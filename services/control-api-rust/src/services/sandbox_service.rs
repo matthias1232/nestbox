@@ -2145,3 +2145,132 @@ pub async fn visible_ids(
     let _ = scope.commit().await;
     Some(ids.into_iter().collect())
 }
+
+
+// ---------------------------------------------------------------------------
+// Bringing back sandboxes that crashed
+// ---------------------------------------------------------------------------
+
+/// How long to wait before the next attempt on a sandbox, by how many failed:
+/// a minute, two, four ... capped at half an hour.
+fn heal_delay(attempts: u32) -> std::time::Duration {
+    std::time::Duration::from_secs((60u64 << attempts.min(5)).min(1800))
+}
+
+type HealState = std::collections::HashMap<String, (u32, std::time::Instant)>;
+
+fn heal_state() -> &'static std::sync::Mutex<HealState> {
+    static STATE: std::sync::OnceLock<std::sync::Mutex<HealState>> = std::sync::OnceLock::new();
+    STATE.get_or_init(|| std::sync::Mutex::new(HealState::new()))
+}
+
+/// Restart gateway sandboxes that died while they were meant to run.
+///
+/// "Meant to run" is the stored status: a sandbox an operator stopped is `stopped`
+/// and is left alone, one that is `running` in the database but not on the
+/// runtime crashed. OpenShell freezes a workload whose supervisor lost the gateway
+/// and ends it when the recovery deadline passes (phase `Error`); nothing used to
+/// bring it back. Each attempt is audited, and repeated failures back off.
+pub async fn heal_crashed(ctx: &ServiceContext) -> Result<u64, ApiError> {
+    if !openshell_runtime() {
+        return Ok(0);
+    }
+    let facts = ctx.runtime.list().await.map_err(|error| {
+        ApiError::new(
+            axum::http::StatusCode::BAD_GATEWAY,
+            ErrorCode::NODE_RUNTIME_UNAVAILABLE,
+            error.to_string(),
+        )
+    })?;
+    let crashed: std::collections::HashSet<String> = facts
+        .iter()
+        .filter(|fact| fact.container_name.starts_with("openshell-default--") && fact.status != "running")
+        .map(|fact| fact.name.clone())
+        .collect();
+    let running: std::collections::HashSet<String> = facts
+        .iter()
+        .filter(|fact| fact.status == "running")
+        .map(|fact| fact.name.clone())
+        .collect();
+    // A sandbox that runs again has paid its debt.
+    if let Ok(mut state) = heal_state().lock() {
+        state.retain(|name, _| !running.contains(name));
+    }
+    if crashed.is_empty() {
+        return Ok(0);
+    }
+
+    let environments: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM environments")
+        .fetch_all(&ctx.pool)
+        .await
+        .map_err(|error| ApiError::from(crate::error::StoreError::Database(error)))?;
+    let mut healed = 0;
+    for environment_id in environments {
+        let mut scope = TenantScope::begin(&ctx.pool, environment_id).await.map_err(ApiError::from)?;
+        let wanted: Vec<(Uuid, String)> = sqlx::query_as(
+            "SELECT id, name FROM sandboxes WHERE status::text = 'running'",
+        )
+        .fetch_all(scope.connection())
+        .await
+        .map_err(|error| ApiError::from(crate::error::StoreError::Database(error)))?;
+        for (sandbox_id, name) in wanted.into_iter().filter(|(_, name)| crashed.contains(name)) {
+            let due = match heal_state().lock() {
+                Ok(state) => state
+                    .get(&name)
+                    .map(|(attempts, last)| last.elapsed() >= heal_delay(*attempts))
+                    .unwrap_or(true),
+                Err(_) => false,
+            };
+            if !due {
+                continue;
+            }
+            let attempts = heal_state()
+                .lock()
+                .map(|mut state| {
+                    let entry = state.entry(name.clone()).or_insert((0, std::time::Instant::now()));
+                    entry.0 += 1;
+                    entry.1 = std::time::Instant::now();
+                    entry.0
+                })
+                .unwrap_or(1);
+            let outcome = ctx.runtime.restart(&name).await;
+            tracing::warn!(sandbox = %name, attempt = attempts, ok = outcome.is_ok(), "restarting a sandbox that crashed");
+            let detail = serde_json::json!({
+                "attempt": attempts,
+                "result": match &outcome { Ok(_) => "restarted".to_string(), Err(error) => error.to_string() },
+            });
+            let _ = crate::store::postgres::audit::record(
+                &mut scope,
+                crate::store::postgres::audit::NewAuditEvent {
+                    actor_id: None,
+                    actor_label: "nestbox",
+                    kind: "sandbox.healed",
+                    subject_type: Some("sandbox"),
+                    subject_id: Some(sandbox_id),
+                    detail: &detail,
+                    request_id: None,
+                },
+            )
+            .await;
+            if outcome.is_ok() {
+                healed += 1;
+            }
+        }
+        scope.commit().await.map_err(ApiError::from)?;
+    }
+    Ok(healed)
+}
+
+#[cfg(test)]
+mod heal_tests {
+    use super::*;
+
+    #[test]
+    fn the_wait_doubles_and_is_capped() {
+        assert_eq!(heal_delay(0).as_secs(), 60);
+        assert_eq!(heal_delay(1).as_secs(), 120);
+        assert_eq!(heal_delay(3).as_secs(), 480);
+        assert_eq!(heal_delay(5).as_secs(), 1800);
+        assert_eq!(heal_delay(40).as_secs(), 1800);
+    }
+}
