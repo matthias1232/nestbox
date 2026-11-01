@@ -159,6 +159,8 @@ async fn sandbox(pool: &PgPool, environment: Uuid, runtime: &FakeRuntime) -> San
             gpu_count: 0,
         egress_mode: "forward_proxy".into(),
         node_id: None,
+            memory_reservation: None,
+            cpu_shares: None,
         })
         .await
         .expect("the fake runner creates a sandbox");

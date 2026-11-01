@@ -36,6 +36,7 @@ export function SessionProvider(props) {
         display_name: result.display_name,
         role: result.role,
         environment_id: result.environment_id,
+        user_id: result.user_id ?? null,
       });
       setEnvironments(result.environments || []);
       setActiveEnvironment(result.environment_id);
@@ -70,6 +71,8 @@ export function SessionProvider(props) {
       display_name: identityPayload.display_name,
       role: identityPayload.role,
       environment_id: identityPayload.environment_id,
+      // The owner of a sandbox is matched by id; a reload must not lose it.
+      user_id: identityPayload.user_id ?? null,
     });
     setActiveEnvironment(identityPayload.environment_id);
     setEnvironment(identityPayload.environment_id);

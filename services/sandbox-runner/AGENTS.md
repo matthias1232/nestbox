@@ -207,3 +207,6 @@ Two questions, both answered by a container rather than by a scraped page:
 The ten-minute cache in `app/catalogue.py` is keyed by image, manager and query.
 It is a courtesy to the package index, never control state: emptying it changes
 nothing an operator can observe except how long the next search takes.
+
+`app/remote_ssh.py` runs a script over SSH on a machine that is not a node yet (ADR 0057): the
+credentials arrive with the request and are used once.

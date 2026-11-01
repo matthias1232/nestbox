@@ -154,8 +154,22 @@ pub trait RuntimeAdapter: Send + Sync {
     ///
     /// Returned as the upgraded WebSocket itself: the API moves frames between
     /// it and the browser and reads none of them.
-    async fn open_vnc(&self, _name: &str) -> Result<VncStream, RuntimeError> {
+    async fn open_vnc(&self, _name: &str, _view_only: bool) -> Result<VncStream, RuntimeError> {
         Err(RuntimeError::Rejected("this runtime has no desktop".into()))
+    }
+
+    /// Run a script over SSH on a machine that is not a node yet (ADR 0057).
+    ///
+    /// Only the local runner can reach arbitrary machines; a remote node's
+    /// runner has no business opening SSH somewhere else, so the default
+    /// refuses. The credentials in the request are used once and never stored.
+    async fn remote_ssh_run(
+        &self,
+        _request: crate::domain::runtime::RemoteSshRun,
+    ) -> Result<ExecResult, RuntimeError> {
+        Err(RuntimeError::Rejected(
+            "this runtime cannot reach other machines over SSH".into(),
+        ))
     }
 
     /// A live, read-only view of the sandbox: `connections` today.

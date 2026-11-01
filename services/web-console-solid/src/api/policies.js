@@ -71,11 +71,16 @@ export function windows() {
 // `mode` is `bypass` (allow quietly) or `audit` (allow and record the block).
 // `channel` is `all`, `proxy`, `dns`, `mcp` or `gateway`; `openshell` is refused
 // by the server because its supervisor carries the sandbox's tooling.
-export function openWindow(sandboxId, minutes, reason, mode = 'bypass', channel = 'all') {
+export function openWindow(sandboxId, minutes, reason, mode = 'bypass', channel = 'all', unlimited = false) {
   return request('traffic-windows', {
     method: 'POST',
-    body: { sandbox_id: sandboxId, minutes, reason, mode, channel },
+    body: { sandbox_id: sandboxId, minutes, unlimited, reason, mode, channel },
   });
+}
+
+// One allow draft per destination that was denied or only observed.
+export function bulkDrafts(body) {
+  return request('rule-drafts/bulk', { method: 'POST', body });
 }
 
 export function closeWindow(id) {
@@ -127,8 +132,11 @@ export function egressMode(sandboxId) {
   return request(`sandboxes/${sandboxId}/egress-mode`);
 }
 
-export function setEgressMode(sandboxId, mode) {
-  return request(`sandboxes/${sandboxId}/egress-mode`, { method: 'PUT', body: { mode } });
+export function setEgressMode(sandboxId, mode, revertAfterMinutes = null) {
+  return request(`sandboxes/${sandboxId}/egress-mode`, {
+    method: 'PUT',
+    body: { mode, revert_after_minutes: revertAfterMinutes },
+  });
 }
 
 // Copy a policy under a new name (never as a global override).

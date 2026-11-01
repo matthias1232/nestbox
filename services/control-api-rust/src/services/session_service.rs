@@ -120,3 +120,15 @@ pub async fn overview(ctx: &ServiceContext, principal: &Principal) -> Result<Vec
         })
         .collect())
 }
+
+/// The account label of each switchable agent inside one sandbox, when there is
+/// a login of the user's own; `None` means no own login was found.
+///
+/// Filled by package B04.
+pub async fn agent_accounts(
+    ctx: &ServiceContext,
+    sandbox_name: &str,
+) -> Result<std::collections::BTreeMap<String, Option<String>>, ApiError> {
+    let _ = (ctx, sandbox_name);
+    Ok(std::collections::BTreeMap::new())
+}

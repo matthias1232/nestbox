@@ -1030,13 +1030,15 @@ pub async fn instantiate(
         gpu_count: recipe.resources.gpu_count,
         egress_mode: mode.as_str().to_string(),
         node_id: None,
+        memory_reservation: None,
+        cpu_shares: None,
     };
 
     // Write the mode down before the container exists, so the stored row and
     // the container cannot disagree about what the proxy may read.
     {
         let mut scope = TenantScope::begin_for(&ctx.pool, principal).await.map_err(ApiError::from)?;
-        crate::store::postgres::policies::set_egress_mode(&mut scope, sandbox.id, mode, None, true)
+        crate::store::postgres::policies::set_egress_mode(&mut scope, sandbox.id, mode, None, true, None, None)
             .await
             .map_err(ApiError::from)?;
         scope.commit().await.map_err(ApiError::from)?;

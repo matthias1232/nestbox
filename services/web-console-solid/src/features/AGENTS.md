@@ -61,3 +61,9 @@ Add a row to this table and a route in `App.jsx`.
 | `hosting/` | Provider accounts and rented machines |
 | `users/AccessSection.jsx` | Share a sandbox with one person; invitations |
 | `nodes/JoinNode.jsx` | Add a node |
+
+| `workbox/` | the end-user view of one sandbox and the list of my sandboxes |
+
+`workbox` may import components from `features/sandboxes/` (`TerminalTab`, `DesktopTab`,
+`StackTopology`, `chats.js`): an explicit exception, because a second terminal and a second desktop
+would be a second truth.

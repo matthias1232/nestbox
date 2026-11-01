@@ -1440,6 +1440,7 @@ pub async fn run_install(
             repo: artifact.repo.clone(),
             file: artifact.file.clone(),
             max_bytes: expected,
+            node_id: None,
         })
         .await;
     let download = match download {
@@ -1498,6 +1499,7 @@ pub async fn run_install(
             command,
             memory_limit_bytes: memory_limit,
             cpu_cores: threads as f64,
+            node_id: None,
             port: image.port,
         })
         .await;

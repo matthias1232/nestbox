@@ -32,6 +32,8 @@ export const ROUTES = [
   { id: 'usage', label: 'Usage & cost', group: 'status' },
   { id: 'system', label: 'System containers', group: 'status', minRole: 'operator' },
 
+  // A member's day starts here: their own sandboxes, one click into the workbox.
+  { id: 'my', label: 'My sandboxes', group: 'operate' },
   { id: 'sandboxes', label: 'Sandboxes', group: 'operate' },
   { id: 'persistent', label: 'Persistent data', group: 'operate' },
   { id: 'moves', label: 'Moves between nodes', group: 'operate' },
@@ -60,7 +62,13 @@ export const ROUTES = [
   { id: 'users', label: 'Users & roles', group: 'admin', minRole: 'admin' },
 ];
 
-const RANK = { viewer: 1, operator: 2, admin: 3 };
+// `member` is the employee role (ADR 0045): everything inside their own
+// sandboxes, nothing that belongs to the environment. Without it in the table a
+// member ranked below a viewer and saw less than they may do.
+// `member` is the employee role (ADR 0045): everything inside their own
+// sandboxes, nothing that belongs to the environment. Without it in the table a
+// member ranked below a viewer and saw less than they may do.
+export const RANK = { viewer: 1, member: 2, operator: 3, admin: 4 };
 
 /** True when `role` may see `route`. An unknown role sees only unrestricted entries. */
 export function visible(route, role) {

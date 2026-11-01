@@ -38,41 +38,41 @@ import MovesPage from './features/moves/MovesPage.jsx';
 import ImagesPage from './features/images/ImagesPage.jsx';
 import TenantsPage from './features/tenants/TenantsPage.jsx';
 import ContextBar from './features/tenants/ContextBar.jsx';
+import WorkboxPage from './features/workbox/WorkboxPage.jsx';
+import MyBoxesPage from './features/workbox/MyBoxesPage.jsx';
+import TerminalPopout from './features/workbox/TerminalPopout.jsx';
+import DesktopPopout from './features/workbox/DesktopPopout.jsx';
 import { menuFor } from './navigation.js';
+import { navigate, parsePath } from './routing.js';
+import { adoptOpenerCsrf } from './api/client.js';
 
-// The Admin Center is the only view with an address of its own: an operator
-// pastes `/sandboxes/<id>` into a chat and expects the same screen. Everything
-// else stays a signal, because adding a router for seven views would be a
-// dependency without a benefit.
-const ADMIN_PATH = /^\/sandboxes\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\/?$/;
-
-function adminFromLocation() {
-  const match = ADMIN_PATH.exec(window.location.pathname);
-  return match ? match[1] : null;
-}
+// Three views have an address of their own: the Admin Center
+// (`/sandboxes/<id>`), the Workbox (`/box/<id>`, `/my`) and the pop-out windows
+// (`/box/<id>/terminal/<tab>`, `/box/<id>/desktop`). `routing.js` says what a
+// path means; this file only renders it.
 
 
 export default function App() {
   const session = useSession();
   const [route, setRoute] = createSignal('sandboxes');
   const [checked, setChecked] = createSignal(false);
-  const [adminId, setAdminId] = createSignal(adminFromLocation());
+  const [place, setPlace] = createSignal(parsePath(window.location.pathname));
+  // The Admin Center is addressed by its path; a menu click leaves the path behind.
+  const adminId = () => (place().kind === 'admin' ? place().id : null);
 
   function openAdmin(id) {
-    window.history.pushState({}, '', `/sandboxes/${id}`);
-    setAdminId(id);
+    navigate(`/sandboxes/${id}`);
     setRoute('sandboxes');
   }
 
   function closeAdmin() {
-    window.history.pushState({}, '', '/');
-    setAdminId(null);
+    navigate('/');
   }
 
-  // The back button must close the Admin Center again, otherwise the address bar
-  // and the screen disagree.
+  // The back button must move the screen, otherwise the address bar and the
+  // screen disagree.
   function onPop() {
-    setAdminId(adminFromLocation());
+    setPlace(parsePath(window.location.pathname));
   }
   window.addEventListener('popstate', onPop);
   onCleanup(() => window.removeEventListener('popstate', onPop));
@@ -88,8 +88,17 @@ export default function App() {
       // fails with a clear 403 rather than silently succeeding.
       session.restore(data);
       // The token is memory-only and a reload loses it: ask for a new one, so changes keep
-      // working without a second sign-in.
-      await session.refreshCsrf();
+      // working without a second sign-in. A pop-out window shares its opener's token
+      // instead: asking for a new one would invalidate the token the main window holds.
+      const popout = place().kind === 'terminal' || place().kind === 'desktop';
+      if (!(popout && adoptOpenerCsrf())) {
+        await session.refreshCsrf();
+      }
+      // A member's day starts with their own sandboxes, not with the operator's list.
+      if (session.identity()?.role === 'member' && window.location.pathname === '/') {
+        navigate('/my');
+        setPlace(parsePath(window.location.pathname));
+      }
     } catch {
       /* not signed in */
     } finally {
@@ -100,6 +109,13 @@ export default function App() {
   return (
     <Show when={checked()} fallback={<div class="login"><p class="muted">Loading…</p></div>}>
       <Show when={session.identity()} fallback={<LoginPage />}>
+        {/* A popped-out terminal or desktop owns its window: no sidebar, no menu. */}
+        <Show when={place().kind === 'terminal' || place().kind === 'desktop'}>
+          <Show when={place().kind === 'terminal'} fallback={<DesktopPopout sandboxId={place().id} />}>
+            <TerminalPopout sandboxId={place().id} tab={place().tab} />
+          </Show>
+        </Show>
+        <Show when={place().kind !== 'terminal' && place().kind !== 'desktop'}>
         <div class="shell">
           <aside class="sidebar">
             <div class="brand">
@@ -117,8 +133,22 @@ export default function App() {
                     <For each={group.routes}>
                       {(item) => (
                         <button
-                          aria-current={route() === item.id ? 'page' : undefined}
-                          onClick={() => setRoute(item.id)}
+                          aria-current={
+                            item.id === 'my' ? (place().kind === 'my' ? 'page' : undefined)
+                              : route() === item.id && !place().kind ? 'page' : undefined
+                          }
+                          onClick={() => {
+                            if (item.id === 'my') {
+                              navigate('/my');
+                              setPlace(parsePath('/my'));
+                              return;
+                            }
+                            if (place().kind) {
+                              navigate('/');
+                              setPlace(parsePath('/'));
+                            }
+                            setRoute(item.id);
+                          }}
                         >
                           {item.label}
                         </button>
@@ -146,6 +176,13 @@ export default function App() {
               when={adminId()}
               fallback={
                 <>
+                  <Show when={place().kind === 'box'}>
+                    <WorkboxPage sandboxId={place().id} />
+                  </Show>
+                  <Show when={place().kind === 'my'}>
+                    <MyBoxesPage />
+                  </Show>
+                  <Show when={!place().kind}>
                   <Show when={route() === 'sandboxes'}>
                     <SandboxListPage
                       onOpenAdmin={openAdmin}
@@ -180,6 +217,7 @@ export default function App() {
                   <Show when={route() === 'live'}><LivePage /></Show>
                   <Show when={route() === 'usage'}><UsagePage /></Show>
                   <Show when={route() === 'logs'}><LogsPage role={session.identity()?.role} /></Show>
+                  </Show>
                 </>
               }
             >
@@ -189,6 +227,7 @@ export default function App() {
             </Show>
           </main>
         </div>
+        </Show>
       </Show>
     </Show>
   );

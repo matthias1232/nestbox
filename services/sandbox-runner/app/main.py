@@ -18,6 +18,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from app import inventory as inventory_probe
+from app import remote_ssh
 from app import processes as process_table
 from app import connections as socket_table
 from app import vnc as desktop_stream
@@ -100,6 +101,7 @@ app.include_router(appliance_components.router)
 app.include_router(host_load.router)
 app.include_router(root_backups.router)
 app.include_router(package_catalogue.router)
+app.include_router(remote_ssh.router)
 app.include_router(registry_images.router)
 app.include_router(root_snapshots.router)
 

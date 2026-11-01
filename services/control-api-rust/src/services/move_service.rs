@@ -478,3 +478,16 @@ mod tests {
         assert_eq!(repository_url(&config, env), format!("rest:http://10.77.0.1:8500/{env}"));
     }
 }
+
+/// Whether a move to `target` can work, said before anything stops.
+///
+/// Filled by package B21.
+pub async fn preflight(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+    target: &str,
+) -> Result<serde_json::Value, ApiError> {
+    let _ = (ctx, principal, sandbox_id, target);
+    Err(ApiError::not_implemented("the move preflight"))
+}

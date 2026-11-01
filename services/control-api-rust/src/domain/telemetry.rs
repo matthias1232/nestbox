@@ -249,6 +249,29 @@ pub enum LiveEvent {
         applied: i32,
         total: i32,
     },
+    /// Something the console shows on a sandbox changed: an agent's sign-in
+    /// mode, the egress mode, a window, who is connected, a move step.
+    SandboxControlChanged {
+        /// The sandbox, or none for something environment-wide (a window).
+        sandbox_id: Option<Uuid>,
+        environment_id: Uuid,
+        /// `agent_auth`, `egress_mode`, `window`, `presence`, `move`, `restart`.
+        what: String,
+        detail: serde_json::Value,
+    },
+    /// A sandbox's model list or the readiness of one model changed.
+    ModelsChanged {
+        /// The sandbox, or none for an environment-wide grant.
+        sandbox_id: Option<Uuid>,
+        environment_id: Uuid,
+        detail: serde_json::Value,
+    },
+    /// A joined node's WireGuard tunnel changed state.
+    NodeTunnelChanged {
+        node_id: Uuid,
+        environment_id: Uuid,
+        state: String,
+    },
 }
 
 impl LiveEvent {
@@ -260,6 +283,9 @@ impl LiveEvent {
             Self::GatewayHealthChanged { environment_id, .. } => *environment_id,
             Self::JobProgress { environment_id, .. } => *environment_id,
             Self::PolicyRollout { environment_id, .. } => *environment_id,
+            Self::SandboxControlChanged { environment_id, .. } => *environment_id,
+            Self::ModelsChanged { environment_id, .. } => *environment_id,
+            Self::NodeTunnelChanged { environment_id, .. } => *environment_id,
         }
     }
 }

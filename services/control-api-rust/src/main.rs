@@ -211,6 +211,57 @@ async fn main() {
         });
     }
 
+    // The workbox's slow loops: finish an agent restart that waited for an idle
+    // session, honour an egress mode's revert timer, keep warm models answering,
+    // and follow each node's WireGuard tunnel.
+    {
+        let services = state.services.clone();
+        tokio::spawn(async move {
+            loop {
+                if let Err(error) =
+                    nestbox_control_api::services::agent_auth_service::run_pending_restarts(&services).await
+                {
+                    tracing::debug!(code = error.code.0, "pending agent restarts skipped");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        });
+        let services = state.services.clone();
+        tokio::spawn(async move {
+            loop {
+                if let Err(error) =
+                    nestbox_control_api::services::egress_live_service::revert_due(&services).await
+                {
+                    tracing::debug!(code = error.code.0, "egress mode revert skipped");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            }
+        });
+        let services = state.services.clone();
+        tokio::spawn(async move {
+            loop {
+                if let Err(error) =
+                    nestbox_control_api::services::model_readiness_service::keep_warm_tick(&services).await
+                {
+                    tracing::debug!(code = error.code.0, "keep-warm pass skipped");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            }
+        });
+        let services = state.services.clone();
+        let config = state.config.clone();
+        tokio::spawn(async move {
+            loop {
+                if let Err(error) =
+                    nestbox_control_api::services::node_connect_service::refresh_tunnels(&services, &config).await
+                {
+                    tracing::debug!(code = error.code.0, "tunnel refresh skipped");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        });
+    }
+
     let listener = match tokio::net::TcpListener::bind(&config.listen_addr).await {
         Ok(listener) => listener,
         Err(error) => {

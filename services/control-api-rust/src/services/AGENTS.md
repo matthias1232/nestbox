@@ -286,3 +286,18 @@ uses to find it.
 | `image_sync_service.rs` | Image assignments, the images x nodes matrix, the pull loop |
 | `move_service.rs` | Moving a sandbox and its folders to another node with restic snapshots |
 | `provision_service.rs` | Provider accounts, renting machines, the budget, the reaper |
+
+## Workbox control (ADR 0052-0057)
+
+| Service | Question it answers |
+|---|---|
+| `agent_auth_service` | which agent signs in how, and how a change reaches a running agent |
+| `agent_launch_service` | the launcher, agentctl and env.sh written into a sandbox |
+| `agent_activity_service` | which tmux panes run an agent, and whether one is busy |
+| `egress_live_service` | switching a sandbox's proxy mode without a new container |
+| `presence_service` | who is connected to a sandbox now |
+| `model_grant_service` | which models a sandbox may use, and where they are served |
+| `model_readiness_service` | starting and warming those models before they are used |
+| `node_connect_service` | joining a machine by address, tunnels, the egress lock |
+| `rule_bulk_service` | turning observation into rule drafts |
+| `control_service` | the one summary the workbox and the admin list read |

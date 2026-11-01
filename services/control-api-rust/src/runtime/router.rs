@@ -225,8 +225,16 @@ impl RuntimeAdapter for RuntimeRouter {
     async fn processes(&self, name: &str) -> Result<ProcessTable, RuntimeError> {
         self.adapter_for(name).await.processes(name).await
     }
-    async fn open_vnc(&self, name: &str) -> Result<VncStream, RuntimeError> {
-        self.adapter_for(name).await.open_vnc(name).await
+    async fn open_vnc(&self, name: &str, view_only: bool) -> Result<VncStream, RuntimeError> {
+        self.adapter_for(name).await.open_vnc(name, view_only).await
+    }
+    async fn remote_ssh_run(
+        &self,
+        request: crate::domain::runtime::RemoteSshRun,
+    ) -> Result<crate::domain::runtime::ExecResult, RuntimeError> {
+        // Only the appliance's own runner reaches other machines: the node that
+        // is being installed does not exist yet, so there is no adapter for it.
+        self.local.remote_ssh_run(request).await
     }
     async fn live_view(&self, name: &str, kind: &str) -> Result<serde_json::Value, RuntimeError> {
         self.adapter_for(name).await.live_view(name, kind).await
@@ -348,6 +356,8 @@ mod tests {
             gpu_count: 0,
             egress_mode: "forward_proxy".into(),
             node_id: node,
+            memory_reservation: None,
+            cpu_shares: None,
         }
     }
 

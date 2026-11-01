@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GROUPS, ROUTES, menuFor } from './navigation.js';
+import { GROUPS, ROUTES, RANK, menuFor } from './navigation.js';
 
 const flat = (role) => menuFor(role).flatMap((group) => group.routes.map((route) => route.id));
 
@@ -19,6 +19,14 @@ test('a viewer does not see admin entries, an admin does', () => {
 
 test('a group with nothing to show is dropped', () => {
   assert.ok(!menuFor('viewer').some((group) => group.id === 'admin'));
+});
+
+test('a member sees their own sandboxes and the menu, not the administration', () => {
+  const ids = flat('member');
+  assert.ok(ids.includes('my'));
+  assert.ok(ids.includes('sandboxes'));
+  assert.ok(!ids.includes('users'));
+  assert.equal(RANK.member > RANK.viewer, true);
 });
 
 test('an unknown role sees only unrestricted entries', () => {

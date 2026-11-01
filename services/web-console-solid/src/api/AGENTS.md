@@ -45,3 +45,7 @@ component never contains a URL.
 
 Add the function to the file of its resource. If the resource is new, add a file
 and a row to the table above.
+
+Workbox modules: `control.js` (one summary per sandbox, one overview), `agentAuth.js`,
+`presence.js`, `modelGrants.js`, `nodesConnect.js`; `moves.js` gained `preflight` and
+`policies.js` gained `bulkDrafts` and the revert timer.

@@ -78,6 +78,8 @@ pub enum DecisionReason {
     DefaultDeny,
     /// The proxy could not reach the control API and failed closed.
     BackendUnavailable,
+    /// The sandbox runs with the proxy off: everything is allowed and recorded.
+    AllowAll,
 }
 
 impl DecisionReason {
@@ -87,6 +89,7 @@ impl DecisionReason {
             Self::Window => "window",
             Self::DefaultDeny => "default_deny",
             Self::BackendUnavailable => "backend_unavailable",
+            Self::AllowAll => "allow_all",
         }
     }
 }
@@ -110,6 +113,11 @@ pub struct CheckResponse {
     pub egress_mode: String,
     /// How long the proxy may cache this answer for the same key.
     pub cache_ttl_seconds: u32,
+    /// True when the rules would have blocked this connection while a bypass
+    /// or audit window (or the `off_allow_all` mode) let it through. It is what
+    /// turns "allow everything for a while" into evidence for new rules.
+    #[serde(default)]
+    pub would_deny: bool,
 }
 
 /// The mode a response carries when the sandbox has no setting of its own.
@@ -126,7 +134,9 @@ pub fn default_egress_mode() -> String {
 pub struct OpenWindow {
     pub id: Uuid,
     pub sandbox_id: Option<Uuid>,
-    pub expires_at: DateTime<Utc>,
+    /// When the window closes; `None` means it stays open until it is closed by
+    /// hand (ADR 0053: an evaluation the user ends themselves).
+    pub expires_at: Option<DateTime<Utc>>,
     pub reason: String,
     /// How the window treats a request it covers.
     #[serde(default)]
@@ -218,8 +228,12 @@ impl WindowChannel {
     }
 
     /// Whether this is a channel an operator may switch at all.
+    ///
+    /// Every channel is switchable now: an OpenShell window is compiled into
+    /// the sandbox's own policy in audit mode (ADR 0053), so the supervisor
+    /// records instead of blocking without cutting the sandbox off.
     pub fn switchable(self) -> bool {
-        !matches!(self, Self::Openshell)
+        true
     }
 }
 
@@ -239,8 +253,10 @@ pub fn channel_of_request(protocol: Option<&str>) -> WindowChannel {
 impl OpenWindow {
     /// Whether this window covers the request now.
     pub fn covers(&self, sandbox: Option<Uuid>, now: DateTime<Utc>) -> bool {
-        if self.expires_at <= now {
-            return false;
+        if let Some(expires_at) = self.expires_at {
+            if expires_at <= now {
+                return false;
+            }
         }
         match self.sandbox_id {
             None => true,
@@ -271,21 +287,17 @@ pub struct CompiledPolicy {
 }
 
 /// Decide what happens to one request.
+///
+/// The order is the rule: the rules decide first (so a window can say what the
+/// answer *would* have been), then a covering window overrides that answer, and
+/// a sandbox whose proxy is off allows whatever the rules would have blocked.
+/// The `would_deny` flag records the rule verdict either way.
 pub fn decide(
     request: &CheckRequest,
     policy: &CompiledPolicy,
     now: DateTime<Utc>,
 ) -> CheckResponse {
-    let base = |decision: Decision, reason: DecisionReason, explanation: String| CheckResponse {
-        decision,
-        reason,
-        rule_id: None,
-        window_id: None,
-        explanation,
-        policy_hash: policy.hash.clone(),
-        cache_ttl_seconds: 5,
-        egress_mode: default_egress_mode(),
-    };
+    let verdict = rule_verdict(request, policy);
 
     // A window is scoped to a channel: a DNS window must not open the web. The
     // mode decides whether the request passes as a bypass or passes *and* is
@@ -300,26 +312,70 @@ pub fn decide(
             WindowMode::Bypass => Decision::Allow,
             WindowMode::Audit => Decision::Audit,
         };
-        let mut response = base(
+        let open_until = match window.expires_at {
+            Some(expires_at) => expires_at.format("%H:%M:%S UTC").to_string(),
+            None => "until it is closed".to_string(),
+        };
+        let mut response = CheckResponse {
             decision,
-            DecisionReason::Window,
-            format!(
-                "{} by a temporary {} window ({}), open until {}.",
+            reason: DecisionReason::Window,
+            rule_id: verdict.rule_id,
+            window_id: Some(window.id),
+            explanation: format!(
+                "{} by a temporary {} window ({}), open {}.",
                 match window.mode {
                     WindowMode::Bypass => "Allowed",
                     WindowMode::Audit => "Observation mode: allowed and recorded as a block",
                 },
                 window.channel.as_str(),
                 window.reason,
-                window.expires_at.format("%H:%M:%S UTC")
+                open_until
             ),
-        );
+            policy_hash: policy.hash.clone(),
+            cache_ttl_seconds: match window.expires_at {
+                // A window is time-bounded; cache no longer than its remaining life.
+                Some(expires_at) => ((expires_at - now).num_seconds().max(0) as u32).min(5),
+                None => 5,
+            },
+            egress_mode: default_egress_mode(),
+            would_deny: verdict.decision == Decision::Deny,
+        };
         response.window_id = Some(window.id);
-        // A window is time-bounded; cache no longer than its remaining life.
-        let remaining = (window.expires_at - now).num_seconds().max(0) as u32;
-        response.cache_ttl_seconds = remaining.min(5);
         return response;
     }
+
+    verdict
+}
+
+/// Let everything through and record it: the answer for a sandbox whose proxy is
+/// switched off (`off_allow_all`). A deny becomes an allow whose reason says so,
+/// and `would_deny` remembers that the rules would have blocked it.
+pub fn allow_everything(mut response: CheckResponse) -> CheckResponse {
+    if response.decision == Decision::Deny {
+        response.would_deny = true;
+        response.decision = Decision::Allow;
+        response.reason = DecisionReason::AllowAll;
+        response.explanation = format!(
+            "Proxy is off: everything is allowed and only recorded. {}",
+            response.explanation
+        );
+    }
+    response
+}
+
+/// The answer of the rules alone, without windows.
+fn rule_verdict(request: &CheckRequest, policy: &CompiledPolicy) -> CheckResponse {
+    let base = |decision: Decision, reason: DecisionReason, explanation: String| CheckResponse {
+        decision,
+        reason,
+        rule_id: None,
+        window_id: None,
+        explanation,
+        policy_hash: policy.hash.clone(),
+        cache_ttl_seconds: 5,
+        egress_mode: default_egress_mode(),
+        would_deny: false,
+    };
 
     let mut candidates: Vec<&NetworkRule> = policy
         .rules
@@ -747,6 +803,60 @@ mod tests {
         }
     }
 
+    fn window(mode: WindowMode, channel: WindowChannel, expires_at: Option<DateTime<Utc>>) -> OpenWindow {
+        OpenWindow {
+            id: Uuid::new_v4(),
+            sandbox_id: None,
+            expires_at,
+            reason: "testing".into(),
+            mode,
+            channel,
+        }
+    }
+
+    #[test]
+    fn an_audit_window_records_what_the_rules_would_have_done() {
+        let now = Utc::now();
+        let out = decide(
+            &request("blocked.example", 443),
+            &policy(vec![], vec![window(WindowMode::Audit, WindowChannel::All, Some(now + Duration::minutes(10)))]),
+            now,
+        );
+        assert_eq!(out.decision, Decision::Audit);
+        assert!(out.would_deny, "no rule allows the host, so it would have been denied");
+    }
+
+    #[test]
+    fn a_bypass_window_over_an_allowed_host_is_not_a_would_deny() {
+        let now = Utc::now();
+        let r = rule("allowed.example", Some(443), RuleAction::Allow, 10);
+        let out = decide(
+            &request("allowed.example", 443),
+            &policy(vec![r], vec![window(WindowMode::Bypass, WindowChannel::All, Some(now + Duration::minutes(5)))]),
+            now,
+        );
+        assert_eq!(out.decision, Decision::Allow);
+        assert!(!out.would_deny);
+    }
+
+    #[test]
+    fn an_unlimited_window_stays_open_and_an_expired_one_does_not_cover() {
+        let now = Utc::now();
+        let unlimited = window(WindowMode::Bypass, WindowChannel::All, None);
+        assert!(unlimited.covers(Some(Uuid::nil()), now + Duration::days(365)));
+        let expired = window(WindowMode::Bypass, WindowChannel::All, Some(now - Duration::minutes(1)));
+        assert!(!expired.covers(Some(Uuid::nil()), now));
+    }
+
+    #[test]
+    fn proxy_off_turns_a_deny_into_a_recorded_allow() {
+        let out = decide(&request("anything.example", 443), &policy(vec![], vec![]), Utc::now());
+        let allowed = allow_everything(out);
+        assert_eq!(allowed.decision, Decision::Allow);
+        assert_eq!(allowed.reason, DecisionReason::AllowAll);
+        assert!(allowed.would_deny);
+    }
+
     #[test]
     fn nothing_matching_is_denied_by_default() {
         let out = decide(&request("example.com", 443), &policy(vec![], vec![]), Utc::now());
@@ -788,7 +898,7 @@ mod tests {
         let window = OpenWindow {
             id: Uuid::new_v4(),
             sandbox_id: Some(Uuid::nil()),
-            expires_at: now + Duration::minutes(10),
+            expires_at: Some(now + Duration::minutes(10)),
             reason: "debugging".into(),
             mode: WindowMode::Bypass,
             channel: WindowChannel::All,
@@ -810,7 +920,7 @@ mod tests {
         let window = OpenWindow {
             id: Uuid::new_v4(),
             sandbox_id: Some(Uuid::nil()),
-            expires_at: now + Duration::minutes(5),
+            expires_at: Some(now + Duration::minutes(5)),
             reason: "resolver check".into(),
             mode: WindowMode::Bypass,
             channel: WindowChannel::Dns,
@@ -833,7 +943,7 @@ mod tests {
         let window = OpenWindow {
             id: Uuid::new_v4(),
             sandbox_id: None,
-            expires_at: now + Duration::minutes(30),
+            expires_at: Some(now + Duration::minutes(30)),
             reason: "policy review".into(),
             mode: WindowMode::Audit,
             channel: WindowChannel::All,
@@ -849,7 +959,9 @@ mod tests {
         assert!(WindowChannel::All.covers(WindowChannel::Dns));
         assert!(WindowChannel::Dns.covers(WindowChannel::Dns));
         assert!(!WindowChannel::Dns.covers(WindowChannel::Proxy));
-        assert!(!WindowChannel::Openshell.switchable());
+        // Every channel is switchable now: an OpenShell window is compiled into
+        // the sandbox's own policy in audit mode (ADR 0053).
+        assert!(WindowChannel::Openshell.switchable());
         assert_eq!(channel_of_request(Some("dns")), WindowChannel::Dns);
         assert_eq!(channel_of_request(Some("mcp")), WindowChannel::Mcp);
         assert_eq!(channel_of_request(Some("https")), WindowChannel::Proxy);
@@ -862,7 +974,7 @@ mod tests {
         let window = OpenWindow {
             id: Uuid::new_v4(),
             sandbox_id: Some(Uuid::new_v4()),
-            expires_at: now + Duration::minutes(10),
+            expires_at: Some(now + Duration::minutes(10)),
             reason: "x".into(),
             mode: WindowMode::Bypass,
             channel: WindowChannel::All,

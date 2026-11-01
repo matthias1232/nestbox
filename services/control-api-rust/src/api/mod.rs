@@ -6,8 +6,10 @@
 
 pub mod access;
 pub mod accounting;
+pub mod agent_auth;
 pub mod auth;
 pub mod cluster;
+pub mod control;
 pub mod cudax;
 pub mod events;
 pub mod hosting;
@@ -18,7 +20,11 @@ pub mod jobs;
 pub mod mcp;
 pub mod media;
 pub mod metrics;
+pub mod model_grants;
+pub mod model_readiness;
+pub mod move_preflight;
 pub mod models;
+pub mod node_connect;
 pub mod node_join;
 pub mod nodes;
 pub mod oidc;
@@ -26,12 +32,14 @@ pub mod packs;
 pub mod backups;
 pub mod persistent_roots;
 pub mod policies;
+pub mod presence;
 pub mod privacy;
 pub mod principal;
 pub mod providers;
 pub mod proxies;
 pub mod secrets;
 pub mod recipes;
+pub mod rule_bulk;
 pub mod sandbox_agents;
 pub mod sandboxes;
 pub mod sandboxes_settings;
@@ -113,6 +121,16 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/sandboxes/{id}/resources", put(sandboxes::put_resources))
         .route("/api/v1/host/load", get(sandboxes::host_load))
         .route("/api/v1/sandboxes/{id}/agent-config", post(sandboxes::reconfigure))
+        // One sandbox's controls: agents' sign-in modes, egress mode, sessions.
+        .route("/api/v1/sandboxes/control-overview", get(control::overview))
+        .route("/api/v1/sandboxes/{id}/control", get(control::summary))
+        .route("/api/v1/sandboxes/{id}/agents/auth", get(agent_auth::list))
+        .route("/api/v1/sandboxes/{id}/agents/activity", get(agent_auth::activity))
+        .route("/api/v1/sandboxes/{id}/agents/{agent}/auth", put(agent_auth::set))
+        .route("/api/v1/sandboxes/{id}/agents/{agent}/restart", post(agent_auth::restart))
+        .route("/api/v1/sandboxes/{id}/presence", get(presence::list))
+        .route("/api/v1/sandboxes/{id}/models", get(model_grants::sandbox_models))
+        .route("/api/v1/sandboxes/{id}/move-preflight", get(move_preflight::preflight))
         .route("/api/v1/sandboxes/{id}/recreate", post(sandboxes::recreate))
         // Admin Center: resource history, processes, inventory
         .route(
@@ -139,6 +157,11 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/sandboxes/{id}/terminal-tabs",
             get(sandboxes_terminal::tabs).put(sandboxes_terminal::save_tabs),
+        )
+        // Closing a tab for everybody: the tmux session ends, every viewer leaves.
+        .route(
+            "/api/v1/sandboxes/{id}/terminal-tabs/{tab}",
+            delete(presence::close_tab),
         )
         .route(
             "/api/v1/sandboxes/{id}/settings",
@@ -236,6 +259,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/accounting/purge", post(accounting::purge))
         // Internal: the accounting proxy is the only writer of these rows.
         .route("/api/v1/internal/accounting/record", post(accounting::ingest))
+        // The accounting proxy asks which models this sandbox may use and where they live.
+        .route(
+            "/api/v1/internal/accounting/models/{sandbox}",
+            get(model_grants::internal_models),
+        )
         .route("/api/v1/internal/privacy/inspect", post(accounting::inspect))
         // Content privacy (DLP): policy, a filter test, incidents, purge.
         .route(
@@ -348,6 +376,8 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/rule-drafts",
             get(policies::list_drafts).post(policies::draft_from_event),
         )
+        // Everything a period of observation denied or only recorded, as drafts.
+        .route("/api/v1/rule-drafts/bulk", post(rule_bulk::create))
         .route("/api/v1/rule-drafts/{id}/approve", post(policies::approve_draft))
         .route("/api/v1/rule-drafts/{id}/reject", post(policies::reject_draft))
         .route(
@@ -437,6 +467,14 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/models/{key}/install", patch(models::update_install))
         .route("/api/v1/models/{key}/logs", get(models::logs))
         .route("/api/v1/models/{key}/metrics", get(models::metrics))
+        // Load the model now and answer one tiny request, so the next real one is fast.
+        .route("/api/v1/models/{key}/warm", post(model_readiness::warm))
+        // Which models a sandbox may use, granted to the environment, a user or it.
+        .route(
+            "/api/v1/model-grants",
+            get(model_grants::list).post(model_grants::create),
+        )
+        .route("/api/v1/model-grants/{id}", delete(model_grants::remove))
         // Nodes
         .route("/api/v1/nodes", get(nodes::list))
         .route("/api/v1/sandboxes/{id}/move", post(node_join::move_sandbox))
@@ -463,6 +501,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/nodes/{id}/sandboxes", get(nodes::sandboxes))
         .route("/api/v1/nodes/{id}/display", put(nodes::update_display))
         .route("/api/v1/nodes/{id}/probe", post(nodes::probe))
+        // A machine joined by address, its tunnel state, and how it reaches the internet.
+        .route("/api/v1/nodes/connect", post(node_connect::connect))
+        .route("/api/v1/nodes/tunnels", get(node_connect::tunnels))
+        .route("/api/v1/nodes/{id}/egress-lock", put(node_connect::set_egress_lock))
+        .route("/api/v1/node/egress-lock", get(node_connect::node_egress_lock))
         // Builder catalogs
         .route("/api/v1/baselines", get(packs::baselines))
         .route("/api/v1/agent-packs", get(packs::agent_packs))

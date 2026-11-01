@@ -109,6 +109,8 @@ fn event_sandbox(event: &LiveEvent) -> Option<uuid::Uuid> {
     match event {
         LiveEvent::Telemetry(inner) => inner.sandbox_id(),
         LiveEvent::SandboxStateChanged { sandbox_id, .. } => Some(*sandbox_id),
+        LiveEvent::SandboxControlChanged { sandbox_id, .. } => *sandbox_id,
+        LiveEvent::ModelsChanged { sandbox_id, .. } => *sandbox_id,
         _ => None,
     }
 }
@@ -170,6 +172,9 @@ fn event_name(event: &LiveEvent) -> &'static str {
         LiveEvent::GatewayHealthChanged { .. } => "gateway",
         LiveEvent::JobProgress { .. } => "job",
         LiveEvent::PolicyRollout { .. } => "policy_rollout",
+        LiveEvent::SandboxControlChanged { .. } => "control",
+        LiveEvent::ModelsChanged { .. } => "models",
+        LiveEvent::NodeTunnelChanged { .. } => "node",
     }
 }
 

@@ -115,3 +115,10 @@ step (idempotent) — the one-click release from the Traffic tab.
 `node_join.rs` (join tokens and the public join routes, node package, moves), `images.rs` (registry,
 assignments, matrix), `hosting.rs` (provider accounts, rented machines, cloud-init). The join routes and
 the invitation preview are public on purpose: the token in the path is the credential.
+
+## Workbox control routes
+
+`agent_auth.rs`, `control.rs`, `presence.rs`, `rule_bulk.rs`, `model_grants.rs`,
+`model_readiness.rs`, `node_connect.rs` and `move_preflight.rs` carry the workbox's endpoints. Each
+handler parses, authorises through `Auth`, and delegates; the two internal routes
+(`accounting/models/{sandbox}`, `node/egress-lock`) authenticate a service instead.

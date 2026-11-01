@@ -36,7 +36,7 @@ pub async fn desktop(
     let runner = state
         .services
         .runtime
-        .open_vnc(&name)
+        .open_vnc(&name, false)
         .await
         .map_err(crate::services::metrics_service::runner_error)?;
     let who = auth.principal.display_name.clone();

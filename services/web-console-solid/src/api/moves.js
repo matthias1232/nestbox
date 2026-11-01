@@ -10,3 +10,7 @@ export const start = (sandboxId, node) =>
 /** After the node is gone: restore from the newest scheduled snapshots on another node. */
 export const recover = (sandboxId, node) =>
   request(`sandboxes/${sandboxId}/recover`, { method: 'POST', body: { node } });
+
+/** Whether a move can work, said before anything stops. */
+export const preflight = (sandboxId, node) =>
+  request(`sandboxes/${sandboxId}/move-preflight?node=${encodeURIComponent(node)}`);

@@ -294,6 +294,24 @@ impl RuntimeAdapter for HttpRunner {
         Ok(result)
     }
 
+    async fn remote_ssh_run(
+        &self,
+        request: crate::domain::runtime::RemoteSshRun,
+    ) -> Result<ExecResult, RuntimeError> {
+        let payload = serde_json::json!({
+            "host": request.host,
+            "port": request.port,
+            "user": request.user,
+            "password": request.password,
+            "private_key": request.private_key,
+            "script": request.script,
+            "env": request.env,
+            "timeout_seconds": request.timeout_seconds,
+        });
+        self.send(reqwest::Method::POST, "/v1/remote/ssh-run", Some(&payload))
+            .await
+    }
+
     async fn hardware(&self) -> Result<HardwareReport, RuntimeError> {
         self.send(reqwest::Method::GET, "/v1/hardware", None).await
     }
@@ -687,8 +705,11 @@ impl RuntimeAdapter for HttpRunner {
         self.send(reqwest::Method::POST, "/v1/images/pull", Some(&body)).await
     }
 
-    async fn open_vnc(&self, name: &str) -> Result<super::VncStream, RuntimeError> {
-        let url = format!("{}/v1/sandboxes/{}/vnc", self.ws_base_url(), name);
+    async fn open_vnc(&self, name: &str, view_only: bool) -> Result<super::VncStream, RuntimeError> {
+        // The runner drops keyboard, pointer and clipboard messages when asked
+        // for a view-only stream, so the bound is enforced server side.
+        let suffix = if view_only { "?view=1" } else { "" };
+        let url = format!("{}/v1/sandboxes/{}/vnc{suffix}", self.ws_base_url(), name);
         let mut request = url
             .as_str()
             .into_client_request()

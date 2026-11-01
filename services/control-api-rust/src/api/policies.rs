@@ -387,11 +387,14 @@ pub async fn delete_sandbox_policy(
 /// The body of an egress-mode change.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct EgressModeRequest {
-    /// `forward_proxy`, `transparent`, or `hybrid`.
+    /// `transparent`, `hybrid`, `forward_proxy`, `off_allow_all` or `direct`.
     pub mode: String,
     /// Locator for the sandbox-scoped trust CA, when TLS is to be read.
     #[serde(default)]
     pub trust_ca_ref: Option<String>,
+    /// Switch back to the previous mode after this many minutes.
+    #[serde(default)]
+    pub revert_after_minutes: Option<i32>,
 }
 
 /// Set one sandbox's egress mode.
@@ -403,15 +406,15 @@ pub async fn put_egress_mode(
 ) -> Result<Json<crate::domain::policy::EgressModeSetting>, ApiError> {
     let mode = crate::domain::policy::EgressMode::parse(&body.mode).ok_or_else(|| {
         ApiError::validation(
-            "An egress mode is forward_proxy, transparent, or hybrid.",
+            "An egress mode is transparent, hybrid, forward_proxy, off_allow_all or direct.",
         )
     })?;
-    let setting = policy_service::set_egress_mode(
+    let setting = crate::services::egress_live_service::apply(
         &state.services,
         &auth.principal,
         id,
         mode,
-        body.trust_ca_ref,
+        body.revert_after_minutes,
     )
     .await?;
     Ok(Json(setting))
@@ -523,10 +526,13 @@ pub struct WindowRequest {
     pub sandbox_id: Option<Uuid>,
     #[serde(default = "default_minutes")]
     pub minutes: i32,
+    /// Open until somebody closes it; `minutes` is then ignored.
+    #[serde(default)]
+    pub unlimited: bool,
     /// `bypass` allows and forgets; `audit` allows and records the block.
     #[serde(default = "default_mode")]
     pub mode: String,
-    /// `all`, `proxy`, `dns`, `mcp`, `gateway`. `openshell` is refused.
+    /// `all`, `proxy`, `dns`, `mcp`, `gateway` or `openshell`.
     #[serde(default = "default_channel")]
     pub channel: String,
     pub reason: String,
@@ -554,7 +560,7 @@ pub async fn open_window(
         &state.services,
         &auth.principal,
         body.sandbox_id,
-        body.minutes,
+        if body.unlimited { None } else { Some(body.minutes) },
         &body.mode,
         &body.channel,
         body.reason.trim(),
@@ -737,6 +743,13 @@ pub async fn internal_check(
         &mut response_headers,
         "x-nestbox-cache-ttl",
         &response.cache_ttl_seconds.to_string(),
+    );
+    // What the rules would have said while a window or the off mode let this
+    // through. The proxy logs it, and a later rule can be drafted from it.
+    insert_header(
+        &mut response_headers,
+        "x-nestbox-would-deny",
+        if response.would_deny { "1" } else { "0" },
     );
     if outcome.cache_hit {
         response_headers.insert("x-nestbox-cache-hit", HeaderValue::from_static("true"));

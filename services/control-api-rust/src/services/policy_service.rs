@@ -331,7 +331,7 @@ pub async fn list_rules(
 /// security, so a sandbox that is not theirs is a plain not-found, not a refusal that
 /// confirms it exists. Anything not tied to one sandbox (a shared policy, an
 /// environment-wide window) stays `PolicyWrite`.
-async fn require_sandbox_scope(
+pub(crate) async fn require_sandbox_scope(
     scope: &mut TenantScope<'_>,
     principal: &Principal,
     sandbox_id: Option<Uuid>,
@@ -698,23 +698,42 @@ pub async fn decide_draft(
 ///
 /// A window is scoped to one channel so a DNS window does not open the web, and
 /// carries a mode so observation (allow and record the block) is a different
-/// thing from a bypass (allow quietly). The OpenShell channel is refused: its
-/// supervisor carries the sandbox's API and MCP forwarding, and a sandbox with it
-/// switched off cannot reach its tools at all.
+/// thing from a bypass (allow quietly). Every channel is switchable: an OpenShell
+/// window is compiled into the sandbox's own policy in audit mode (ADR 0053).
+/// `minutes` of `None` opens the window until somebody closes it.
 pub async fn open_window(
     ctx: &ServiceContext,
     principal: &Principal,
     sandbox_id: Option<Uuid>,
-    minutes: i32,
+    minutes: Option<i32>,
     mode: &str,
     channel: &str,
     reason: &str,
 ) -> Result<serde_json::Value, ApiError> {
-    
-    if !(1..=1440).contains(&minutes) {
-        return Err(ApiError::validation(
-            "The window must last between 1 and 1440 minutes.",
-        ));
+    if let Some(minutes) = minutes {
+        if !(1..=525_600).contains(&minutes) {
+            return Err(ApiError::validation(
+                "A window lasts 1 to 525600 minutes, or is unlimited.",
+            ));
+        }
+    }
+    // An environment may bound how long its rules can be suspended (ADR 0053);
+    // the bound is read in its own short transaction, before anything is written.
+    {
+        let mut probe = TenantScope::begin_for(&ctx.pool, principal)
+            .await
+            .map_err(ApiError::from)?;
+        let bound: Option<i32> = store::max_window_minutes_for_environment(&mut probe)
+            .await
+            .map_err(ApiError::from)?;
+        probe.commit().await.map_err(ApiError::from)?;
+        if let Some(bound) = bound {
+            if minutes.map(|minutes| minutes > bound).unwrap_or(true) {
+                return Err(ApiError::validation(format!(
+                    "This environment allows windows of at most {bound} minutes."
+                )));
+            }
+        }
     }
     let mode = WindowMode::parse(mode).ok_or_else(|| {
         ApiError::validation("A window mode is bypass or audit.")
@@ -722,11 +741,6 @@ pub async fn open_window(
     let channel = WindowChannel::parse(channel).ok_or_else(|| {
         ApiError::validation("A window channel is all, proxy, dns, mcp, gateway or openshell.")
     })?;
-    if !channel.switchable() {
-        return Err(ApiError::validation(
-            "The OpenShell supervisor cannot be switched off: it carries the sandbox's API and MCP forwarding.",
-        ));
-    }
     if reason.trim().is_empty() {
         return Err(ApiError::validation(
             "A reason is required for a temporary traffic window.",
@@ -750,6 +764,20 @@ pub async fn open_window(
     .await
     .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
+
+    // A window that changes what a sandbox may reach is a control change the
+    // console and every other viewer hear about at once.
+    ctx.bus.publish(crate::domain::telemetry::LiveEvent::SandboxControlChanged {
+        sandbox_id,
+        environment_id: principal.environment_id,
+        what: "window".to_string(),
+        detail: serde_json::json!({
+            "id": id,
+            "mode": mode.as_str(),
+            "channel": channel.as_str(),
+            "expires_at": expires_at,
+        }),
+    });
 
     Ok(serde_json::json!({
         "id": id,
@@ -937,13 +965,17 @@ pub async fn egress_mode(
             trust_ca_ref: None,
             enabled: true,
             version: 0,
+            changed_at: None,
+            revert_at: None,
+            revert_to: None,
+            needs_recreate: false,
         });
     scope.commit().await.map_err(ApiError::from)?;
     Ok(setting)
 }
 
 /// Set one sandbox's egress mode.
-pub async fn set_egress_mode(
+pub(crate) async fn set_egress_mode_rebuilding(
     ctx: &ServiceContext,
     principal: &Principal,
     sandbox_id: Uuid,
@@ -988,6 +1020,8 @@ pub async fn set_egress_mode(
         mode,
         trust_ca_ref.as_deref(),
         true,
+        None,
+        None,
     )
     .await
     .map_err(ApiError::from)?;
@@ -1563,11 +1597,19 @@ pub async fn check(ctx: &ServiceContext, input: CheckInput) -> Result<CheckOutco
     // sandbox's own setting has to travel with it. Read through the same scope as
     // the rules: a mode that belonged to another tenant would be a leak, and an
     // unset sandbox keeps the `forward_proxy` default.
-    response.egress_mode = store::egress_mode_for_sandbox(&mut scope, sandbox_id)
+    let sandbox_mode = store::egress_mode_for_sandbox(&mut scope, sandbox_id)
         .await
         .map_err(ApiError::from)?
-        .map(|setting| setting.mode.as_str().to_string())
+        .map(|setting| setting.mode);
+    response.egress_mode = sandbox_mode
+        .map(|mode| mode.as_str().to_string())
         .unwrap_or_else(crate::domain::egress::default_egress_mode);
+    // A sandbox whose proxy is switched off allows every connection and records
+    // it: the rules still ran for `would_deny`, but they cannot block (ADR 0053).
+    let allows_everything = sandbox_mode.map(|mode| mode.allows_everything()).unwrap_or(false);
+    if allows_everything {
+        response = crate::domain::egress::allow_everything(response);
+    }
     // A rule compiled from a document has no row; a decision must not cite an id
     // that points at nothing.
     if response.rule_id == Some(Uuid::nil()) {
@@ -1576,7 +1618,7 @@ pub async fn check(ctx: &ServiceContext, input: CheckInput) -> Result<CheckOutco
     // A DNS block is stronger than an allow: a name the operator has said a sandbox
     // must not resolve is not reachable by any network rule or window. (An allow
     // DNS rule adds nothing; the network rules still decide.)
-    if response.decision != Decision::Deny {
+    if response.decision != Decision::Deny && !allows_everything {
         let dns_rules = store::list_dns_rules(&mut scope).await.map_err(ApiError::from)?;
         if let Some(blocked) = crate::domain::policy::dns_rule_for(
             &dns_rules,
@@ -1650,6 +1692,7 @@ fn refusal(explanation: String) -> CheckResponse {
         explanation,
         policy_hash: String::new(),
         cache_ttl_seconds: 0,
+        would_deny: false,
         egress_mode: crate::domain::egress::default_egress_mode(),
     }
 }

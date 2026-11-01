@@ -1,12 +1,16 @@
 //! The PostgreSQL repositories, one module per aggregate.
 
 pub mod accounting;
+pub mod agent_activity;
+pub mod agent_auth;
 pub mod agent_packs;
 pub mod access;
 pub mod audit;
 pub mod auth;
+pub mod control;
 pub mod cudax;
 pub mod egress;
+pub mod egress_live;
 pub mod environments;
 pub mod gateways;
 pub mod geography;
@@ -15,12 +19,17 @@ pub mod jobs;
 pub mod mcp;
 pub mod media;
 pub mod metrics;
+pub mod login_rules;
+pub mod model_grants;
 pub mod model_installs;
 pub mod model_metrics;
+pub mod model_readiness;
 pub mod models;
+pub mod node_gateway;
 pub mod nodes;
 pub mod persistent_roots;
 pub mod policies;
+pub mod presence;
 pub mod privacy;
 pub mod backups;
 pub mod providers;

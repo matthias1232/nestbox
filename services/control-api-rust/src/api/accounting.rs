@@ -205,7 +205,7 @@ fn ingest_token() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn authorised(headers: &HeaderMap) -> Result<(), ApiError> {
+pub(crate) fn authorised(headers: &HeaderMap) -> Result<(), ApiError> {
     use sha2::{Digest, Sha256};
     use subtle::ConstantTimeEq;
 

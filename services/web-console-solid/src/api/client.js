@@ -35,6 +35,27 @@ export function setCsrfMissingHandler(handler) {
 
 export function setCsrfToken(token) {
   csrfToken = token;
+  // A pop-out window cannot ask for its own token without invalidating this one,
+  // so it picks the token up from its opener through this property.
+  try {
+    window.__nestboxCsrf = token;
+  } catch {
+    /* a window without a document (a worker) has nothing to share */
+  }
+}
+
+// Adopt the opener's CSRF token in a pop-out window; false when there is none.
+export function adoptOpenerCsrf() {
+  try {
+    const token = window.opener && window.opener.__nestboxCsrf;
+    if (token) {
+      setCsrfToken(token);
+      return true;
+    }
+  } catch {
+    /* an opener from another origin */
+  }
+  return false;
 }
 
 export function setEnvironment(id) {

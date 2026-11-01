@@ -189,6 +189,8 @@ fn spec(name: &str) -> SandboxSpec {
         gpu_count: 0,
         egress_mode: "forward_proxy".into(),
         node_id: None,
+        memory_reservation: None,
+        cpu_shares: None,
     }
 }
 

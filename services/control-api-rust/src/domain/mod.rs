@@ -6,6 +6,7 @@
 
 pub mod access;
 pub mod accounting;
+pub mod agent_auth;
 pub mod agent_config;
 pub mod auth;
 pub mod builder;
@@ -20,13 +21,16 @@ pub mod mcp;
 pub mod media;
 pub mod metrics;
 pub mod model;
+pub mod model_grant;
 pub mod model_install;
 pub mod node;
+pub mod node_tunnel;
 pub mod openshell_policy;
 pub mod pack;
 pub mod pack_access;
 pub mod pagination;
 pub mod persist;
+pub mod presence;
 pub mod policy;
 pub mod privacy;
 pub mod provider;

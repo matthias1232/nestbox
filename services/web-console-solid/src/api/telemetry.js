@@ -41,7 +41,7 @@ export function stream(kind, handlers) {
 
 export function stateStream(handlers) {
   const source = new EventSource('/api/v1/events/stream');
-  for (const name of ['sandbox', 'gateway', 'job', 'policy_rollout']) {
+  for (const name of ['sandbox', 'gateway', 'job', 'policy_rollout', 'control', 'models', 'node']) {
     source.addEventListener(name, (event) => {
       try {
         handlers.onEvent(JSON.parse(event.data));

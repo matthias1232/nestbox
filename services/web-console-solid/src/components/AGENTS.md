@@ -36,3 +36,6 @@ not gateways and sandboxes.
 | `Empty.jsx` | A consistent empty state |
 | `LogViewer.jsx` | One log panel for a sandbox, a supervisor (filtered) and an appliance component: follow, filter, copy; stops following after a failed read |
 | `PendingPanel.jsx` | A tab body that a later package fills: what belongs there, which endpoint, who owns it |
+
+Workbox primitives: `Switch`, `Segmented`, `Countdown`, `ConfirmDialog`, `Banner`, `PresenceDots`.
+They hold no rules: the caller decides, the component draws.

@@ -495,6 +495,7 @@ impl RuntimeAdapter for FakeRuntime {
             name,
             container_id: Some("fake-container".into()),
             status: "running".into(),
+            published: None,
         })
     }
 

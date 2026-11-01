@@ -44,3 +44,6 @@ API enforces the same rule.
    The Admin Center is the one view with a real address (`/sandboxes/<id>`), so
    a link to a sandbox survives a reload and can be pasted into a chat; every
    other view stays a signal.
+
+`routing.js` says what a URL means (Admin Center, workbox, pop-outs); `App.jsx` only renders it.
+A pop-out window shares the opener's CSRF token (`adoptOpenerCsrf`) instead of rotating it.

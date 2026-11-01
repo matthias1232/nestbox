@@ -1297,6 +1297,10 @@ pub enum EgressMode {
     ForwardProxy,
     Transparent,
     Hybrid,
+    /// The proxy only tunnels and blocks nothing: every connection is allowed
+    /// and recorded, and the OpenShell supervisor runs in audit mode. A
+    /// deliberate, loudly warned-about state (ADR 0053).
+    OffAllowAll,
 }
 
 impl EgressMode {
@@ -1306,6 +1310,7 @@ impl EgressMode {
             Self::ForwardProxy => "forward_proxy",
             Self::Transparent => "transparent",
             Self::Hybrid => "hybrid",
+            Self::OffAllowAll => "off_allow_all",
         }
     }
 
@@ -1315,8 +1320,20 @@ impl EgressMode {
             "forward_proxy" => Self::ForwardProxy,
             "transparent" => Self::Transparent,
             "hybrid" => Self::Hybrid,
+            "off_allow_all" => Self::OffAllowAll,
             _ => return None,
         })
+    }
+
+    /// True when this mode lets every connection through and only records it.
+    pub fn allows_everything(self) -> bool {
+        matches!(self, Self::OffAllowAll)
+    }
+
+    /// True for the modes an end user may pick. `direct` changes the network and
+    /// the exit proxy, so it stays an administrator's choice that rebuilds.
+    pub fn user_selectable(self) -> bool {
+        !matches!(self, Self::Direct)
     }
 
     /// Whether this mode puts the node's egress proxy in the path at all.
@@ -1343,6 +1360,19 @@ pub struct EgressModeSetting {
     pub trust_ca_ref: Option<String>,
     pub enabled: bool,
     pub version: i64,
+    /// When the mode last changed.
+    #[serde(default)]
+    pub changed_at: Option<DateTime<Utc>>,
+    /// When it returns to `revert_to` by itself, if a timer was set.
+    #[serde(default)]
+    pub revert_at: Option<DateTime<Utc>>,
+    /// The mode it returns to.
+    #[serde(default)]
+    pub revert_to: Option<String>,
+    /// True when this sandbox was created before the CA was mounted for every
+    /// mode: one recreate is needed before TLS can be opened.
+    #[serde(default)]
+    pub needs_recreate: bool,
 }
 
 /// A preset in the template library.

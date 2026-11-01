@@ -549,7 +549,8 @@ pub async fn egress_mode_for_sandbox(
     sandbox_id: Uuid,
 ) -> Result<Option<EgressModeSetting>, StoreError> {
     let row = sqlx::query(
-        "SELECT sandbox_id, mode, trust_ca_ref, enabled, version
+        "SELECT sandbox_id, mode, trust_ca_ref, enabled, version,
+                changed_at, revert_at, revert_to
            FROM egress_modes
           WHERE environment_id = $1 AND sandbox_id = $2",
     )
@@ -565,6 +566,10 @@ pub async fn egress_mode_for_sandbox(
         trust_ca_ref: row.try_get("trust_ca_ref")?,
         enabled: row.try_get("enabled")?,
         version: row.try_get("version")?,
+        changed_at: row.try_get("changed_at")?,
+        revert_at: row.try_get("revert_at")?,
+        revert_to: row.try_get("revert_to")?,
+        needs_recreate: false,
     }))
 }
 
@@ -578,24 +583,32 @@ pub async fn set_egress_mode(
     mode: EgressMode,
     trust_ca_ref: Option<&str>,
     enabled: bool,
+    revert_at: Option<chrono::DateTime<chrono::Utc>>,
+    revert_to: Option<&str>,
 ) -> Result<EgressModeSetting, StoreError> {
     let row = sqlx::query(
         "INSERT INTO egress_modes
-            (environment_id, sandbox_id, mode, trust_ca_ref, enabled)
-         VALUES ($1, $2, $3, $4, $5)
+            (environment_id, sandbox_id, mode, trust_ca_ref, enabled, revert_at, revert_to)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (sandbox_id) DO UPDATE
             SET mode = EXCLUDED.mode,
                 trust_ca_ref = EXCLUDED.trust_ca_ref,
                 enabled = EXCLUDED.enabled,
+                revert_at = EXCLUDED.revert_at,
+                revert_to = EXCLUDED.revert_to,
+                changed_at = now(),
                 version = egress_modes.version + 1,
                 updated_at = now()
-         RETURNING sandbox_id, mode, trust_ca_ref, enabled, version",
+         RETURNING sandbox_id, mode, trust_ca_ref, enabled, version,
+                   changed_at, revert_at, revert_to",
     )
     .bind(scope.environment_id())
     .bind(sandbox_id)
     .bind(mode.as_str())
     .bind(trust_ca_ref)
     .bind(enabled)
+    .bind(revert_at)
+    .bind(revert_to)
     .fetch_one(scope.connection())
     .await?;
     let mode_raw: String = row.try_get("mode")?;
@@ -605,6 +618,10 @@ pub async fn set_egress_mode(
         trust_ca_ref: row.try_get("trust_ca_ref")?,
         enabled: row.try_get("enabled")?,
         version: row.try_get("version")?,
+        changed_at: row.try_get("changed_at")?,
+        revert_at: row.try_get("revert_at")?,
+        revert_to: row.try_get("revert_to")?,
+        needs_recreate: false,
     })
 }
 
@@ -908,7 +925,20 @@ pub struct WindowRow {
     pub mode: String,
     pub channel: String,
     pub reason: String,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
+    /// `None` means the window stays open until somebody closes it.
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// The longest window this environment allows; `None` means no limit.
+pub async fn max_window_minutes_for_environment(
+    scope: &mut TenantScope<'_>,
+) -> Result<Option<i32>, StoreError> {
+    let value: Option<Option<i32>> =
+        sqlx::query_scalar("SELECT max_window_minutes FROM environments WHERE id = $1")
+            .bind(scope.environment_id())
+            .fetch_optional(scope.connection())
+            .await?;
+    Ok(value.flatten())
 }
 
 /// The windows in force now, newest expiry last.
@@ -920,8 +950,8 @@ pub async fn list_windows(scope: &mut TenantScope<'_>) -> Result<Vec<WindowRow>,
            LEFT JOIN sandboxes s ON s.id = w.sandbox_id AND s.environment_id = w.environment_id
           WHERE w.environment_id = $1
             AND w.revoked_at IS NULL
-            AND w.expires_at > now()
-          ORDER BY w.expires_at ASC
+            AND (w.expires_at IS NULL OR w.expires_at > now())
+          ORDER BY w.expires_at ASC NULLS LAST
           LIMIT 100",
     )
     .bind(scope.environment_id())
@@ -950,15 +980,17 @@ pub async fn open_window(
     sandbox_id: Option<Uuid>,
     scope_kind: &str,
     reason: &str,
-    minutes: i32,
+    minutes: Option<i32>,
     mode: &str,
     channel: &str,
     created_by: Option<Uuid>,
-) -> Result<(Uuid, chrono::DateTime<chrono::Utc>), StoreError> {
+) -> Result<(Uuid, Option<chrono::DateTime<chrono::Utc>>), StoreError> {
     let row = sqlx::query(
         "INSERT INTO traffic_windows
             (environment_id, sandbox_id, scope, reason, expires_at, mode, channel, created_by)
-         VALUES ($1, $2, $3, $4, now() + make_interval(mins => $5), $6, $7, $8)
+         VALUES ($1, $2, $3, $4,
+                 CASE WHEN $5::int IS NULL THEN NULL ELSE now() + make_interval(mins => $5) END,
+                 $6, $7, $8)
          RETURNING id, expires_at",
     )
     .bind(scope.environment_id())
@@ -983,7 +1015,7 @@ pub async fn window_active(
         "SELECT COUNT(*) FROM traffic_windows
           WHERE environment_id = $1
             AND revoked_at IS NULL
-            AND expires_at > now()
+            AND (expires_at IS NULL OR expires_at > now())
             AND (sandbox_id = $2 OR sandbox_id IS NULL)",
     )
     .bind(scope.environment_id())

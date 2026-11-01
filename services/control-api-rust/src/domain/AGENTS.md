@@ -73,3 +73,9 @@ same change, and update the `CHECK` constraint in the migration.
 
 `tenancy.rs` holds the pure rules of the tenant tree (slugs, organisation kinds, invitation roles) and
 `hosting.rs` the pure rules of rented machines (budget, lifetime, when to reap).
+
+## Workbox control (ADR 0052-0057)
+
+`agent_auth.rs` holds the agent kinds, sign-in modes and restart policies; `presence.rs` one open
+session; `model_grant.rs` a grant and the inheritance rule; `node_tunnel.rs` a node's tunnel and the
+"connect by address" request. `egress.rs` decides with `would_deny` and the `off_allow_all` answer.

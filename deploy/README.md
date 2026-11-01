@@ -194,3 +194,6 @@ cargo test
 Settings in `deploy/.env`: `NESTBOX_MODE`, `NESTBOX_PUBLIC_URL`, `NESTBOX_OVERLAY_ENDPOINT`
 (`host:51821`, UDP, reachable from the nodes), `NESTBOX_OIDC_PROVIDERS` and the per-provider client
 settings. Joining nodes is off while `NESTBOX_OVERLAY_ENDPOINT` is empty.
+
+The hub forwards the shared services (MCP hub, media, accounting, egress proxy) to every node and
+routes a strict-locked node's traffic out (ADR 0057).

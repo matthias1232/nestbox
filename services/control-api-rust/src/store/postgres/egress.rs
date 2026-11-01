@@ -140,9 +140,9 @@ pub async fn open_windows(
            FROM traffic_windows
           WHERE environment_id = $1
             AND revoked_at IS NULL
-            AND expires_at > now()
+            AND (expires_at IS NULL OR expires_at > now())
             AND (sandbox_id IS NULL OR sandbox_id = $2)
-          ORDER BY expires_at DESC",
+          ORDER BY expires_at DESC NULLS FIRST",
     )
     .bind(scope.environment_id())
     .bind(sandbox_id)

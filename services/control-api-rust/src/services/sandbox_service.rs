@@ -1010,6 +1010,8 @@ pub async fn create(
         // proxy itself runs. Choosing another mode recreates the container.
         egress_mode: "forward_proxy".to_string(),
         node_id: Some(node.id),
+        memory_reservation: None,
+        cpu_shares: None,
     };
 
     let configured_environment: BTreeMap<String, String> =
@@ -2054,6 +2056,8 @@ pub async fn recreate(
         gpu_count: 0,
         egress_mode: egress_mode.as_str().to_string(),
         node_id: Some(sandbox.node_id),
+        memory_reservation: None,
+        cpu_shares: None,
     };
     match ctx.runtime.create(spec).await {
         Ok(facts) => {
@@ -2289,4 +2293,20 @@ mod heal_tests {
         assert_eq!(heal_delay(5).as_secs(), 1800);
         assert_eq!(heal_delay(40).as_secs(), 1800);
     }
+}
+
+/// Rebuild a sandbox's agent configuration from the current sign-in modes.
+///
+/// This is the one place that writes agent files: the pack's config files with
+/// the gateway settings of the gateway agents only, the MCP servers, the egress
+/// proxy and trust variables, and the launcher that reads each agent's mode
+/// (ADR 0054). Nothing restarts, so the caller decides about running agents.
+/// Filled by package B05.
+pub async fn write_agent_files(
+    ctx: &ServiceContext,
+    environment_id: Uuid,
+    sandbox_id: Uuid,
+) -> Result<usize, ApiError> {
+    let _ = (ctx, environment_id, sandbox_id);
+    Ok(0)
 }

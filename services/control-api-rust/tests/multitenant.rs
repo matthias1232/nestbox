@@ -183,9 +183,9 @@ async fn a_member_sees_and_works_in_only_the_sandbox_they_were_granted() {
     use nestbox_control_api::services::policy_service;
     assert!(policy_service::allow_destination(&ctx, &eve, one.id, "example.com", Some(443), None).await.is_ok());
     assert!(policy_service::allow_destination(&ctx, &eve, two.id, "example.com", Some(443), None).await.is_err());
-    assert!(policy_service::open_window(&ctx, &eve, Some(one.id), 5, "audit", "all", "testing").await.is_ok());
-    assert!(policy_service::open_window(&ctx, &eve, Some(two.id), 5, "audit", "all", "testing").await.is_err());
-    assert!(policy_service::open_window(&ctx, &eve, None, 5, "audit", "all", "everyone").await.is_err(), "the environment-wide switch is not hers");
+    assert!(policy_service::open_window(&ctx, &eve, Some(one.id), Some(5), "audit", "all", "testing").await.is_ok());
+    assert!(policy_service::open_window(&ctx, &eve, Some(two.id), Some(5), "audit", "all", "testing").await.is_err());
+    assert!(policy_service::open_window(&ctx, &eve, None, Some(5), "audit", "all", "everyone").await.is_err(), "the environment-wide switch is not hers");
 
     tenancy_service::revoke(&ctx, &admin, one.id, eve.user_id).await.expect("revoke");
     assert!(names(&ctx, &eve).await.is_empty(), "taking the sandbox back closes the door");
