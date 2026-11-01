@@ -2496,9 +2496,12 @@ pub async fn write_agent_files(
         written += apply_agent_files(ctx, &sandbox.name, pack, &environment, &servers).await;
     }
     // The launcher reads the mode files; without it a subscription agent would still
-    // see the gateway key in its environment.
+    // see the gateway key in its environment. A sandbox without a switchable agent
+    // (a plain ubuntu-dev, a tool image) has nothing to launch, so nothing is written.
+    if !modes.is_empty() {
     if let Err(error) = crate::services::agent_launch_service::install(ctx, &sandbox.name, &modes, &egress_env).await {
         tracing::warn!(sandbox = %sandbox.name, code = error.code.0, "agent launcher not installed");
+    }
     }
     Ok(written)
 }
