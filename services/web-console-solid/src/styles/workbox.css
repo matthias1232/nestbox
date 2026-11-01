@@ -1,0 +1,125 @@
+/* The Workbox: one sandbox in a header, three cards, two panels, the sessions,
+ * and the list of my sandboxes.
+ *
+ * Loaded by `features/workbox/WorkboxPage.jsx` and `MyBoxesPage.jsx`, not by
+ * `main.jsx`: the styles travel with the screens that use them. The grid is one
+ * column below 1100 px and three (cards) or two (panels) above, because the
+ * cards hold switches with labels and a squeezed switch is a mis-click.
+ */
+
+.wb-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* Header -------------------------------------------------------------- */
+
+.wb-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.wb-header h1 {
+  margin: 0;
+}
+
+.wb-node {
+  white-space: nowrap;
+}
+
+.wb-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.wb-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.wb-error p {
+  margin: 0;
+  flex: 1 1 320px;
+}
+
+/* Cards --------------------------------------------------------------- */
+
+.wb-cards,
+.wb-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+}
+
+.wb-card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+}
+
+/* My sandboxes -------------------------------------------------------- */
+
+.wb-boxes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-3);
+}
+
+/* A card that is a button: the whole tile is the target, and the button reset
+ * from app.css (a 2 px border and a raised background) must not fight the card. */
+.wb-box {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  text-align: left;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.wb-box:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.wb-box-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.wb-box-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.wb-box-flags {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-height: 20px;
+}
+
+@media (min-width: 1100px) {
+  .wb-cards {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .wb-main {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

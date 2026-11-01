@@ -10,6 +10,7 @@ evaluation windows, plus live chats, the topology and the shared terminals.
 |---|---|
 | `WorkboxPage.jsx` | the whole view for one sandbox: header, cards, panels |
 | `MyBoxesPage.jsx` | the sandboxes of the signed-in user |
+| `useWorkbox.js` | `useWorkbox` (sandbox row + control summary, polling and events) and `useMyBoxes` (the list plus the cheap overview); `splitByOwner` for "Mine" |
 | `AgentsCard.jsx` | one row per agent: subscription ↔ gateway, sessions, restart |
 | `agents.js` | its pure logic: agent labels, the busy sentence of the switch dialog, the login line |
 | `NetworkCard.jsx` | the four proxy modes and the evaluation windows |
