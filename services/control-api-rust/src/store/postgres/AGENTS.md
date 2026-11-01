@@ -49,6 +49,7 @@ the codebase where SQL appears.
 | `geography.rs` | `host_geography`: the cached country and AS per destination host (global table, pool not scope) |
 | `terminal_sessions.rs` | Terminal sessions in `sandbox_sessions`: open, count for the limits, close. Never content (ADR 0023) |
 | `terminal_tabs.rs` | The named terminal tabs one user keeps in one sandbox: list, replace. Never content |
+| `login_rules.rs` | The per-sandbox `Sign-in (<agent>): <host>` rules that open an agent's own-account hosts: delete for a sandbox, insert one host, list the environments the restart loop walks |
 
 ## Reading the traffic log
 
