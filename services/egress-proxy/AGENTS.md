@@ -216,3 +216,14 @@ inside the container and are unreachable from any network.
 - Body capture into the access log (base64). The bodies are already visible to the
   filters up to 64 KiB; putting them in the log line is a size decision, not a
   capability one.
+
+## The hop that leaves for the internet
+
+`mitm/upstream.go` listens on `127.0.0.1:10002`. Envoy's inner listener routes
+every decrypted request to the `egress_reencrypt` cluster, which is this port; the
+broker encrypts the request again towards the host in its `Host` header and checks
+that server's certificate against the system roots plus `/etc/envoy/mozilla-ca.pem`
+(both root lists). Envoy's own upstream TLS was dropped because it checked a second
+name on a shared address against the first one's and refused wildcard certificates
+(both a bare 503 in the sandbox). Policy is still decided by Envoy's ext_authz
+before the request reaches this port; the port is loopback only.
