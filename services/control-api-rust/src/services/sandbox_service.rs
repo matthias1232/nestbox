@@ -1077,6 +1077,32 @@ pub async fn create(
     add_env_url_bypass_vec(&mut environment, "NESTBOX_MCP_URL");
     add_env_url_bypass_vec(&mut environment, "NESTBOX_MEDIA_MCP_URL");
 
+    // Write the mode down before the container exists, so the stored row and the
+    // container cannot disagree about what the proxy may read — the same rule the
+    // recipe path follows. The runtime and the proxy address were already chosen
+    // from this mode; leaving the row at the default made a `transparent` sandbox
+    // a tunnel, with nothing in the console saying which of the two was true.
+    if let Some(requested) = requested_mode.as_deref() {
+        let mode = crate::domain::policy::EgressMode::parse(requested).ok_or_else(|| {
+            ApiError::validation("egress_mode is direct, forward_proxy, transparent or hybrid.")
+        })?;
+        let mut mode_scope = TenantScope::begin_for(&ctx.pool, principal)
+            .await
+            .map_err(ApiError::from)?;
+        crate::store::postgres::policies::set_egress_mode(
+            &mut mode_scope,
+            sandbox.id,
+            mode,
+            None,
+            true,
+            None,
+            None,
+        )
+        .await
+        .map_err(ApiError::from)?;
+        mode_scope.commit().await.map_err(ApiError::from)?;
+    }
+
     let runtime_spec = SandboxSpec {
         name: sandbox.name.clone(),
         image: sandbox.image.clone(),
