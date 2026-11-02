@@ -120,6 +120,10 @@ pub struct CreateRequest {
     /// key or the user signs in themselves inside the sandbox.
     #[serde(default)]
     pub login: Option<String>,
+    /// The egress mode this sandbox is created for; it decides the runtime.
+    /// `transparent` and `hybrid` run on Docker, `forward_proxy` on the gateway.
+    #[serde(default)]
+    pub egress_mode: Option<String>,
 }
 
 fn default_memory() -> String {
@@ -154,6 +158,7 @@ pub async fn create(
             node: body.node,
             parent_id: body.parent_id,
             login: body.login,
+            egress_mode: body.egress_mode,
         },
     )
     .await?;

@@ -132,6 +132,7 @@ fn request(name: &str) -> CreateSandbox {
         node: None,
         parent_id: None,
         login: None,
+        egress_mode: None,
     }
 }
 

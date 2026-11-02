@@ -212,6 +212,14 @@ pub struct CreateSandbox {
     /// key) or `own_account` (no key in the environment; the user logs in inside the
     /// sandbox and the login is kept on its persistent home).
     pub login: Option<String>,
+    /// The egress mode the sandbox is created for; it decides the runtime.
+    ///
+    /// The container always starts in `forward_proxy` and a later change is applied
+    /// live, so this is not the mode the proxy reads. It is the one the person asked
+    /// for, and only it can choose the runtime: reading TLS needs Docker, because the
+    /// gateway parses every connection to another proxy as HTTP and refuses a
+    /// `CONNECT`. Absent means `forward_proxy`, which is the gateway's own mode.
+    pub egress_mode: Option<String>,
 }
 
 /// The sign-in choices.
@@ -669,6 +677,15 @@ pub async fn create(
     request: CreateSandbox,
 ) -> Result<Sandbox, ApiError> {
     require(principal, Permission::SandboxWrite)?;
+    let requested_mode = match request.egress_mode.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => Some(
+            crate::domain::policy::EgressMode::parse(value)
+                .ok_or_else(|| ApiError::validation("egress_mode is direct, forward_proxy, transparent or hybrid."))?
+                .as_str()
+                .to_string(),
+        ),
+        None => None,
+    };
 
     let name = SandboxName::new(&request.name).map_err(ApiError::validation)?;
     // The gateway is stricter than a container: it derives a workload name from
@@ -1038,9 +1055,10 @@ pub async fn create(
         pids_limit: request.pids_limit,
         mounts,
         gpu_count,
-        // A new sandbox has no mode row yet, so it starts on the default the
-        // proxy itself runs. Choosing another mode recreates the container.
-        egress_mode: "forward_proxy".to_string(),
+        // The sandbox starts in `forward_proxy`; the *runtime* follows the mode the
+        // caller asked for (see `CreateSandbox::egress_mode`). A mode change later
+        // is applied live and cannot move a sandbox between runtimes.
+        egress_mode: requested_mode.unwrap_or_else(|| "forward_proxy".to_string()),
         node_id: Some(node.id),
         memory_reservation: None,
         cpu_shares: None,

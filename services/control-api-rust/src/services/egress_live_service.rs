@@ -79,9 +79,15 @@ pub async fn apply(
         .map(|setting| setting.mode)
         .unwrap_or(EgressMode::ForwardProxy);
 
+    // With the gateway as the default runtime, a mode decides *where* the sandbox
+    // runs: reading TLS needs Docker (the gateway refuses a CONNECT to another
+    // proxy), so crossing between `forward_proxy` and a reading mode also crosses
+    // runtimes. That is a rebuild, not a live switch. On a Docker deployment the
+    // mode stays live.
+    let crosses_runtime = crate::services::sandbox_service::openshell_runtime() && mode != previous;
     // `direct` is the one mode that changes how the container is attached to the
-    // network and which exit proxy it uses; that cannot be done live.
-    if mode == EgressMode::Direct || previous == EgressMode::Direct {
+    // network and which exit proxy it uses; that cannot be done live either.
+    if crosses_runtime || mode == EgressMode::Direct || previous == EgressMode::Direct {
         scope.commit().await.map_err(ApiError::from)?;
         return super::policy_service::set_egress_mode_rebuilding(
             ctx, principal, sandbox_id, mode, None,
