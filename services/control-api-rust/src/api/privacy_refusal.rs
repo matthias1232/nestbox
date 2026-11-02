@@ -34,10 +34,29 @@ pub async fn refusal(
     Json(body): Json<RefusalBody>,
 ) -> Result<StatusCode, ApiError> {
     crate::api::accounting::ingest_authorised(&state, &headers).await?;
-    let _ = body;
-    Err(ApiError::new(
-        StatusCode::NOT_IMPLEMENTED,
-        crate::error::ErrorCode::INTERNAL,
-        "Not implemented yet.",
-    ))
+    // The broker knows the sandbox id; the environment is what the row needs, and
+    // an id that no sandbox has is a 404 rather than a row in the wrong tenant.
+    let environment =
+        crate::store::postgres::egress::sandbox_environment(&state.services.pool, body.sandbox_id)
+            .await
+            .map_err(ApiError::from)?
+            .ok_or_else(|| {
+                ApiError::not_found(
+                    crate::error::ErrorCode::NOT_FOUND,
+                    "No such sandbox in this environment.",
+                )
+            })?;
+    crate::services::privacy_service::record_refusal(
+        &state.services,
+        environment,
+        body.sandbox_id,
+        &body.kind,
+        body.destination.as_deref(),
+        body.method.as_deref(),
+        body.path.as_deref(),
+        body.request_ref.as_deref(),
+        body.model.as_deref(),
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
 }

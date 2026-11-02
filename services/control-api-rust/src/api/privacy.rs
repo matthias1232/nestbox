@@ -221,6 +221,10 @@ pub struct LogQuery {
     /// egress, accounting_proxy, mcp or test.
     #[serde(default)]
     pub source: Option<String>,
+    /// A free-text needle: detector, sandbox, destination, model, served model
+    /// or owner name. Case-insensitive.
+    #[serde(default)]
+    pub q: Option<String>,
     #[serde(default)]
     pub limit: Option<i64>,
 }
@@ -242,6 +246,11 @@ pub async fn dlp_log(
         query.detector.as_deref().filter(|value| !value.is_empty() && *value != "all"),
         query.direction.as_deref().filter(|value| !value.is_empty() && *value != "all"),
         query.source.as_deref().filter(|value| !value.is_empty() && *value != "all"),
+        query
+            .q
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
         query.limit.unwrap_or(100),
     )
     .await?;
