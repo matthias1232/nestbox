@@ -415,20 +415,49 @@ pub const DEFAULT_EGRESS_PROXY: &str = "http://egress-proxy:3128";
 /// else changes.
 pub fn egress_proxy_url() -> String {
     if openshell_runtime() {
-        // A sandbox on a gateway has no route on the runtime network, so the
-        // compose service name is not resolvable from it. The supervisor reaches
-        // the host, and a published loopback port is reachable as
-        // `host.openshell.internal:<port>` — the same form the MCP hub already
-        // uses (ADR 0035). Without this the agent has no proxy, tries a direct
-        // connection and fails in DNS before any policy could speak.
-        return match std::env::var("NESTBOX_OPENSHELL_PROXY_URL") {
-            Ok(value) if !value.trim().is_empty() => value.trim().trim_end_matches('/').to_string(),
-            _ => DEFAULT_OPENSHELL_PROXY.to_string(),
-        };
+        openshell_proxy_url()
+    } else {
+        docker_egress_proxy_url()
     }
+}
+
+/// The address a gateway sandbox uses: an address on the host, not a compose
+/// service name.
+fn openshell_proxy_url() -> String {
+    // A sandbox on a gateway has no route on the runtime network, so the compose
+    // service name is not resolvable from it. The supervisor reaches the host,
+    // and a published loopback port is reachable as
+    // `host.openshell.internal:<port>` — the same form the MCP hub already uses
+    // (ADR 0035). Without this the agent has no proxy, tries a direct connection
+    // and fails in DNS before any policy could speak.
+    match std::env::var("NESTBOX_OPENSHELL_PROXY_URL") {
+        Ok(value) if !value.trim().is_empty() => value.trim().trim_end_matches('/').to_string(),
+        _ => DEFAULT_OPENSHELL_PROXY.to_string(),
+    }
+}
+
+/// The address a container sandbox uses: the compose service on the runtime
+/// network.
+fn docker_egress_proxy_url() -> String {
     match std::env::var("NESTBOX_EGRESS_PROXY_URL") {
         Ok(value) if !value.trim().is_empty() => value.trim().to_string(),
         _ => DEFAULT_EGRESS_PROXY.to_string(),
+    }
+}
+
+/// The proxy URL for a sandbox whose **runtime follows its egress mode**.
+///
+/// The two candidates are not interchangeable: `host.openshell.internal` exists
+/// only inside a gateway sandbox, and `egress-proxy:3128` only on the runtime
+/// network. Choosing by the deploy-wide default instead of by this sandbox's
+/// runtime is how a container in an inspecting mode ended up with an address it
+/// could not resolve — DNS failed before any policy could speak, and the mode
+/// that reads TLS looked like an outage.
+pub fn egress_proxy_url_for(mode: &str) -> String {
+    if crate::runtime::http_runner::runtime_for(mode) == "openshell" {
+        openshell_proxy_url()
+    } else {
+        docker_egress_proxy_url()
     }
 }
 
@@ -663,7 +692,7 @@ pub fn sandbox_proxy_url(
 ) -> Option<String> {
     match mode {
         crate::domain::policy::EgressMode::Direct => exit.map(|proxy| proxy.url()),
-        _ => Some(egress_proxy_url()),
+        _ => Some(egress_proxy_url_for(mode.as_str())),
     }
 }
 
@@ -809,7 +838,12 @@ pub async fn create(
     // Recorded in the spec as well as passed in the environment: "what was this
     // sandbox told" has to be answerable from the row after the fact, not
     // reconstructed from a later deploy's configuration.
-    let egress_proxy = egress_proxy_url();
+    // Per sandbox, not per deploy: the mode the caller asked for decides the
+    // runtime, and the runtime decides which address can be resolved (see
+    // `egress_proxy_url_for`).
+    let egress_proxy = egress_proxy_url_for(
+        requested_mode.as_deref().unwrap_or("forward_proxy"),
+    );
 
     let login = request.login.clone().filter(|value| !value.is_empty());
     if let Some(mode) = login.as_deref() {
