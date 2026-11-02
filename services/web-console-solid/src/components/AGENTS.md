@@ -55,3 +55,7 @@ They hold no rules: the caller decides, the component draws. Their shared styles
 | `DlpText.jsx` | A masked text with its findings marked |
 | `RouteChain.jsx` | The way a request took, or would have taken |
 | `liveTicker.js` | A bounded, keyed list of live events |
+| `dataTable.test.js` | Sort, filter, search, group and CSV behaviour, including nulls, dates and CSV quoting |
+| `dlpText.test.js` | Splitting a masked text into marked parts and recorded-only findings |
+| `liveTicker.test.js` | Bounded size, merging by key, time order and removal |
+| `QuickAllow.jsx` | Four buttons that allow one denied destination for 15 min, 1 h, 24 h or permanently |
