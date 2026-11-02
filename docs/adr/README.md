@@ -67,6 +67,11 @@ supersedes the old one and note the supersession in both files.
 | [0056](0056-a-sandbox-session-is-shared-by-default.md) | A sandbox session is shared by default, and watching is visible | Accepted |
 | [0057](0057-models-are-granted-by-scope-and-routed-per-sandbox.md) | The sandbox's models are granted by scope and routed per sandbox | Accepted |
 | [0058](0058-one-gateway-decisions-in-the-middle-bytes-in-a-tunnel.md) | One gateway: decisions in the middle, bytes in a tunnel | Accepted |
+| [0059](0059-content-inspection-on-the-decrypted-hop.md) | Content is inspected on the decrypted hop, in the broker, not in a filter | Accepted |
+| [0060](0060-a-rule-may-expire.md) | A rule may expire, and the expiry lives in the database, not in the struct | Accepted |
+| [0061](0061-pseudonymise-and-restore-on-the-way-back.md) | Pseudonymise on the way out, restore on the way back | Accepted |
+| [0062](0062-a-finding-can-be-allowed-on-purpose.md) | A finding can be allowed on purpose, and an exception is a row, not a mode change | Accepted |
+| [0063](0063-who-may-read-a-chat.md) | Who may read a chat, and what the reader leaves behind | Accepted |
 
 ## Writing a new ADR
 
