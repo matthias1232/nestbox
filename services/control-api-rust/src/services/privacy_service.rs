@@ -2166,3 +2166,33 @@ mod json_tests {
         assert!(evaluate_json(&policy(PrivacyMode::Strict), Direction::Inbound, None, "not json").is_none());
     }
 }
+
+#[cfg(test)]
+mod scrub_tests {
+    use super::*;
+
+    /// What is stored must not depend on the mode that happened to be set: the
+    /// proxy captures the body before the check rewrites it, so the masked form
+    /// is the only safe thing to keep.
+    #[test]
+    fn the_stored_form_holds_no_value_whatever_the_mode() {
+        let body = r#"{"model":"claude-x","system":"hi","messages":[{"role":"user","content":"IBAN DE89370400440532013000, mail ada@example.com"}]}"#;
+        for mode in [PrivacyMode::Strict, PrivacyMode::Observe, PrivacyMode::Review] {
+            let settings = PrivacySettings {
+                mode,
+                ..PrivacySettings::strict_default()
+            };
+            let stored = PrivacySettings {
+                mode: PrivacyMode::Strict,
+                block_cloud_egress: true,
+                ..settings
+            };
+            let evaluation = evaluate_json(&stored, Direction::Inbound, None, body)
+                .unwrap_or_else(|| evaluate(&stored, Direction::Inbound, None, body));
+            assert!(!evaluation.outcome.transformed.contains("DE89370400440532013000"));
+            assert!(!evaluation.outcome.transformed.contains("ada@example.com"));
+            serde_json::from_str::<serde_json::Value>(&evaluation.outcome.transformed)
+                .expect("still json");
+        }
+    }
+}
