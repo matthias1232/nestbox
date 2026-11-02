@@ -16,6 +16,7 @@ evaluation windows, plus live chats, the topology and the shared terminals.
 | `NetworkCard.jsx` | the four proxy modes and the evaluation windows |
 | `AllowAllBanner.jsx` | the loud banner while everything is allowed |
 | `network.js` | the proxy modes, durations and banner sentence; pure, tested with `node --test network.test.js` |
+| `PrivacyCard.jsx` | The DLP findings of this sandbox for its owner: the dashboard and the masked log, collapsed by default |
 | `SessionsPanel.jsx` | all shared terminal tabs and the desktop |
 | `TerminalPopout.jsx`, `DesktopPopout.jsx` | the pop-out windows without a sidebar |
 | `SessionsPanel.jsx` | all shared terminal tabs ("Connected now" from `control.presence`, then terminals and desktop behind two tabs) |

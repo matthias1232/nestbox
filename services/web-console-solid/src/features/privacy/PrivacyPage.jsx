@@ -105,6 +105,11 @@ export default function PrivacyPage(props) {
         </p>
       </header>
 
+      <h3>Data loss protection at a glance</h3>
+      <DlpDashboard />
+      <h3>What the detectors found</h3>
+      <DlpLog limit={100} />
+
       <Show when={privacy.error()}><p class="error">{privacy.error()}</p></Show>
       <Show when={privacy.notice()}><p class="notice">{privacy.notice()}</p></Show>
 

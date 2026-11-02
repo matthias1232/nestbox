@@ -277,6 +277,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/privacy/settings/{sandbox_id}", axum::routing::delete(privacy::clear_settings))
         .route("/api/v1/privacy/inspect", post(privacy::inspect))
         .route("/api/v1/privacy/incidents", get(privacy::get_incidents))
+        .route("/api/v1/privacy/overview", get(privacy::dlp_overview))
+        .route("/api/v1/privacy/log", get(privacy::dlp_log))
         .route("/api/v1/privacy/purge", post(privacy::purge))
         // Media rendering: the environment default, a sandbox's own choice,
         // the renders and their assets.

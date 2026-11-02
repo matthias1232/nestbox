@@ -298,6 +298,8 @@ pub const OPERATIONS: &[Operation] = &[
     op("DELETE", "/api/v1/privacy/settings/{sandbox_id}", "Drop a sandbox override so it inherits the environment default", "privacy", "operator", true, StreamKind::None),
     op("POST", "/api/v1/privacy/inspect", "Run the policy over one piece of text and report what would be sent", "privacy", "operator", true, StreamKind::None),
     op("GET", "/api/v1/privacy/incidents", "Recent content privacy incidents for one sandbox", "privacy", "viewer", false, StreamKind::None),
+    op("GET", "/api/v1/privacy/overview", "DLP incidents grouped by detector, action, sandbox or day", "privacy", "viewer", false, StreamKind::None),
+    op("GET", "/api/v1/privacy/log", "The newest DLP incidents with masked excerpts", "privacy", "viewer", false, StreamKind::None),
     op("POST", "/api/v1/privacy/purge", "Delete incidents older than a number of days", "privacy", "admin", true, StreamKind::None),
     op("GET", "/api/v1/media/settings", "Environment default and the media providers this person may see", "media", "viewer", false, StreamKind::None),
     op("GET", "/api/v1/media/users", "Every person with their effective media release", "media", "admin", false, StreamKind::None),

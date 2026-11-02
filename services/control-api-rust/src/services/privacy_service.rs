@@ -1594,3 +1594,95 @@ mod tests {
     }
 }
 
+
+
+// ---------------------------------------------------------------------------
+// DLP across sandboxes: a dashboard and a log
+//
+// Administrators see the whole environment; anyone else sees the incidents of
+// their own sandboxes, because a finding names where content was going and which
+// detector fired, and that is the sandbox owner's business first.
+// ---------------------------------------------------------------------------
+
+use crate::store::postgres::privacy as incident_store;
+
+/// The dashboard: totals and one breakdown.
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct DlpReport {
+    pub group_by: String,
+    pub since: DateTime<Utc>,
+    pub rows: Vec<incident_store::DlpRow>,
+    pub totals: incident_store::DlpRow,
+}
+
+/// Incidents over a window, grouped by detector, action, severity, sandbox, day
+/// or destination.
+pub async fn dlp_overview(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    since: DateTime<Utc>,
+    group_by: &str,
+    sandbox_id: Option<Uuid>,
+) -> Result<DlpReport, ApiError> {
+    require(principal, Permission::SandboxRead)?;
+    let group = incident_store::DlpGroup::parse(group_by).ok_or_else(|| {
+        ApiError::validation("group_by is detector, action, severity, sandbox, day or destination.")
+    })?;
+    let owner = if principal.role == crate::domain::auth::Role::Admin {
+        None
+    } else {
+        Some(principal.user_id)
+    };
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
+        .await
+        .map_err(ApiError::from)?;
+    let rows = incident_store::dlp_breakdown(&mut scope, group, sandbox_id, owner, since)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+
+    let mut totals = incident_store::DlpRow {
+        key: "total".into(),
+        incidents: 0,
+        blocked: 0,
+        redacted: 0,
+        replaced: 0,
+        allowed: 0,
+        cloud: 0,
+    };
+    for row in &rows {
+        totals.incidents += row.incidents;
+        totals.blocked += row.blocked;
+        totals.redacted += row.redacted;
+        totals.replaced += row.replaced;
+        totals.allowed += row.allowed;
+        totals.cloud += row.cloud;
+    }
+    Ok(DlpReport { group_by: group_by.to_string(), since, rows, totals })
+}
+
+/// The log: the newest incidents, across sandboxes, with their masked excerpts.
+pub async fn dlp_log(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    since: DateTime<Utc>,
+    sandbox_id: Option<Uuid>,
+    action: Option<&str>,
+    detector: Option<&str>,
+    limit: i64,
+) -> Result<Vec<incident_store::DlpEvent>, ApiError> {
+    require(principal, Permission::SandboxRead)?;
+    let owner = if principal.role == crate::domain::auth::Role::Admin {
+        None
+    } else {
+        Some(principal.user_id)
+    };
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
+        .await
+        .map_err(ApiError::from)?;
+    let items = incident_store::dlp_events(&mut scope, sandbox_id, owner, since, action, detector, limit)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(items)
+}

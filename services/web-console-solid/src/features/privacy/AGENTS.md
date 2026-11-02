@@ -12,6 +12,7 @@ shows the incidents it recorded.
 | File | Responsibility |
 |---|---|
 | `PrivacyPage.jsx` | Scope picker, mode, detectors with their actions, egress and retention, the inspection test, incidents, the admin purge |
+| `DlpPanels.jsx` | The DLP dashboard (`DlpDashboard`: findings grouped by detector, action, severity, sandbox, day or destination) and the log (`DlpLog`: masked excerpts, filterable). Both take an optional `sandboxId`; without one an admin sees the environment, anyone else only the sandboxes they own |
 | `usePrivacy.js` | Loading, the draft, saving, inspecting, purging, error text; no JSX |
 
 ## Rules

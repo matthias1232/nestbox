@@ -20,3 +20,13 @@ export const incidents = (sandboxId, limit = 50) =>
 
 // Admin: remove incident rows older than a day count.
 export const purge = (days) => request('privacy/purge', { method: 'POST', body: { days } });
+
+// The DLP dashboard: incidents over a window, grouped by detector, action,
+// severity, sandbox, day or destination. An admin sees the environment; anyone
+// else sees the sandboxes they own.
+export const overview = ({ timeframe = '24h', group_by = 'detector', sandbox_id } = {}) =>
+  request(`privacy/overview${query({ timeframe, group_by, sandbox_id })}`);
+
+// The DLP log: the newest incidents with their masked excerpts, filterable.
+export const log = ({ timeframe = '24h', sandbox_id, action, detector, limit = 100 } = {}) =>
+  request(`privacy/log${query({ timeframe, sandbox_id, action, detector, limit })}`);

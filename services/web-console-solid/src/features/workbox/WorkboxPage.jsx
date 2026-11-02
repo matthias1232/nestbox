@@ -19,6 +19,7 @@ import LiveChatsPanel from './LiveChatsPanel.jsx';
 import ModelsCard from './ModelsCard.jsx';
 import MoveDialog from './MoveDialog.jsx';
 import NetworkCard from './NetworkCard.jsx';
+import PrivacyCard from './PrivacyCard.jsx';
 import SessionsPanel from './SessionsPanel.jsx';
 import TopologyPanel from './TopologyPanel.jsx';
 import { useWorkbox } from './useWorkbox.js';
@@ -163,6 +164,7 @@ function Workbox(props) {
         <div class="wb-cards">
           <AgentsCard sandboxId={props.id} control={summary()} onChanged={state.refresh} />
           <NetworkCard sandboxId={props.id} control={summary()} onChanged={state.refresh} />
+          <PrivacyCard sandboxId={props.id} />
           <ModelsCard sandboxId={props.id} control={summary()} />
         </div>
 

@@ -286,3 +286,195 @@ pub async fn purge_before(
     .await?;
     Ok(result.rows_affected())
 }
+
+
+// ---------------------------------------------------------------------------
+// DLP across sandboxes: a dashboard and a log
+// ---------------------------------------------------------------------------
+
+/// How a DLP breakdown is grouped. A closed list: the name becomes SQL text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DlpGroup {
+    Detector,
+    Action,
+    Severity,
+    Sandbox,
+    Day,
+    Destination,
+}
+
+impl DlpGroup {
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "detector" => Self::Detector,
+            "action" => Self::Action,
+            "severity" => Self::Severity,
+            "sandbox" => Self::Sandbox,
+            "day" => Self::Day,
+            "destination" => Self::Destination,
+            _ => return None,
+        })
+    }
+
+    fn expression(self) -> &'static str {
+        match self {
+            Self::Detector => "i.detector",
+            Self::Action => "i.action",
+            Self::Severity => "i.severity",
+            Self::Sandbox => "s.name",
+            Self::Day => "to_char(i.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD')",
+            Self::Destination => "coalesce(i.destination, 'unknown')",
+        }
+    }
+}
+
+/// One line of the DLP dashboard.
+#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
+pub struct DlpRow {
+    pub key: String,
+    pub incidents: i64,
+    pub blocked: i64,
+    pub redacted: i64,
+    pub replaced: i64,
+    pub allowed: i64,
+    /// Incidents that counted as a delivery to a cloud destination.
+    pub cloud: i64,
+}
+
+/// Incidents over a window, grouped. `owner` narrows to one person's sandboxes.
+pub async fn dlp_breakdown(
+    scope: &mut TenantScope<'_>,
+    group: DlpGroup,
+    sandbox_id: Option<Uuid>,
+    owner: Option<Uuid>,
+    since: DateTime<Utc>,
+) -> Result<Vec<DlpRow>, StoreError> {
+    let statement = format!(
+        "SELECT {key} AS key, count(*)::bigint AS incidents, \
+            count(*) FILTER (WHERE i.action = 'blocked')::bigint AS blocked, \
+            count(*) FILTER (WHERE i.action = 'redacted')::bigint AS redacted, \
+            count(*) FILTER (WHERE i.action = 'replaced')::bigint AS replaced, \
+            count(*) FILTER (WHERE i.action = 'allowed')::bigint AS allowed, \
+            count(*) FILTER (WHERE i.cloud_delivery)::bigint AS cloud \
+           FROM privacy_incidents i \
+           JOIN sandboxes s ON s.id = i.sandbox_id \
+          WHERE i.environment_id = $1 AND i.created_at >= $2 \
+            AND ($3::uuid IS NULL OR i.sandbox_id = $3) \
+            AND ($4::uuid IS NULL OR s.owner_user_id = $4) \
+          GROUP BY 1 ORDER BY incidents DESC, 1 LIMIT 500",
+        key = group.expression()
+    );
+    let rows = sqlx::query(&statement)
+        .bind(scope.environment_id())
+        .bind(since)
+        .bind(sandbox_id)
+        .bind(owner)
+        .fetch_all(scope.connection())
+        .await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(DlpRow {
+            key: row.try_get("key")?,
+            incidents: row.try_get("incidents")?,
+            blocked: row.try_get("blocked")?,
+            redacted: row.try_get("redacted")?,
+            replaced: row.try_get("replaced")?,
+            allowed: row.try_get("allowed")?,
+            cloud: row.try_get("cloud")?,
+        });
+    }
+    Ok(out)
+}
+
+/// One incident with the sandbox it belongs to, for the DLP log.
+#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
+pub struct DlpEvent {
+    pub incident: PrivacyIncident,
+    pub sandbox_name: String,
+}
+
+/// The newest incidents in a window, across sandboxes, with filters.
+///
+/// Masked values only: the value a detector matched is never stored, so this can
+/// only ever return the excerpt the incident row holds.
+pub async fn dlp_events(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Option<Uuid>,
+    owner: Option<Uuid>,
+    since: DateTime<Utc>,
+    action: Option<&str>,
+    detector: Option<&str>,
+    limit: i64,
+) -> Result<Vec<DlpEvent>, StoreError> {
+    let statement = format!(
+        "SELECT i.id, i.environment_id, i.sandbox_id, i.detector, i.action, i.severity, \
+                i.masked_value, i.value_fingerprint, i.destination, i.cloud_delivery, \
+                i.created_at, s.name AS sandbox_name \
+           FROM privacy_incidents i JOIN sandboxes s ON s.id = i.sandbox_id \
+          WHERE i.environment_id = $1 AND i.created_at >= $2 \
+            AND ($3::uuid IS NULL OR i.sandbox_id = $3) \
+            AND ($4::uuid IS NULL OR s.owner_user_id = $4) \
+            AND ($5::text IS NULL OR i.action = $5) \
+            AND ($6::text IS NULL OR i.detector = $6) \
+          ORDER BY i.created_at DESC, i.id DESC LIMIT $7"
+    );
+    let rows = sqlx::query(&statement)
+        .bind(scope.environment_id())
+        .bind(since)
+        .bind(sandbox_id)
+        .bind(owner)
+        .bind(action)
+        .bind(detector)
+        .bind(limit.clamp(1, 500))
+        .fetch_all(scope.connection())
+        .await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let detector: String = row.try_get("detector")?;
+        let detector = Detector::parse(&detector)
+            .ok_or_else(|| StoreError::UnexpectedData(format!("unknown detector: {detector}")))?;
+        let action: String = row.try_get("action")?;
+        let action = IncidentAction::parse(&action).ok_or_else(|| {
+            StoreError::UnexpectedData(format!("unknown incident action: {action}"))
+        })?;
+        out.push(DlpEvent {
+            sandbox_name: row.try_get("sandbox_name")?,
+            incident: PrivacyIncident {
+                id: row.try_get("id")?,
+                environment_id: row.try_get("environment_id")?,
+                sandbox_id: row.try_get("sandbox_id")?,
+                detector,
+                action,
+                severity: row.try_get("severity")?,
+                masked_value: row.try_get("masked_value")?,
+                value_fingerprint: row.try_get("value_fingerprint")?,
+                destination: row.try_get("destination")?,
+                cloud_delivery: row.try_get("cloud_delivery")?,
+                created_at: row.try_get("created_at")?,
+            },
+        });
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod dlp_group_tests {
+    use super::DlpGroup;
+
+    #[test]
+    fn every_group_has_a_key_and_nothing_else_does() {
+        for (key, group) in [
+            ("detector", DlpGroup::Detector),
+            ("action", DlpGroup::Action),
+            ("severity", DlpGroup::Severity),
+            ("sandbox", DlpGroup::Sandbox),
+            ("day", DlpGroup::Day),
+            ("destination", DlpGroup::Destination),
+        ] {
+            assert_eq!(DlpGroup::parse(key), Some(group), "{key}");
+        }
+        for wrong in ["", "model", "detector; drop table privacy_incidents"] {
+            assert_eq!(DlpGroup::parse(wrong), None, "{wrong}");
+        }
+    }
+}

@@ -129,7 +129,7 @@ pub async fn requests(
     Ok(Json(serde_json::json!({ "items": items })))
 }
 
-fn parse_timeframe(raw: Option<&str>) -> Result<Timeframe, ApiError> {
+pub(crate) fn parse_timeframe(raw: Option<&str>) -> Result<Timeframe, ApiError> {
     match raw {
         None => Ok(Timeframe::H24),
         Some(value) => Timeframe::parse(value)

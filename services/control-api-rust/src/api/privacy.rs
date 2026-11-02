@@ -167,3 +167,73 @@ pub async fn purge(
     let removed = privacy_service::purge(&state.services, &auth.principal, body.days).await?;
     Ok(Json(serde_json::json!({ "removed": removed, "older_than_days": body.days })))
 }
+
+
+/// The DLP dashboard's query.
+#[derive(Debug, Deserialize)]
+pub struct OverviewQuery {
+    #[serde(default)]
+    pub timeframe: Option<String>,
+    /// detector, action, severity, sandbox, day or destination. Default: detector.
+    #[serde(default)]
+    pub group_by: Option<String>,
+    #[serde(default)]
+    pub sandbox_id: Option<Uuid>,
+}
+
+/// Incidents over a window, grouped: the numbers a dashboard draws.
+pub async fn dlp_overview(
+    State(state): State<AppState>,
+    auth: Auth,
+    Query(query): Query<OverviewQuery>,
+) -> Result<Json<privacy_service::DlpReport>, ApiError> {
+    let timeframe = crate::api::accounting::parse_timeframe(query.timeframe.as_deref())?;
+    let since = timeframe.since(chrono::Utc::now());
+    Ok(Json(
+        privacy_service::dlp_overview(
+            &state.services,
+            &auth.principal,
+            since,
+            query.group_by.as_deref().unwrap_or("detector"),
+            query.sandbox_id,
+        )
+        .await?,
+    ))
+}
+
+/// The DLP log's query.
+#[derive(Debug, Deserialize)]
+pub struct LogQuery {
+    #[serde(default)]
+    pub timeframe: Option<String>,
+    #[serde(default)]
+    pub sandbox_id: Option<Uuid>,
+    /// blocked, redacted, replaced or allowed.
+    #[serde(default)]
+    pub action: Option<String>,
+    #[serde(default)]
+    pub detector: Option<String>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+/// The newest incidents with their masked excerpts, across sandboxes.
+pub async fn dlp_log(
+    State(state): State<AppState>,
+    auth: Auth,
+    Query(query): Query<LogQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let timeframe = crate::api::accounting::parse_timeframe(query.timeframe.as_deref())?;
+    let since = timeframe.since(chrono::Utc::now());
+    let items = privacy_service::dlp_log(
+        &state.services,
+        &auth.principal,
+        since,
+        query.sandbox_id,
+        query.action.as_deref().filter(|value| !value.is_empty() && *value != "all"),
+        query.detector.as_deref().filter(|value| !value.is_empty() && *value != "all"),
+        query.limit.unwrap_or(100),
+    )
+    .await?;
+    Ok(Json(serde_json::json!({ "items": items })))
+}
