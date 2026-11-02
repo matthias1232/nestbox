@@ -10,8 +10,10 @@ CMD ["sleep", "infinity"]
 # belongs to another user than the sandbox identity, and an agent that signs in
 # on a root account has the whole container to damage. The user is added here,
 # after every install step, so the image layers above stay cached.
+# The steps below need root to create the account, whatever the base image left set.
+USER root
 RUN id -u nestbox >/dev/null 2>&1 || useradd -m -d /home/nestbox -u 10001 -s /bin/bash nestbox \
- && mkdir -p /workspace /home/nestbox \
+ && install -d -o nestbox -g nestbox /workspace /home/nestbox \
  && chown -R nestbox /workspace /home/nestbox
 USER nestbox
 WORKDIR /workspace
