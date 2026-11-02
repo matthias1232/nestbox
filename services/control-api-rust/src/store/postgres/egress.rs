@@ -58,12 +58,14 @@ pub async fn sandbox_environment(
     pool: &sqlx::PgPool,
     sandbox_id: Uuid,
 ) -> Result<Option<Uuid>, StoreError> {
-    let found: Option<Uuid> = sqlx::query_scalar(
-        "SELECT environment_id FROM sandboxes WHERE id = $1 AND status <> 'deleted'",
-    )
-    .bind(sandbox_id)
-    .fetch_optional(pool)
-    .await?;
+    // Through the function, not the table: `sandboxes` is under tenant
+    // isolation and this process has no tenant yet — the whole question is which
+    // one it is. `nb_sandbox_environment` (migration 0080) answers that one
+    // question and nothing else.
+    let found: Option<Uuid> = sqlx::query_scalar("SELECT nb_sandbox_environment($1)")
+        .bind(sandbox_id)
+        .fetch_one(pool)
+        .await?;
     Ok(found)
 }
 
