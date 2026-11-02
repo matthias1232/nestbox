@@ -52,6 +52,10 @@ pub struct ProxyBatch {
     pub dns: Vec<ProxyDnsEntry>,
 }
 
+/// What is stored in place of a body that could not be masked. A reader sees
+/// that something was withheld, and no value is kept.
+const WITHHELD_BODY: &str = "[body withheld: masking failed]";
+
 /// One access-log line, as Envoy writes it, plus the captured bodies.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProxyTrafficEntry {
@@ -289,11 +293,11 @@ pub async fn ingest_batch(
                     .flatten()
                     .cloned()
                     .collect();
-                // A body with no sandbox cannot be masked: there is no policy to
-                // ask. It is stored as it arrived and is not attributable to a
-                // tenant, which is why it is also rare.
+                // A body that cannot be masked is not stored at all. Keeping it
+                // as it arrived would hold the value the policy promised never to
+                // keep, and an unattributable body is not worth that.
                 let masked = match item.sandbox_id {
-                    None => texts.clone(),
+                    None => texts.iter().map(|_| WITHHELD_BODY.to_string()).collect(),
                     Some(sandbox_id) => {
                         let items: Vec<(Uuid, String)> =
                             texts.iter().map(|text| (sandbox_id, text.clone())).collect();
@@ -304,8 +308,8 @@ pub async fn ingest_batch(
                         )
                         .await
                         .unwrap_or_else(|error| {
-                            tracing::warn!(?error, "cannot mask a captured body; storing it as it arrived");
-                            texts.clone()
+                            tracing::warn!(?error, "cannot mask a captured body; withholding it");
+                            texts.iter().map(|_| WITHHELD_BODY.to_string()).collect()
                         })
                     }
                 };
@@ -348,6 +352,54 @@ pub async fn ingest_batch(
     let stored = store::insert_batch(&ctx.pool, batch.environment_id, &events).await;
     let body_rows = traffic_bodies::insert_batch(&ctx.pool, batch.environment_id, &bodies).await;
     let mcp_rows = store::insert_tool_calls(&ctx.pool, batch.environment_id, &calls).await;
+
+    // One row per model call: the chat views read this, not the captured bodies.
+    // The texts are the masked ones, so a turn can never hold a value.
+    let turns: Vec<crate::services::chat_service::TurnInput> = prepared
+        .iter()
+        .zip(scrubbed.iter())
+        .filter_map(|(item, masked)| {
+            let sandbox_id = item.sandbox_id?;
+            let detail = &item.detail;
+            let text = |key: &str| {
+                detail
+                    .get(key)
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string)
+            };
+            let (request, response) = masked.as_ref()?;
+            Some(crate::services::chat_service::TurnInput {
+                id: item.id,
+                sandbox_id: Some(sandbox_id),
+                ts: item.ts,
+                ended_at: None,
+                request_ref: text("request_id"),
+                method: text("method").unwrap_or_default(),
+                path: text("path").unwrap_or_default(),
+                host: text("host").unwrap_or_default(),
+                user_agent: text("user_agent"),
+                upstream_ip: text("upstream_ip"),
+                upstream_ip_would: text("upstream_ip_would"),
+                account_kind: text("account_kind"),
+                router_provider: text("router_provider"),
+                router_model: text("router_model"),
+                status: detail
+                    .get("status")
+                    .and_then(|value| value.as_i64())
+                    .map(|value| value as i32),
+                dlp: text("dlp"),
+                channel: text("channel"),
+                decision: text("decision"),
+                request_body: Some(request.clone()),
+                response_body: Some(response.clone()),
+            })
+        })
+        .collect();
+    if let Err(error) =
+        crate::services::chat_service::record_turns(ctx, batch.environment_id, &turns).await
+    {
+        tracing::warn!(?error, "cannot record chat turns");
+    }
 
     for item in &prepared {
         ctx.bus.publish(LiveEvent::Telemetry(item.live.clone()));
@@ -666,6 +718,21 @@ fn prepare_traffic(
         // the console shows "not delivered" from this field.
         if let Some(dlp) = entry.dlp.as_deref().filter(|value| !value.is_empty()) {
             map.insert("dlp".into(), serde_json::json!(dlp));
+        }
+        // The address the request actually reached, and the one a refusal would
+        // have reached: "it went to Anthropic" is not the same fact as "it would
+        // have gone to 160.79.104.10".
+        for (key, value) in [
+            ("upstream_ip", entry.upstream_ip.as_deref()),
+            ("upstream_ip_would", entry.upstream_ip_would.as_deref()),
+            ("upstream_host", entry.upstream_host.as_deref()),
+            ("router_provider", entry.router_provider.as_deref()),
+            ("router_model", entry.router_model.as_deref()),
+            ("account_kind", entry.llm_auth.as_deref()),
+        ] {
+            if let Some(value) = value.filter(|value| !value.is_empty() && *value != "-") {
+                map.insert(key.into(), serde_json::json!(value));
+            }
         }
     }
 

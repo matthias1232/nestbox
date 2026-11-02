@@ -6,6 +6,7 @@ pub mod agent_auth;
 pub mod agent_packs;
 pub mod access;
 pub mod audit;
+pub mod chat_turns;
 pub mod auth;
 pub mod control;
 pub mod cudax;
