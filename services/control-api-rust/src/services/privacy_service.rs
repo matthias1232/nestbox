@@ -140,6 +140,13 @@ pub struct InspectResult {
     /// The proxy keeps it so that a check it cannot answer later falls back to
     /// the same decision: `observe` may forward, and nothing else may.
     pub mode: String,
+    /// What this request was allowed to cost: `enforce`, `record_only` or
+    /// `exempt`.
+    ///
+    /// The broker reads it to decide whether it may change the bytes at all: a
+    /// browser's form post is recorded and never rewritten, and a login request
+    /// is not read.
+    pub enforcement: String,
 }
 
 /// The SHA-256 of one matched value, as lowercase hex.
@@ -147,9 +154,121 @@ pub struct InspectResult {
 /// This is the token the domain's placeholder is built from and the column the
 /// incident stores: the same value always yields the same fingerprint, so a
 /// repeat leaks the same key is visible, and nothing can be recovered from it.
+///
+/// Unsalted, so it is only used where no key is available (tests, and a
+/// deployment that has not created `privacy-hmac` yet). [`fingerprint_with`] is
+/// what the inspection path calls.
 pub fn fingerprint(value: &str) -> String {
-    let digest = Sha256::digest(value.as_bytes());
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    fingerprint_with(None, value)
+}
+
+/// The fingerprint the inspection stores: an HMAC when a key is given, the plain
+/// SHA-256 otherwise.
+///
+/// The key is what makes the fingerprint useless to anyone who only holds the
+/// ledger: without it, a value that is guessable (an email address, a phone
+/// number) can be hashed and looked up in `privacy_incidents`. With it, the same
+/// guess tells an attacker nothing.
+pub fn fingerprint_with(key: Option<&[u8]>, value: &str) -> String {
+    match key {
+        Some(key) => hmac_sha256(key, value.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+        None => Sha256::digest(value.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+    }
+}
+
+/// The key the incident fingerprints are salted with, read once.
+///
+/// The file is `privacy-hmac` in the secret directory: 64 hex characters (32
+/// bytes). A missing or malformed file is not an error — the layer still works
+/// with an unsalted fingerprint — but it warns once, because a silent downgrade
+/// of the evidence is exactly what nobody would notice.
+static PRIVACY_KEY: std::sync::OnceLock<Option<Vec<u8>>> = std::sync::OnceLock::new();
+
+/// Guards the one warning: a failed read must not turn into a log line per
+/// inspection.
+static PRIVACY_KEY_WARNED: std::sync::Once = std::sync::Once::new();
+
+/// The salt, or `None` when the deployment has no usable key file.
+///
+/// Borrowed from the [`OnceLock`], so an inspection does not copy 32 bytes for a
+/// value that never changes after the first read.
+fn privacy_key(secret_dir: &std::path::Path) -> Option<&'static [u8]> {
+    PRIVACY_KEY
+        .get_or_init(|| {
+            let path = secret_dir.join("privacy-hmac");
+            let Some(bytes) = std::fs::read_to_string(&path).ok().and_then(|raw| hex_bytes(raw.trim()))
+            else {
+                warn_missing_key(&path);
+                return None;
+            };
+            if bytes.len() != 32 {
+                warn_missing_key(&path);
+                return None;
+            }
+            Some(bytes)
+        })
+        .as_deref()
+}
+
+/// The one warning about a missing or malformed salt.
+fn warn_missing_key(path: &std::path::Path) {
+    PRIVACY_KEY_WARNED.call_once(|| {
+        tracing::warn!(
+            path = %path.display(),
+            "privacy fingerprints are unsalted: the file must hold 64 hex characters"
+        );
+    });
+}
+
+/// Hex to bytes, or `None` when the text is not an even run of hex digits.
+fn hex_bytes(text: &str) -> Option<Vec<u8>> {
+    if text.is_empty() || text.len() % 2 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(text.len() / 2);
+    let bytes = text.as_bytes();
+    for pair in bytes.chunks(2) {
+        let high = hex_nibble(pair[0])?;
+        let low = hex_nibble(pair[1])?;
+        out.push(high << 4 | low);
+    }
+    Some(out)
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// HMAC-SHA256, written out because the API has no `hmac` dependency.
+///
+/// The construction is RFC 2104: pad the key to the block size, hash the inner
+/// pad with the message, then hash the outer pad with that digest.
+fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+    let mut block = [0u8; 64];
+    if key.len() > 64 {
+        block[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        block[..key.len()].copy_from_slice(key);
+    }
+    let mut inner = Sha256::new();
+    inner.update(block.iter().map(|byte| byte ^ 0x36).collect::<Vec<u8>>());
+    inner.update(message);
+    let inner = inner.finalize();
+    let mut outer = Sha256::new();
+    outer.update(block.iter().map(|byte| byte ^ 0x5c).collect::<Vec<u8>>());
+    outer.update(inner);
+    outer.finalize().into()
 }
 
 /// A byte span one detector claims in the text.
@@ -238,6 +357,9 @@ fn scan(text: &str, detector: Detector) -> Vec<Span> {
         Detector::Iban => scan_ibans(bytes),
         Detector::CreditCards => scan_cards(bytes),
         Detector::FinancialData => scan_financial(text),
+        // Evidence-only kinds: the proxy reports them, no detector looks for
+        // them. They find nothing, and saying so here keeps the match exhaustive.
+        Detector::CheckUnavailable | Detector::Oversize => Vec::new(),
     }
 }
 
@@ -977,6 +1099,8 @@ struct IncidentDraft {
     /// The substitute written into the body (`<IBAN_faf7e1c0>`, `[REDACTED]`).
     replacement: String,
     cloud_delivery: bool,
+    /// The exception that allowed this finding, when one did.
+    exception_id: Option<Uuid>,
 }
 
 /// The whole answer of one inspection, before anything is written.
@@ -1040,15 +1164,59 @@ fn cloud_delivery(
     }
 }
 
+/// The findings of one text, each with its salted token and any exception that
+/// covers it.
+///
+/// An exception sees only what it was granted for: the detector, the fingerprint
+/// of the value and the destination. Its action rides along on the [`Marked`]
+/// entry so `apply` does not second-guess it.
+fn mark_findings(
+    content: &str,
+    detectors: &[Detector],
+    key: Option<&[u8]>,
+    exceptions: &[crate::domain::privacy_exception::PrivacyException],
+    sandbox_id: Uuid,
+    destination: Option<&str>,
+) -> Vec<Marked> {
+    let now = Utc::now();
+    detect(content, detectors)
+        .into_iter()
+        .map(|finding| {
+            let token = fingerprint_with(key, &finding.value);
+            let mut marked = Marked::new(finding, token);
+            if !exceptions.is_empty() {
+                let match_key = crate::domain::privacy_exception::FindingKey {
+                    sandbox_id,
+                    detector: marked.finding.detector,
+                    fingerprint: &marked.token,
+                    destination,
+                };
+                if let Some(exception) =
+                    crate::domain::privacy_exception::best_match(exceptions, &match_key, now)
+                {
+                    marked = marked.with_exception(exception.action, exception.id);
+                }
+            }
+            marked
+        })
+        .collect()
+}
+
 /// Scan and decide, without touching the database.
 ///
 /// Pure so the whole mode matrix is a unit test, and so a caller can preview
-/// what a policy would do to a document before saving it.
+/// what a policy would do to a document before saving it. `exceptions` are the
+/// rows the caller already loaded ([`crate::services::privacy_exceptions::active_for`]);
+/// the function only matches them, it does not read them.
+#[allow(clippy::too_many_arguments)]
 fn evaluate(
     settings: &PrivacySettings,
     direction: Direction,
     destination: Option<&str>,
     content: &str,
+    key: Option<&[u8]>,
+    exceptions: &[crate::domain::privacy_exception::PrivacyException],
+    sandbox_id: Uuid,
 ) -> Evaluation {
     if settings.mode == PrivacyMode::Off {
         return Evaluation {
@@ -1065,13 +1233,7 @@ fn evaluate(
     }
 
     let detectors = settings.enabled_detectors();
-    let marked: Vec<Marked> = detect(content, &detectors)
-        .into_iter()
-        .map(|finding| {
-            let token = fingerprint(&finding.value);
-            Marked::new(finding, token)
-        })
-        .collect();
+    let marked = mark_findings(content, &detectors, key, exceptions, sandbox_id, destination);
     let outcome = apply(settings, &marked, content);
     let delivered = cloud_delivery(
         settings.mode,
@@ -1090,6 +1252,7 @@ fn evaluate(
             value_fingerprint: decision.token.clone(),
             replacement: decision.replacement(),
             cloud_delivery: delivered,
+            exception_id: decision.exception_id,
         })
         .collect();
 
@@ -1323,6 +1486,9 @@ pub struct InspectContext {
     pub mcp_tool: Option<String>,
     /// The conversation the request belonged to, when known.
     pub conversation_id: Option<String>,
+    /// The proxy's `x-request-id`, when it sent one. Joins the finding to the
+    /// turn and to the live stream.
+    pub request_ref: Option<String>,
 }
 
 impl InspectContext {
@@ -1388,6 +1554,12 @@ pub async fn inspect_with(
         ));
     }
     let settings = resolve_settings(&mut scope, Some(sandbox_id)).await?;
+    // The exceptions in force for this sandbox, read once per request: they are
+    // a policy input like the settings themselves, and matching them per finding
+    // would put a query behind every detector hit.
+    let exceptions = crate::services::privacy_exceptions::active_for(&mut scope, sandbox_id).await?;
+    let key = privacy_key(&ctx.secret_dir);
+    let environment_id = scope.environment_id();
     let destination = context.destination();
     // What this request is allowed to cost: a body check, a record, or nothing.
     // The login paths are exempt before any detector runs, because a refresh
@@ -1407,6 +1579,7 @@ pub async fn inspect_with(
             findings: Vec::new(),
             restore: Vec::new(),
             mode: settings.mode.as_str().to_string(),
+            enforcement: "exempt".to_string(),
         });
     }
     // A host that is not a model or an operator's entry is recorded as if the
@@ -1424,13 +1597,42 @@ pub async fn inspect_with(
     // detector found nothing. The test button sends free text and keeps the
     // plain path.
     let evaluation = match context.source {
-        IncidentSource::Test | IncidentSource::AccountingProxy => {
-            evaluate(&settings, direction, destination, content)
-        }
-        _ => evaluate_json(&settings, direction, destination, content)
-            .unwrap_or_else(|| evaluate(&settings, direction, destination, content)),
+        IncidentSource::Test | IncidentSource::AccountingProxy => evaluate(
+            &settings,
+            direction,
+            destination,
+            content,
+            key,
+            &exceptions,
+            sandbox_id,
+        ),
+        _ => evaluate_json(
+            &settings,
+            direction,
+            destination,
+            content,
+            key,
+            &exceptions,
+            sandbox_id,
+        )
+        .unwrap_or_else(|| {
+            evaluate(
+                &settings,
+                direction,
+                destination,
+                content,
+                key,
+                &exceptions,
+                sandbox_id,
+            )
+        }),
     };
     let mode = settings.mode.as_str();
+    let request_ref = context
+        .request_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     for incident in &evaluation.incidents {
         store::insert_incident(
             &mut scope,
@@ -1439,8 +1641,8 @@ pub async fn inspect_with(
                 detector: incident.detector,
                 action: incident.action,
                 severity: incident.action.severity(),
-                masked_value: &incident.masked_value,
-                value_fingerprint: &incident.value_fingerprint,
+                masked_value: Some(incident.masked_value.as_str()),
+                value_fingerprint: Some(incident.value_fingerprint.as_str()),
                 destination,
                 cloud_delivery: incident.cloud_delivery,
                 direction: direction.as_str(),
@@ -1453,6 +1655,8 @@ pub async fn inspect_with(
                 model: context.model.as_deref(),
                 mcp_tool: context.mcp_tool.as_deref(),
                 conversation_id: context.conversation_id.as_deref(),
+                request_ref,
+                exception_id: incident.exception_id,
             },
         )
         .await
@@ -1460,7 +1664,148 @@ pub async fn inspect_with(
     }
     scope.commit().await.map_err(ApiError::from)?;
 
-    Ok(view(evaluation))
+    // "A chat started" is a live event, not a stored one: it gives the console
+    // something to draw while the answer is still streaming, and it is emitted
+    // only for the hops that see a model call (a browser's page load is not a
+    // chat). The text is masked the same way a stored turn is.
+    if let Some(request_ref) = request_ref {
+        let method = context.method.as_deref().unwrap_or_default();
+        let path = context.path.as_deref().unwrap_or_default();
+        if matches!(context.source, IncidentSource::Egress | IncidentSource::Mcp)
+            && crate::domain::chat_turn::is_model_call(method, path)
+        {
+            let user_text = crate::domain::chat_turn::turn_from(
+                &evaluation.outcome.transformed,
+                "",
+            )
+            .user_text;
+            let user_text = crate::domain::chat_turn::truncate_chars(
+                &scrub_text(&settings, &user_text, key, sandbox_id),
+                2048,
+            );
+            let dlp = dlp_label(&evaluation);
+            let host = destination.map(str::to_string);
+            ctx.bus.publish(crate::domain::telemetry::LiveEvent::ChatStarted {
+                environment_id,
+                sandbox_id,
+                request_ref: request_ref.to_string(),
+                ts: Utc::now(),
+                model: context.model.clone(),
+                provider: crate::domain::chat_turn::provider_for(
+                    host.as_deref().unwrap_or_default(),
+                )
+                .to_string(),
+                host,
+                account_kind: None,
+                dlp,
+                delivered: evaluation.outcome.permitted,
+                user_text,
+            });
+        }
+    }
+
+    Ok(view(evaluation, enforcement))
+}
+
+/// What the live event says happened to the content: `blocked`, `pseudonymized`,
+/// `replaced`, or nothing when the request went out unchanged.
+fn dlp_label(evaluation: &Evaluation) -> Option<String> {
+    if !evaluation.outcome.permitted {
+        return Some("blocked".to_string());
+    }
+    if !evaluation.restore.is_empty() {
+        return Some("pseudonymized".to_string());
+    }
+    if evaluation.outcome.action != Action::Allow {
+        return Some("replaced".to_string());
+    }
+    None
+}
+
+/// Record a refusal the proxy reported, and tell the live stream about it.
+///
+/// A refusal is a decision about a person's request: the content check could not
+/// answer, or the body was larger than it reads, and the proxy stopped the
+/// request. Without this row the chat says "sent" and nothing explains the 503.
+///
+/// It is a tenant-scoped write with no caller principal — the appliance speaks,
+/// exactly as on the inspection path — so the environment comes from the caller
+/// (the handler looked it up from the sandbox) and the row carries no value and
+/// no fingerprint: there was no finding.
+#[allow(clippy::too_many_arguments)]
+pub async fn record_refusal(
+    ctx: &ServiceContext,
+    environment_id: Uuid,
+    sandbox_id: Uuid,
+    kind: &str,
+    destination: Option<&str>,
+    method: Option<&str>,
+    path: Option<&str>,
+    request_ref: Option<&str>,
+    model: Option<&str>,
+) -> Result<(), ApiError> {
+    let detector = match kind {
+        "unavailable" => Detector::CheckUnavailable,
+        "too_large" => Detector::Oversize,
+        other => {
+            return Err(ApiError::validation(format!(
+                "Unknown refusal kind '{other}': expected 'unavailable' or 'too_large'."
+            )));
+        }
+    };
+    let request_ref = request_ref.map(str::trim).filter(|value| !value.is_empty());
+
+    let mut scope = crate::store::TenantScope::begin(&ctx.pool, environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let settings = resolve_settings(&mut scope, Some(sandbox_id)).await?;
+    store::insert_incident(
+        &mut scope,
+        store::NewIncident {
+            sandbox_id,
+            detector,
+            action: IncidentAction::Blocked,
+            severity: IncidentAction::Blocked.severity(),
+            masked_value: None,
+            value_fingerprint: None,
+            destination,
+            cloud_delivery: false,
+            direction: Direction::Inbound.as_str(),
+            requested_action: IncidentAction::Blocked,
+            mode: settings.mode.as_str(),
+            replacement: None,
+            source: IncidentSource::Egress,
+            method,
+            path,
+            model,
+            mcp_tool: None,
+            conversation_id: None,
+            request_ref,
+            exception_id: None,
+        },
+    )
+    .await
+    .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+
+    if let Some(request_ref) = request_ref {
+        let host = destination.map(str::to_string);
+        ctx.bus.publish(crate::domain::telemetry::LiveEvent::ChatStarted {
+            environment_id,
+            sandbox_id,
+            request_ref: request_ref.to_string(),
+            ts: Utc::now(),
+            model: model.map(str::to_string),
+            provider: crate::domain::chat_turn::provider_for(host.as_deref().unwrap_or_default())
+                .to_string(),
+            host,
+            account_kind: None,
+            dlp: Some(kind.to_string()),
+            delivered: false,
+            user_text: String::new(),
+        });
+    }
+    Ok(())
 }
 
 /// Evaluate every string value of a JSON document and splice back only the ones
@@ -1470,11 +1815,15 @@ pub async fn inspect_with(
 /// The first system block is never rewritten: with a subscription, Anthropic
 /// accepts an OAuth request only while that block says exactly what Claude Code
 /// wrote (finding B6 / section 5.2 of the privacy module).
+#[allow(clippy::too_many_arguments)]
 fn evaluate_json(
     settings: &PrivacySettings,
     direction: Direction,
     destination: Option<&str>,
     raw: &str,
+    key: Option<&[u8]>,
+    exceptions: &[crate::domain::privacy_exception::PrivacyException],
+    sandbox_id: Uuid,
 ) -> Option<Evaluation> {
     let values = crate::domain::privacy_json::string_values(raw)?;
     let mut action = Action::Allow;
@@ -1493,7 +1842,15 @@ fn evaluate_json(
         if crate::domain::privacy_json::is_skipped(&value.path) {
             continue;
         }
-        let one = evaluate(settings, direction, destination, &value.value);
+        let one = evaluate(
+            settings,
+            direction,
+            destination,
+            &value.value,
+            key,
+            exceptions,
+            sandbox_id,
+        );
         action = stronger(action, one.outcome.action);
         if one.outcome.transformed != value.value {
             edits.push((value.start, value.end, one.outcome.transformed.clone()));
@@ -1532,6 +1889,29 @@ fn stronger(current: Action, next: Action) -> Action {
     }
 }
 
+/// One text as the store may keep it: every finding replaced, no exception
+/// applied, the strict policy always.
+///
+/// The stored copy must not depend on the mode that happened to be set when the
+/// body arrived: a reader is looking for what was in the text, so a value that
+/// the current mode merely records is still masked here.
+fn scrub_text(
+    settings: &PrivacySettings,
+    text: &str,
+    key: Option<&[u8]>,
+    sandbox_id: Uuid,
+) -> String {
+    let strict = PrivacySettings {
+        mode: PrivacyMode::Strict,
+        block_cloud_egress: true,
+        ..settings.clone()
+    };
+    evaluate_json(&strict, Direction::Inbound, None, text, key, &[], sandbox_id)
+        .unwrap_or_else(|| evaluate(&strict, Direction::Inbound, None, text, key, &[], sandbox_id))
+        .outcome
+        .transformed
+}
+
 /// The text as it may be stored: every finding replaced by its placeholder.
 ///
 /// The proxy captures a body before the content check rewrites it, so the stored
@@ -1549,6 +1929,7 @@ pub async fn scrub_batch(
     if items.is_empty() {
         return Ok(Vec::new());
     }
+    let key = privacy_key(&ctx.secret_dir);
     let mut scope = crate::store::TenantScope::begin(&ctx.pool, environment_id)
         .await
         .map_err(ApiError::from)?;
@@ -1560,17 +1941,10 @@ pub async fn scrub_batch(
             let settings = resolve_settings(&mut scope, Some(*sandbox_id)).await?;
             cache.insert(*sandbox_id, settings);
         }
-        let settings = cache.get(sandbox_id).expect("inserted above");
-        // Stored as if the policy were enforced: what a reader sees must not
-        // depend on the mode that happened to be set when the body arrived.
-        let strict = PrivacySettings {
-            mode: PrivacyMode::Strict,
-            block_cloud_egress: true,
-            ..settings.clone()
-        };
-        let evaluation = evaluate_json(&strict, Direction::Inbound, None, text)
-            .unwrap_or_else(|| evaluate(&strict, Direction::Inbound, None, text));
-        out.push(evaluation.outcome.transformed);
+        let settings = cache.get(sandbox_id).ok_or_else(|| {
+            ApiError::internal("The settings for a sandbox are missing from the batch cache.")
+        })?;
+        out.push(scrub_text(settings, text, key, *sandbox_id));
     }
     scope.commit().await.map_err(ApiError::from)?;
     Ok(out)
@@ -1638,7 +2012,7 @@ pub async fn changes(
 ///
 /// Split out of [`inspect`] so the mapping from a decision to a finding view —
 /// which is what the console reads — is testable without a database.
-fn view(evaluation: Evaluation) -> InspectResult {
+fn view(evaluation: Evaluation, enforcement: crate::domain::privacy::Enforcement) -> InspectResult {
     let findings: Vec<FindingView> = evaluation
         .outcome
         .decisions
@@ -1657,6 +2031,16 @@ fn view(evaluation: Evaluation) -> InspectResult {
         findings,
         restore: evaluation.restore,
         mode: evaluation.mode.as_str().to_string(),
+        enforcement: enforcement_str(enforcement).to_string(),
+    }
+}
+
+/// The wire spelling of [`crate::domain::privacy::Enforcement`].
+fn enforcement_str(enforcement: crate::domain::privacy::Enforcement) -> &'static str {
+    match enforcement {
+        crate::domain::privacy::Enforcement::Enforce => "enforce",
+        crate::domain::privacy::Enforcement::RecordOnly => "record_only",
+        crate::domain::privacy::Enforcement::Exempt => "exempt",
     }
 }
 
@@ -1723,6 +2107,38 @@ pub async fn purge(
     Ok(removed)
 }
 
+/// [`evaluate`] with no salt, no exceptions and no sandbox: the shape the mode
+/// matrix and the storage tests want. The scope only matters to exception
+/// matching, which those tests do not exercise.
+#[cfg(test)]
+fn evaluate_plain(
+    settings: &PrivacySettings,
+    direction: Direction,
+    destination: Option<&str>,
+    content: &str,
+) -> Evaluation {
+    evaluate(
+        settings,
+        direction,
+        destination,
+        content,
+        None,
+        &[],
+        Uuid::nil(),
+    )
+}
+
+/// [`evaluate_json`] with no salt, no exceptions and no sandbox, for tests.
+#[cfg(test)]
+fn evaluate_json_plain(
+    settings: &PrivacySettings,
+    direction: Direction,
+    destination: Option<&str>,
+    raw: &str,
+) -> Option<Evaluation> {
+    evaluate_json(settings, direction, destination, raw, None, &[], Uuid::nil())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1738,14 +2154,14 @@ mod tests {
     fn the_mode_matrix_does_what_each_mode_promises() {
         let content = "password=hunter2 and ada@example.com";
 
-        let off = evaluate(&policy(PrivacyMode::Off), Direction::Outbound, Some("api"), content);
+        let off = evaluate_plain(&policy(PrivacyMode::Off), Direction::Outbound, Some("api"), content);
         assert_eq!(off.outcome.action_str(), "allowed");
         assert!(off.outcome.permitted);
         assert_eq!(off.outcome.transformed, content);
         assert!(off.incidents.is_empty());
         assert!(off.outcome.decisions.is_empty());
 
-        let observe = evaluate(
+        let observe = evaluate_plain(
             &policy(PrivacyMode::Observe),
             Direction::Outbound,
             Some("api"),
@@ -1760,7 +2176,7 @@ mod tests {
             assert!(incident.cloud_delivery, "observe records the pass-through");
         }
 
-        let review = evaluate(
+        let review = evaluate_plain(
             &policy(PrivacyMode::Review),
             Direction::Outbound,
             Some("api"),
@@ -1776,7 +2192,7 @@ mod tests {
             assert!(incident.cloud_delivery);
         }
 
-        let strict = evaluate(
+        let strict = evaluate_plain(
             &policy(PrivacyMode::Strict),
             Direction::Outbound,
             Some("api"),
@@ -1802,7 +2218,7 @@ mod tests {
     fn strict_without_the_egress_gate_still_redacts_but_does_not_refuse() {
         let mut settings = policy(PrivacyMode::Strict);
         settings.block_cloud_egress = false;
-        let evaluation = evaluate(&settings, Direction::Outbound, Some("api"), "password=hunter2");
+        let evaluation = evaluate_plain(&settings, Direction::Outbound, Some("api"), "password=hunter2");
         assert!(evaluation.outcome.permitted);
         assert_eq!(evaluation.outcome.action_str(), "replaced");
         assert!(!evaluation.outcome.transformed.contains("hunter2"));
@@ -1816,7 +2232,7 @@ mod tests {
             detectors: Vec::new(),
             ..PrivacySettings::strict_default()
         };
-        let evaluation = evaluate(&settings, Direction::Inbound, None, "ada@example.com");
+        let evaluation = evaluate_plain(&settings, Direction::Inbound, None, "ada@example.com");
         assert_eq!(evaluation.incidents.len(), 1);
     }
 
@@ -1826,7 +2242,7 @@ mod tests {
             detectors: vec![Detector::IpAddresses],
             ..PrivacySettings::strict_default()
         };
-        let evaluation = evaluate(
+        let evaluation = evaluate_plain(
             &settings,
             Direction::Outbound,
             None,
@@ -1915,13 +2331,13 @@ mod tests {
     #[test]
     fn a_finding_view_never_carries_the_value() {
         let secret = "sk-live-0123456789abcdef";
-        let evaluation = evaluate(
+        let evaluation = evaluate_plain(
             &policy(PrivacyMode::Strict),
             Direction::Outbound,
             Some("api.provider.example"),
             &format!("key {secret}"),
         );
-        let result = view(evaluation);
+        let result = view(evaluation, crate::domain::privacy::Enforcement::Enforce);
         assert_eq!(result.findings.len(), 1);
         assert_eq!(result.findings[0].detector, "api_keys");
         assert_eq!(result.findings[0].action, "blocked");
@@ -2059,6 +2475,7 @@ pub async fn dlp_log(
     detector: Option<&str>,
     direction: Option<&str>,
     source: Option<&str>,
+    q: Option<&str>,
     limit: i64,
 ) -> Result<Vec<incident_store::DlpEvent>, ApiError> {
     require(principal, Permission::SandboxRead)?;
@@ -2080,6 +2497,7 @@ pub async fn dlp_log(
             detector,
             direction,
             source,
+            q,
             limit,
         },
     )
@@ -2117,7 +2535,7 @@ mod json_tests {
     #[test]
     fn a_json_request_keeps_everything_else_byte_identical() {
         let raw = request_with_tools();
-        let evaluation = evaluate_json(
+        let evaluation = evaluate_json_plain(
             &policy(PrivacyMode::Strict),
             Direction::Inbound,
             Some("api.anthropic.com"),
@@ -2148,7 +2566,7 @@ mod json_tests {
         let raw = format!(
             r#"{{"model":"claude-x","system":"{padding}","messages":[{{"role":"user","content":"IBAN DE89370400440532013000"}}]}}"#
         );
-        let evaluation = evaluate_json(
+        let evaluation = evaluate_json_plain(
             &policy(PrivacyMode::Review),
             Direction::Inbound,
             Some("api.anthropic.com"),
@@ -2163,7 +2581,99 @@ mod json_tests {
 
     #[test]
     fn free_text_still_takes_the_plain_path() {
-        assert!(evaluate_json(&policy(PrivacyMode::Strict), Direction::Inbound, None, "not json").is_none());
+        assert!(evaluate_json_plain(&policy(PrivacyMode::Strict), Direction::Inbound, None, "not json").is_none());
+    }
+
+    /// RFC 4231, test case 2: the construction the salted fingerprints use.
+    #[test]
+    fn hmac_sha256_matches_the_rfc_vector() {
+        let digest = hmac_sha256(b"Jefe", b"what do ya want for nothing?");
+        let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+        assert_eq!(
+            hex,
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+    }
+
+    /// One value with one key is always the same placeholder, and another key is
+    /// a different one: that is what makes the stored fingerprint unusable
+    /// without the salt.
+    #[test]
+    fn the_fingerprint_is_salted_when_a_key_is_given() {
+        let first = fingerprint_with(Some(b"key-one"), "ada@example.com");
+        assert_eq!(
+            first,
+            fingerprint_with(Some(b"key-one"), "ada@example.com")
+        );
+        assert_ne!(
+            first,
+            fingerprint_with(Some(b"key-two"), "ada@example.com")
+        );
+        assert_ne!(first, fingerprint("ada@example.com"));
+        assert_eq!(fingerprint_with(Some(b"key-one"), "ada@example.com").len(), 64);
+    }
+
+    /// A key file is 64 hex characters; anything else is not a key.
+    #[test]
+    fn a_key_is_thirty_two_bytes_of_hex() {
+        assert_eq!(hex_bytes(&"ab".repeat(32)), Some(vec![0xab; 32]));
+        assert_eq!(hex_bytes("abc"), None);
+        assert_eq!(hex_bytes(&"a".repeat(63)), None);
+        assert_eq!(hex_bytes(&"zz".repeat(32)), None);
+        assert_eq!(hex_bytes(""), None);
+    }
+
+    /// An exception for one fingerprint lets exactly that value through; the
+    /// next value of the same detector is still refused.
+    #[test]
+    fn an_exception_allows_one_value_and_leaves_the_others_blocked() {
+        let key = b"0123456789abcdef0123456789abcdef";
+        let allowed = "DE89370400440532013000";
+        let other = "GB82WEST12345698765432";
+        let sandbox_id = Uuid::new_v4();
+        let exception = crate::domain::privacy_exception::PrivacyException {
+            id: Uuid::new_v4(),
+            environment_id: Uuid::nil(),
+            sandbox_id: Some(sandbox_id),
+            detector: Detector::Iban,
+            value_fingerprint: Some(fingerprint_with(Some(key), allowed)),
+            destination: None,
+            action: Action::Allow,
+            expires_at: None,
+            reason: "the finance team's own account".into(),
+            created_by: None,
+            created_at: Utc::now(),
+        };
+
+        let evaluation = evaluate(
+            &policy(PrivacyMode::Strict),
+            Direction::Inbound,
+            None,
+            allowed,
+            Some(key),
+            std::slice::from_ref(&exception),
+            sandbox_id,
+        );
+        assert_eq!(evaluation.outcome.action, Action::Allow);
+        assert!(evaluation.outcome.permitted);
+        assert_eq!(evaluation.outcome.transformed, allowed);
+        assert_eq!(evaluation.incidents.len(), 1);
+        assert_eq!(evaluation.incidents[0].action, IncidentAction::Allowed);
+        assert_eq!(evaluation.incidents[0].exception_id, Some(exception.id));
+
+        let evaluation = evaluate(
+            &policy(PrivacyMode::Strict),
+            Direction::Inbound,
+            None,
+            other,
+            Some(key),
+            std::slice::from_ref(&exception),
+            sandbox_id,
+        );
+        assert_eq!(evaluation.outcome.action, Action::Block);
+        assert!(!evaluation.outcome.permitted);
+        assert_eq!(evaluation.incidents[0].action, IncidentAction::Blocked);
+        assert_eq!(evaluation.incidents[0].exception_id, None);
     }
 }
 
@@ -2187,8 +2697,8 @@ mod scrub_tests {
                 block_cloud_egress: true,
                 ..settings
             };
-            let evaluation = evaluate_json(&stored, Direction::Inbound, None, body)
-                .unwrap_or_else(|| evaluate(&stored, Direction::Inbound, None, body));
+            let evaluation = evaluate_json_plain(&stored, Direction::Inbound, None, body)
+                .unwrap_or_else(|| evaluate_plain(&stored, Direction::Inbound, None, body));
             assert!(!evaluation.outcome.transformed.contains("DE89370400440532013000"));
             assert!(!evaluation.outcome.transformed.contains("ada@example.com"));
             serde_json::from_str::<serde_json::Value>(&evaluation.outcome.transformed)

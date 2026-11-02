@@ -373,6 +373,10 @@ pub struct InspectBody {
     pub mcp_tool: Option<String>,
     #[serde(default)]
     pub conversation_id: Option<String>,
+    /// The proxy's `x-request-id` for this request. What joins the finding to
+    /// its stored turn and to the live "chat started" event.
+    #[serde(default)]
+    pub request_ref: Option<String>,
 }
 
 /// The privacy decision the proxy acts on.
@@ -440,6 +444,7 @@ pub async fn inspect(
         model: body.model,
         mcp_tool: body.mcp_tool,
         conversation_id: body.conversation_id,
+        request_ref: body.request_ref,
     };
     Ok(Json(
         privacy_service::inspect_with(

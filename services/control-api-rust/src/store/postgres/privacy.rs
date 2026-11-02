@@ -31,7 +31,7 @@ const SETTINGS_COLUMNS: &str = "sandbox_id, mode, detectors, actions, \
 const INCIDENT_COLUMNS: &str = "id, environment_id, sandbox_id, detector, action, severity, \
      masked_value, value_fingerprint, destination, cloud_delivery, direction, \
      requested_action, mode, replacement, source, method, path, model, mcp_tool, \
-     conversation_id, occurrences, last_seen_at, created_at";
+     conversation_id, occurrences, last_seen_at, created_at, request_ref, exception_id";
 
 /// One incident to write: a masked excerpt, a fingerprint, and what happened.
 ///
@@ -47,9 +47,13 @@ pub struct NewIncident<'a> {
     /// `info`, `warning` or `critical`; derived from the action by the service.
     pub severity: &'a str,
     /// First and last characters of the value, stars between.
-    pub masked_value: &'a str,
-    /// SHA-256 of the value, lowercase hex.
-    pub value_fingerprint: &'a str,
+    ///
+    /// `None` for a row that has no value behind it: a refusal the proxy
+    /// reported (check unavailable, body too large) is evidence about a request,
+    /// not about content.
+    pub masked_value: Option<&'a str>,
+    /// Lowercase SHA-256 of the value; `None` where there is no value.
+    pub value_fingerprint: Option<&'a str>,
     /// Where the content was going, when the caller named a destination.
     pub destination: Option<&'a str>,
     /// Whether the content counted as a delivery to a cloud destination.
@@ -70,6 +74,10 @@ pub struct NewIncident<'a> {
     pub model: Option<&'a str>,
     pub mcp_tool: Option<&'a str>,
     pub conversation_id: Option<&'a str>,
+    /// The proxy's `x-request-id`, when it sent one.
+    pub request_ref: Option<&'a str>,
+    /// The exception that allowed the finding, when one did.
+    pub exception_id: Option<Uuid>,
 }
 
 /// Whether a sandbox exists in this environment.
@@ -232,7 +240,8 @@ pub async fn insert_incident(
     // second secret. An agent resends its whole history on every turn, so a
     // fresh row per request turned one IBAN into hundreds of rows.
     let repeated: Option<Uuid> = sqlx::query_scalar(
-        "UPDATE privacy_incidents SET occurrences = occurrences + 1, last_seen_at = now() \
+        "UPDATE privacy_incidents SET occurrences = occurrences + 1, last_seen_at = now(), \
+            request_ref = $8 \
           WHERE id = (SELECT id FROM privacy_incidents \
                        WHERE environment_id = $1 AND sandbox_id = $2 AND detector = $3 \
                          AND action = $4 AND direction = $5 \
@@ -249,6 +258,7 @@ pub async fn insert_incident(
     .bind(incident.direction)
     .bind(incident.value_fingerprint)
     .bind(incident.conversation_id)
+    .bind(incident.request_ref)
     .fetch_optional(scope.connection())
     .await?;
     if let Some(id) = repeated {
@@ -259,9 +269,9 @@ pub async fn insert_incident(
         "INSERT INTO privacy_incidents (environment_id, sandbox_id, detector, action, severity, \
             masked_value, value_fingerprint, destination, cloud_delivery, direction, \
             requested_action, mode, replacement, source, method, path, model, mcp_tool, \
-            conversation_id) \
+            conversation_id, request_ref, exception_id) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, \
-            $17, $18, $19) \
+            $17, $18, $19, $20, $21) \
          RETURNING id",
     )
     .bind(scope.environment_id())
@@ -283,6 +293,8 @@ pub async fn insert_incident(
     .bind(incident.model)
     .bind(incident.mcp_tool)
     .bind(incident.conversation_id)
+    .bind(incident.request_ref)
+    .bind(incident.exception_id)
     .fetch_one(scope.connection())
     .await?;
     Ok(id)
@@ -361,6 +373,8 @@ fn incident_from_row(row: &sqlx::postgres::PgRow) -> Result<PrivacyIncident, Sto
         model: row.try_get("model")?,
         mcp_tool: row.try_get("mcp_tool")?,
         conversation_id: row.try_get("conversation_id")?,
+        request_ref: row.try_get("request_ref")?,
+        exception_id: row.try_get("exception_id")?,
         occurrences: row.try_get("occurrences")?,
         last_seen_at: row.try_get("last_seen_at")?,
         created_at: row.try_get("created_at")?,
@@ -491,10 +505,29 @@ pub async fn dlp_breakdown(
 }
 
 /// One incident with the sandbox it belongs to, for the DLP log.
+///
+/// The sandbox's name is on the incident row's side; everything from `owner_name`
+/// down comes from the joins and is `None` when there was nothing to join: an
+/// incident the egress broker reported without a `request_ref` has no turn, and a
+/// sandbox without an owner has no user row.
 #[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
 pub struct DlpEvent {
     pub incident: PrivacyIncident,
     pub sandbox_name: String,
+    /// The sandbox owner's display name.
+    pub owner_name: Option<String>,
+    /// The agent the request came from (`claude-code`, `codex`, …).
+    pub agent: Option<String>,
+    /// `account`, `key` or `unknown`: how the request authenticated upstream.
+    pub account_kind: Option<String>,
+    /// The provider the turn was routed to.
+    pub provider: Option<String>,
+    /// The model that actually answered, which may differ from the requested one.
+    pub served_model: Option<String>,
+    /// The address the request went out from.
+    pub upstream_ip: Option<String>,
+    /// The address a different exit would have produced, for the route chain.
+    pub upstream_ip_would: Option<String>,
 }
 
 /// The newest incidents in a window, across sandboxes, with filters.
@@ -505,14 +538,30 @@ pub async fn dlp_events(
     scope: &mut TenantScope<'_>,
     query: DlpLogQuery<'_>,
 ) -> Result<Vec<DlpEvent>, StoreError> {
-    // Qualified by hand: `id`, `environment_id` and `created_at` exist on both
-    // tables, so an unqualified list would be ambiguous the moment this joins.
+    // Qualified by hand: `id`, `environment_id` and `created_at` exist on several
+    // of these tables, so an unqualified list would be ambiguous.
+    //
+    // The turn join is `LATERAL` with a `LIMIT 1` rather than a plain
+    // `LEFT JOIN`: one `request_ref` can have more than one turn (a retried
+    // stream), and a plain join would repeat the incident once per turn in the
+    // log. The newest turn is the one that describes the request.
     let statement = "SELECT i.id, i.environment_id, i.sandbox_id, i.detector, i.action, \
             i.severity, i.masked_value, i.value_fingerprint, i.destination, i.cloud_delivery, \
             i.direction, i.requested_action, i.mode, i.replacement, i.source, i.method, \
             i.path, i.model, i.mcp_tool, i.conversation_id, i.occurrences, i.last_seen_at, \
-            i.created_at, s.name AS sandbox_name \
-       FROM privacy_incidents i JOIN sandboxes s ON s.id = i.sandbox_id \
+            i.created_at, i.request_ref, i.exception_id, s.name AS sandbox_name, \
+            u.display_name AS owner_name, t.agent, t.account_kind, t.provider, \
+            t.served_model, t.upstream_ip, t.upstream_ip_would \
+       FROM privacy_incidents i \
+       JOIN sandboxes s ON s.id = i.sandbox_id \
+       LEFT JOIN users u ON u.id = s.owner_user_id \
+       LEFT JOIN LATERAL ( \
+            SELECT c.agent, c.account_kind, c.provider, c.served_model, c.upstream_ip, \
+                   c.upstream_ip_would \
+              FROM chat_turns c \
+             WHERE c.environment_id = i.environment_id AND c.request_ref = i.request_ref \
+             ORDER BY c.ts DESC LIMIT 1 \
+       ) t ON true \
       WHERE i.environment_id = $1 AND i.created_at >= $2 \
         AND ($3::uuid IS NULL OR i.sandbox_id = $3) \
         AND ($4::uuid IS NULL OR s.owner_user_id = $4) \
@@ -520,7 +569,14 @@ pub async fn dlp_events(
         AND ($6::text IS NULL OR i.detector = $6) \
         AND ($7::text IS NULL OR i.direction = $7) \
         AND ($8::text IS NULL OR i.source = $8) \
-      ORDER BY i.created_at DESC, i.id DESC LIMIT $9";
+        AND ($9::text IS NULL \
+             OR i.detector ILIKE '%' || $9 || '%' \
+             OR s.name ILIKE '%' || $9 || '%' \
+             OR coalesce(i.destination, '') ILIKE '%' || $9 || '%' \
+             OR coalesce(i.model, '') ILIKE '%' || $9 || '%' \
+             OR coalesce(t.served_model, '') ILIKE '%' || $9 || '%' \
+             OR coalesce(u.display_name, '') ILIKE '%' || $9 || '%') \
+      ORDER BY i.created_at DESC, i.id DESC LIMIT $10";
     let rows = sqlx::query(statement)
         .bind(scope.environment_id())
         .bind(query.since)
@@ -530,6 +586,7 @@ pub async fn dlp_events(
         .bind(query.detector)
         .bind(query.direction)
         .bind(query.source)
+        .bind(query.q)
         .bind(query.limit.clamp(1, 500))
         .fetch_all(scope.connection())
         .await?;
@@ -537,6 +594,13 @@ pub async fn dlp_events(
     for row in rows {
         out.push(DlpEvent {
             sandbox_name: row.try_get("sandbox_name")?,
+            owner_name: row.try_get("owner_name")?,
+            agent: row.try_get("agent")?,
+            account_kind: row.try_get("account_kind")?,
+            provider: row.try_get("provider")?,
+            served_model: row.try_get("served_model")?,
+            upstream_ip: row.try_get("upstream_ip")?,
+            upstream_ip_would: row.try_get("upstream_ip_would")?,
             incident: incident_from_row(&row)?,
         });
     }
@@ -553,6 +617,9 @@ pub struct DlpLogQuery<'a> {
     pub detector: Option<&'a str>,
     pub direction: Option<&'a str>,
     pub source: Option<&'a str>,
+    /// A free-text needle over detector, sandbox, destination, model, served
+    /// model and owner. Case-insensitive; `None` does not filter.
+    pub q: Option<&'a str>,
     pub limit: i64,
 }
 

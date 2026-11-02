@@ -197,8 +197,14 @@ impl IncidentAction {
 /// What kind of sensitive content a detector looks for.
 ///
 /// The set is closed on purpose: the database CHECK, the `detectors` array and
-/// the scraper in `privacy_service` all name the same ten things, and a new one
-/// is a code change in all three places rather than a free-form string.
+/// the scraper in `privacy_service` all name the same things, and a new one is a
+/// code change in all three places rather than a free-form string.
+///
+/// Two variants are **evidence only**: [`Detector::CheckUnavailable`] and
+/// [`Detector::Oversize`] describe a refusal the proxy reported (the check could
+/// not answer, or the body was too large to read). They never scan anything and
+/// are not part of [`Detector::ALL`], so nobody can switch them on in the
+/// settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Detector {
@@ -216,10 +222,17 @@ pub enum Detector {
     CreditCards,
     /// An amount with a currency: `$1,240.00`, `900 EUR`.
     FinancialData,
+    /// The content check could not answer, so the request was refused.
+    CheckUnavailable,
+    /// The body was larger than the content check reads, so it was refused.
+    Oversize,
 }
 
 impl Detector {
-    /// Every detector, in the order a report lists them.
+    /// Every configurable detector, in the order a report lists them.
+    ///
+    /// The two evidence-only kinds are absent by design: they are not a policy
+    /// choice, they are what the proxy reports when no policy could run.
     pub const ALL: [Detector; 10] = [
         Detector::Credentials,
         Detector::ApiKeys,
@@ -246,6 +259,8 @@ impl Detector {
             Self::Iban => "iban",
             Self::CreditCards => "credit_cards",
             Self::FinancialData => "financial_data",
+            Self::CheckUnavailable => "check_unavailable",
+            Self::Oversize => "oversize",
         }
     }
 
@@ -262,6 +277,8 @@ impl Detector {
             "iban" => Some(Self::Iban),
             "credit_cards" => Some(Self::CreditCards),
             "financial_data" => Some(Self::FinancialData),
+            "check_unavailable" => Some(Self::CheckUnavailable),
+            "oversize" => Some(Self::Oversize),
             _ => None,
         }
     }
@@ -280,6 +297,8 @@ impl Detector {
             Self::Iban => "IBAN",
             Self::CreditCards => "CREDIT_CARDS",
             Self::FinancialData => "FINANCIAL_DATA",
+            Self::CheckUnavailable => "CHECK_UNAVAILABLE",
+            Self::Oversize => "OVERSIZE",
         }
     }
 
@@ -292,6 +311,7 @@ impl Detector {
     pub fn default_action(self) -> Action {
         match self {
             Self::Credentials | Self::ApiKeys | Self::Iban | Self::CreditCards => Action::Block,
+            Self::CheckUnavailable | Self::Oversize => Action::Block,
             Self::EmailAddresses
             | Self::PersonNames
             | Self::IpAddresses
@@ -584,15 +604,29 @@ impl PrivacyUpdate {
 pub struct Marked {
     pub finding: Finding,
     pub token: String,
+    /// A policy exception that covers this finding, decided by the service
+    /// before [`apply`] runs. It replaces the configured action.
+    pub override_action: Option<Action>,
+    /// The exception that granted the override, for the incident row.
+    pub exception_id: Option<Uuid>,
 }
 
 impl Marked {
-    /// A finding and its token.
+    /// A finding and its token, with no exception.
     pub fn new(finding: Finding, token: impl Into<String>) -> Self {
         Self {
             finding,
             token: token.into(),
+            override_action: None,
+            exception_id: None,
         }
+    }
+
+    /// The same finding with the action an exception granted.
+    pub fn with_exception(mut self, action: Action, exception_id: Uuid) -> Self {
+        self.override_action = Some(action);
+        self.exception_id = Some(exception_id);
+        self
     }
 }
 
@@ -633,6 +667,8 @@ pub struct Decision {
     pub masked_value: String,
     /// The fingerprint the placeholder is built from.
     pub token: String,
+    /// The exception that granted a different action, when one did.
+    pub exception_id: Option<Uuid>,
 }
 
 impl Decision {
@@ -717,13 +753,19 @@ pub fn apply(settings: &PrivacySettings, marked: &[Marked], text: &str) -> Outco
     let mut decisions = Vec::with_capacity(marked.len());
     for entry in marked {
         let configured = settings.action_for(entry.finding.detector);
-        let effective = effective_action(settings.mode, configured, settings.block_cloud_egress);
+        // An exception takes the decision over entirely: it says what should
+        // happen to this value, and the mode must not water it down again.
+        let effective = match entry.override_action {
+            Some(action) => action,
+            None => effective_action(settings.mode, configured, settings.block_cloud_egress),
+        };
         let decision = Decision {
             detector: entry.finding.detector,
-            action: configured,
+            action: entry.override_action.unwrap_or(configured),
             effective,
             masked_value: entry.finding.masked(),
             token: entry.token.clone(),
+            exception_id: entry.exception_id,
         };
         // A block still rewrites what it refuses: the caller discards the text,
         // and the redacted copy is what a log may keep.
@@ -799,6 +841,11 @@ pub struct PrivacyIncident {
     pub mcp_tool: Option<String>,
     /// The conversation the request belonged to, for the link to the chat.
     pub conversation_id: Option<String>,
+    /// The proxy's `x-request-id` for the request this finding belonged to.
+    /// What joins a finding to its `chat_turns` row and to the live stream.
+    pub request_ref: Option<String>,
+    /// The exception that allowed the finding, when one did.
+    pub exception_id: Option<Uuid>,
     /// How often this finding was seen. A repeated value within a day increments
     /// the same row instead of writing a new one.
     pub occurrences: i32,
@@ -848,6 +895,20 @@ impl IncidentSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_evidence_only_detectors_are_not_configurable() {
+        // The proxy reports a refusal under these names; a person must not be
+        // able to switch them on, so they are parseable but not part of ALL.
+        for detector in [Detector::CheckUnavailable, Detector::Oversize] {
+            assert_eq!(Detector::parse(detector.as_str()), Some(detector));
+            assert!(!Detector::ALL.contains(&detector));
+            assert_eq!(detector.default_action(), Action::Block);
+        }
+        assert_eq!(Detector::parse("check_unavailable"), Some(Detector::CheckUnavailable));
+        assert_eq!(Detector::CheckUnavailable.label(), "CHECK_UNAVAILABLE");
+        assert_eq!(Detector::Oversize.label(), "OVERSIZE");
+    }
 
     #[test]
     fn every_incident_source_round_trips() {
@@ -1160,13 +1221,30 @@ pub enum Enforcement {
     Exempt,
 }
 
-/// Login and token endpoints that the content check never reads.
+/// Hosts whose whole traffic the content check never reads.
+///
+/// `claude.ai` is deliberately not one of them: it carries both the login flow
+/// and the chat completion, and exempting the host exempted the conversation
+/// (finding R7). It is exempt on its login paths only, through
+/// [`LOGIN_PATH_PREFIXES`].
 pub const EXEMPT_HOSTS: &[&str] = &[
-    "claude.ai",
     "console.anthropic.com",
     "platform.claude.com",
     "auth.openai.com",
     "accounts.google.com",
+];
+
+/// The path prefixes a login flow uses on a host that also carries chat.
+///
+/// Matched against the lower-cased path prefix, so `/login/step-2` and
+/// `/oauth/authorize?…` are both covered and `/api/organizations/x/…` is not.
+pub const LOGIN_PATH_PREFIXES: &[&str] = &[
+    "/login",
+    "/api/auth",
+    "/oauth",
+    "/v1/oauth",
+    "/api/oauth",
+    "/magic-link",
 ];
 
 /// Whether one request is checked, only recorded, or left alone.
@@ -1184,8 +1262,12 @@ pub fn enforcement_for(
         .trim()
         .to_ascii_lowercase();
     let path = path.unwrap_or_default().to_ascii_lowercase();
-    if path.contains("/oauth/") || path.ends_with("/oauth/token") || EXEMPT_HOSTS.contains(&host.as_str())
-    {
+    // Every host's token endpoint, and the four login hosts as a whole.
+    if path.ends_with("/oauth/token") || EXEMPT_HOSTS.contains(&host.as_str()) {
+        return Enforcement::Exempt;
+    }
+    // `claude.ai` carries login *and* chat, so only its login paths are exempt.
+    if host == "claude.ai" && LOGIN_PATH_PREFIXES.iter().any(|prefix| path.starts_with(prefix)) {
         return Enforcement::Exempt;
     }
     let listed = enforce_hosts
@@ -1196,4 +1278,40 @@ pub fn enforcement_for(
         return Enforcement::Enforce;
     }
     Enforcement::RecordOnly
+}
+
+#[cfg(test)]
+mod enforcement_tests {
+    use super::*;
+
+    fn decide(destination: &str, path: &str) -> Enforcement {
+        enforcement_for(IncidentSource::Egress, Some(destination), Some(path), &[])
+    }
+
+    #[test]
+    fn a_chat_completion_on_a_login_host_is_enforced() {
+        // `claude.ai` carries the conversation as well as the sign-in: the whole
+        // host used to be exempt, so the chat content was never read (R7).
+        assert_eq!(
+            decide("claude.ai", "/api/organizations/x/chat_conversations/y/completion"),
+            Enforcement::Enforce
+        );
+        assert_eq!(decide("claude.ai", "/login"), Enforcement::Exempt);
+        assert_eq!(decide("claude.ai", "/api/auth/callback"), Enforcement::Exempt);
+        assert_eq!(decide("claude.ai", "/oauth/authorize"), Enforcement::Exempt);
+    }
+
+    #[test]
+    fn an_oauth_path_on_a_stranger_host_is_only_recorded() {
+        // `contains("/oauth/")` exempted any host with that segment anywhere in
+        // the path, which let a non-model host opt out of inspection.
+        assert_eq!(decide("evil.example", "/oauth/x"), Enforcement::RecordOnly);
+    }
+
+    #[test]
+    fn a_token_endpoint_is_exempt_on_every_host() {
+        assert_eq!(decide("console.anthropic.com", "/v1/oauth/token"), Enforcement::Exempt);
+        assert_eq!(decide("api.anthropic.com", "/v1/oauth/token"), Enforcement::Exempt);
+        assert_eq!(decide("api.anthropic.com", "/v1/messages"), Enforcement::Enforce);
+    }
 }

@@ -1123,7 +1123,7 @@ mod agent_host_tests {
 
     #[test]
     fn model_providers_are_agent_hosts_and_the_rest_is_not() {
-        for host in ["api.anthropic.com", "CHATGPT.com:443", "mine.openai.azure.com", "statsig.anthropic.com"] {
+        for host in ["api.anthropic.com", "claude.ai", "CHATGPT.com:443", "mine.openai.azure.com", "statsig.anthropic.com"] {
             assert!(is_agent_host(host), "{host}");
         }
         for host in ["github.com", "registry.npmjs.org", "evil-anthropic.com", ""] {
