@@ -680,10 +680,48 @@ def redirect_missing(proxy: Any) -> str:
 
 
 @app.post("/v1/sandboxes", status_code=201)
+def sandbox_runtime_of(container: Any) -> str:
+    """Which runtime a container or gateway workload belongs to."""
+    if openshell_name(container.name):
+        return "openshell"
+    return container.labels.get("nestbox.runtime") or "docker-development"
+
+
+def drop_if_other_runtime(name: str, requested: str) -> None:
+    """Remove a sandbox that exists on the *other* runtime than the one asked for.
+
+    A create for a name that already exists returns the existing sandbox, which is
+    what a retried create should do. The exception is a change of runtime: an egress
+    mode that reads TLS runs on Docker, `forward_proxy` on the gateway, and the
+    stored mode may switch from one to the other. Keeping the old workload would
+    leave the sandbox on the runtime its mode no longer uses.
+    """
+    try:
+        existing = get_container(client, name)
+    except NotFound:
+        return
+    if sandbox_runtime_of(existing) == requested:
+        return
+    logger.info("sandbox %s moves from %s to %s; removing the old workload",
+                name, sandbox_runtime_of(existing), requested)
+    if sandbox_runtime_of(existing) == "openshell":
+        try:
+            osh.lifecycle(name, "delete")
+        except osh.OpenShellError as exc:
+            logger.warning("could not delete gateway sandbox %s: %s", name, exc)
+    else:
+        try:
+            existing.remove(force=True)
+        except DockerException as exc:
+            logger.warning("could not remove container for %s: %s", name, exc)
+
+
 def create_sandbox(body: SandboxRequest) -> dict[str, Any]:
     if not image_allowed(body.image):
         raise HTTPException(422, "image is not in the approved phase-1 catalog")
     network = ensure_network()
+    requested = "openshell" if body.runtime == "openshell" and body.egress_mode != "direct" else "docker-development"
+    drop_if_other_runtime(body.name, requested)
     # `direct` means "no proxy, own route to the internet". A gateway sandbox has no
     # route of its own (its supervisor decides every connection), so that one mode
     # stays on the Docker runtime instead of being silently turned into another.
