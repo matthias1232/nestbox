@@ -30,3 +30,8 @@ export const overview = ({ timeframe = '24h', group_by = 'detector', sandbox_id 
 // The DLP log: the newest incidents with their masked excerpts, filterable.
 export const log = ({ timeframe = '24h', sandbox_id, action, detector, limit = 100 } = {}) =>
   request(`privacy/log${query({ timeframe, sandbox_id, action, detector, limit })}`);
+
+// Who changed this sandbox's policy (or the default it inherits), when, and from
+// what to what. Read from the audit trail; no value a detector matched is in it.
+export const changes = ({ sandbox_id, limit = 50 } = {}) =>
+  request(`privacy/changes${query({ sandbox_id, limit })}`);

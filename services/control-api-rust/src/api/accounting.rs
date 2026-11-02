@@ -311,15 +311,68 @@ pub async fn ingest(
     Ok((StatusCode::CREATED, Json(recorded)))
 }
 
-/// Inspect one outbound body for the proxy.
+/// Who may call the inspect endpoint: the appliance, in either of its two
+/// shapes.
+///
+/// The accounting proxy holds the ingest token; the egress broker holds the
+/// node's own token, which the control API already verifies for every policy
+/// check. Accepting both is not a second trust boundary — both are processes on
+/// this appliance, and neither is reachable from a sandbox.
+async fn ingest_authorised(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
+    if authorised(headers).is_ok() {
+        return Ok(());
+    }
+    let node_id = headers
+        .get("x-nestbox-node")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| Uuid::parse_str(value.trim()).ok())
+        .ok_or_else(|| ApiError::unauthenticated("The ingest token is not valid."))?;
+    let presented = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .unwrap_or("")
+        .trim();
+    if presented.is_empty() {
+        return Err(ApiError::unauthenticated("The ingest token is not valid."));
+    }
+    crate::services::policy_service::authenticate_node(&state.services, node_id, presented).await
+}
+
+/// Inspect one body for a proxy.
+///
+/// Two callers, one endpoint. The accounting proxy knows the sandbox by name,
+/// because the agent's SDK names it in its route. The egress broker knows it by
+/// id, because Envoy copies the id out of the policy answer into the upstream
+/// request. Both are the appliance speaking, and both are authenticated with the
+/// ingest token, so the difference is only how the sandbox is found.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct InspectBody {
-    pub sandbox: String,
+    /// The sandbox's name; used when no id is given.
+    #[serde(default)]
+    pub sandbox: Option<String>,
+    /// The sandbox's id; used by the egress broker.
+    #[serde(default)]
+    pub sandbox_id: Option<Uuid>,
     #[serde(default)]
     pub direction: Option<String>,
     pub content: String,
     #[serde(default)]
     pub destination: Option<String>,
+    /// `egress`, `accounting_proxy`, `mcp` or `test`. Defaults to the accounting
+    /// proxy, because that is the caller that predates this field.
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub method: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub mcp_tool: Option<String>,
+    #[serde(default)]
+    pub conversation_id: Option<String>,
 }
 
 /// The privacy decision the proxy acts on.
@@ -328,32 +381,74 @@ pub async fn inspect(
     headers: HeaderMap,
     Json(body): Json<InspectBody>,
 ) -> Result<Json<InspectResult>, ApiError> {
-    authorised(&headers)?;
-    let environment = crate::services::media_service::bridge_environment(&state.services).await?;
-    let sandbox_id = sandbox_id_by_name(&state.services, environment, &body.sandbox).await?;
+    use crate::domain::auth::{CredentialSource, Principal, Role};
+    use crate::domain::privacy::IncidentSource;
+
+    ingest_authorised(&state, &headers).await?;
+    // Which tenant: from the id when the broker sent one, otherwise from the
+    // appliance's single environment and the name the SDK used.
+    let (environment, sandbox_id) = match (body.sandbox_id, body.sandbox.as_deref()) {
+        (Some(id), _) => {
+            let environment =
+                crate::store::postgres::egress::sandbox_environment(&state.services.pool, id)
+                    .await
+                    .map_err(ApiError::from)?
+                    .ok_or_else(|| {
+                        ApiError::not_found(
+                            ErrorCode::NOT_FOUND,
+                            "No such sandbox in this environment.",
+                        )
+                    })?;
+            (environment, id)
+        }
+        (None, Some(name)) => {
+            let environment =
+                crate::services::media_service::bridge_environment(&state.services).await?;
+            let id = sandbox_id_by_name(&state.services, environment, name).await?;
+            (environment, id)
+        }
+        (None, None) => {
+            return Err(ApiError::validation(
+                "The inspection names a sandbox by name or by id.",
+            ));
+        }
+    };
     let direction = body
         .direction
         .as_deref()
         .and_then(privacy_service::Direction::parse)
         .unwrap_or(privacy_service::Direction::Inbound);
-    use crate::domain::auth::{CredentialSource, Principal, Role};
+    let source = body
+        .source
+        .as_deref()
+        .and_then(IncidentSource::parse)
+        .unwrap_or(IncidentSource::AccountingProxy);
     // The proxy speaks for the appliance, not for a person: a system principal in
     // the sandbox's own environment, with no user id.
     let system = Principal {
         user_id: Uuid::nil(),
         environment_id: environment,
         role: Role::Admin,
-        display_name: "accounting proxy".into(),
+        display_name: "egress proxy".into(),
         via: CredentialSource::Token,
     };
+    let context = privacy_service::InspectContext {
+        destination: body.destination,
+        source,
+        method: body.method,
+        path: body.path,
+        model: body.model,
+        mcp_tool: body.mcp_tool,
+        conversation_id: body.conversation_id,
+    };
     Ok(Json(
-        privacy_service::inspect(
+        privacy_service::inspect_with(
             &state.services,
             &system,
             sandbox_id,
             direction,
             &body.content,
-            body.destination.as_deref(),
+            &context,
         )
         .await?,
     ))

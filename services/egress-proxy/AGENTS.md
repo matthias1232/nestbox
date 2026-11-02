@@ -31,6 +31,17 @@ then un-terminate it. This is why the CA certificate ships in every sandbox imag
 trusted root). An image without it is a broken image, and the log shows the
 CONNECT with no readable request rather than pretending the request was empty.
 
+## Content check on the decrypted hop (ADR 0059)
+
+`mitm/dlp.go` asks the control API about every JSON body the broker forwards, and
+does what the answer says: refuse with `403`, forward the rewritten text, or
+forward unchanged. It is here and not in the Lua filter because a body rewrite
+needs a reader, not a pattern match. `observe` is the only mode that forwards a
+body it could not check; everywhere else an unanswered check is a refusal. Only
+requests are inspected — a streamed answer cannot be rewritten mid-stream. The
+sandbox id and the egress mode reach this process as upstream headers that Envoy
+copied out of the policy answer; a client cannot set them.
+
 ## Update (ADR 0034)
 
 The default HTTPS path is a *decided tunnel*, not the broker described below: the

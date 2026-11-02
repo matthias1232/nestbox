@@ -213,6 +213,12 @@ pub struct LogQuery {
     pub action: Option<String>,
     #[serde(default)]
     pub detector: Option<String>,
+    /// inbound (to the model) or outbound (to the agent).
+    #[serde(default)]
+    pub direction: Option<String>,
+    /// egress, accounting_proxy, mcp or test.
+    #[serde(default)]
+    pub source: Option<String>,
     #[serde(default)]
     pub limit: Option<i64>,
 }
@@ -232,7 +238,38 @@ pub async fn dlp_log(
         query.sandbox_id,
         query.action.as_deref().filter(|value| !value.is_empty() && *value != "all"),
         query.detector.as_deref().filter(|value| !value.is_empty() && *value != "all"),
+        query.direction.as_deref().filter(|value| !value.is_empty() && *value != "all"),
+        query.source.as_deref().filter(|value| !value.is_empty() && *value != "all"),
         query.limit.unwrap_or(100),
+    )
+    .await?;
+    Ok(Json(serde_json::json!({ "items": items })))
+}
+
+/// The policy history's query.
+#[derive(Debug, Deserialize)]
+pub struct ChangesQuery {
+    #[serde(default)]
+    pub sandbox_id: Option<Uuid>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+/// Who changed this sandbox's DLP policy (or the default it inherits), when, and
+/// from what to what.
+///
+/// The audit trail is the source: a save, an inherit and a purge are audited
+/// acts already, and a second table of the same facts would be a second truth.
+pub async fn dlp_changes(
+    State(state): State<AppState>,
+    auth: Auth,
+    Query(query): Query<ChangesQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let items = privacy_service::changes(
+        &state.services,
+        &auth.principal,
+        query.sandbox_id,
+        query.limit.unwrap_or(50),
     )
     .await?;
     Ok(Json(serde_json::json!({ "items": items })))

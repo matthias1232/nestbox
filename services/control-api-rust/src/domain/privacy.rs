@@ -720,12 +720,87 @@ pub struct PrivacyIncident {
     pub destination: Option<String>,
     /// Whether the content counted as a delivery to a cloud destination.
     pub cloud_delivery: bool,
+    /// `inbound` (to the model) or `outbound` (to the agent).
+    pub direction: String,
+    /// What the policy asked for, next to what happened. Equal to `action`
+    /// unless the mode was `observe`, where the policy asks and the request goes
+    /// out unchanged; `None` marks a row written before the column existed.
+    pub requested_action: Option<IncidentAction>,
+    /// The mode in force when the finding happened; `None` for older rows.
+    pub mode: Option<String>,
+    /// The substitute the detector wrote (`<IBAN_faf7e1c0>`, `[REDACTED]`).
+    /// Derived from the fingerprint, so it reveals no more than the mask.
+    pub replacement: Option<String>,
+    /// `egress`, `accounting_proxy`, `mcp` or `test`: which hop saw the content.
+    pub source: String,
+    /// The HTTP facts of the request the finding belonged to, when known.
+    pub method: Option<String>,
+    pub path: Option<String>,
+    pub model: Option<String>,
+    pub mcp_tool: Option<String>,
+    /// The conversation the request belonged to, for the link to the chat.
+    pub conversation_id: Option<String>,
     pub created_at: DateTime<Utc>,
+}
+
+/// Where a finding was seen. A closed list: the value is a column with a CHECK.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IncidentSource {
+    /// The transparent proxy, between the sandbox and the internet.
+    Egress,
+    /// The accounting proxy the agent's SDK points at.
+    AccountingProxy,
+    /// An MCP tool call, seen by the proxy's JSON-RPC filter.
+    Mcp,
+    /// The test button on the settings screen; also the default for a caller
+    /// that does not say, so a new call site cannot silently claim to be egress.
+    #[default]
+    Test,
+}
+
+impl IncidentSource {
+    /// The database and wire spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Egress => "egress",
+            Self::AccountingProxy => "accounting_proxy",
+            Self::Mcp => "mcp",
+            Self::Test => "test",
+        }
+    }
+
+    /// Read the database spelling; unknown input is `None`.
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "egress" => Self::Egress,
+            "accounting_proxy" => Self::AccountingProxy,
+            "mcp" => Self::Mcp,
+            "test" => Self::Test,
+            _ => return None,
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_incident_source_round_trips() {
+        for source in [
+            IncidentSource::Egress,
+            IncidentSource::AccountingProxy,
+            IncidentSource::Mcp,
+            IncidentSource::Test,
+        ] {
+            assert_eq!(IncidentSource::parse(source.as_str()), Some(source));
+        }
+        // The default is the one that cannot claim to be the egress proxy: a new
+        // call site that forgets to say where it is must not look like real
+        // traffic in the log.
+        assert_eq!(IncidentSource::default(), IncidentSource::Test);
+        assert_eq!(IncidentSource::parse("somewhere"), None);
+    }
 
     fn settings(mode: PrivacyMode) -> PrivacySettings {
         PrivacySettings {
@@ -825,6 +900,17 @@ mod tests {
         assert!(observe.permitted);
         assert_eq!(observe.transformed, text);
         assert_eq!(observe.decisions[0].incident_action(), IncidentAction::Allowed);
+        // Two facts, both stored: what the policy asked for and what happened.
+        // In observe they differ, and that difference is the only evidence that
+        // the content left although a detector matched.
+        assert_eq!(
+            observe.decisions[0].action.incident_action(),
+            IncidentAction::Blocked
+        );
+        assert_eq!(observe.decisions[0].incident_action(), IncidentAction::Allowed);
+        // The substitute is safe to store: a placeholder, never the value.
+        assert!(observe.decisions[0].replacement().starts_with('<'));
+        assert!(!observe.decisions[0].replacement().contains("sk-live-0123456789abcdef"));
     }
 
     #[test]

@@ -39,6 +39,7 @@ import DesktopTab from './DesktopTab.jsx';
 import InventoryTab from './InventoryTab.jsx';
 import LogsTab from './LogsTab.jsx';
 import MountsTab from './MountsTab.jsx';
+import PrivacyTab from './PrivacyTab.jsx';
 
 const TABS = [
   { id: 'dashboard', label: 'Dashboard', component: DashboardTab },
@@ -54,6 +55,7 @@ const TABS = [
   { id: 'supervisor', label: 'Supervisor', component: SupervisorTab },
   { id: 'sessions', label: 'Sessions', component: SessionsTab },
   { id: 'policies', label: 'Policies & DNS', component: PoliciesTab },
+  { id: 'privacy', label: 'Privacy / DLP', component: PrivacyTab },
   { id: 'processes', label: 'Processes', component: ProcessesTab },
   { id: 'connections', label: 'Connections', component: ConnectionsTab },
   { id: 'commands', label: 'Commands', component: CommandsTab },

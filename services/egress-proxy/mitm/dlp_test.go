@@ -1,0 +1,135 @@
+package main
+
+import (
+	"crypto/tls"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+// The hop must do exactly three things with an answer from the control API:
+// refuse a blocked request, forward the rewritten text when values were replaced,
+// and forward the original bytes when nothing matched. The fourth case — no
+// answer at all — depends on the mode, and is the one that decides whether an
+// outage of the control API takes the egress down.
+
+func dlpTestClient(t *testing.T, verdict string) (*dlpClient, *[]string) {
+	t.Helper()
+	seen := &[]string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		*seen = append(*seen, string(body))
+		if r.Header.Get("x-nestbox-node") == "" || !strings.HasPrefix(r.Header.Get("authorization"), "Bearer ") {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = io.WriteString(w, verdict)
+	}))
+	t.Cleanup(server.Close)
+	return &dlpClient{url: server.URL, nodeID: "11111111-1111-1111-1111-111111111111", token: "t", client: server.Client()}, seen
+}
+
+func inspectRequest(body string, contentType string) *http.Request {
+	request := httptest.NewRequest(http.MethodPost, "https://api.anthropic.com/v1/messages", strings.NewReader(body))
+	request.Host = "api.anthropic.com"
+	request.ContentLength = int64(len(body))
+	request.Header.Set("content-type", contentType)
+	request.Header.Set("x-nestbox-sandbox", "22222222-2222-2222-2222-222222222222")
+	return request
+}
+
+func TestDlpRefusesABlockedBody(t *testing.T) {
+	client, seen := dlpTestClient(t, `{"permitted":false,"action":"blocked","transformed_content":"x","findings":[]}`)
+	recorder := httptest.NewRecorder()
+	handled := client.apply(recorder, inspectRequest(`{"messages":[]}`, "application/json"), "strict")
+	if !handled {
+		t.Fatal("a blocked body must be answered here, not forwarded")
+	}
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status %d, want 403", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), "privacy.blocked") {
+		t.Fatalf("body %q does not name the reason", recorder.Body.String())
+	}
+	if len(*seen) != 1 || !strings.Contains((*seen)[0], "22222222-2222-2222-2222-222222222222") {
+		t.Fatalf("the check named the wrong sandbox: %v", *seen)
+	}
+	if !strings.Contains((*seen)[0], `"source":"egress"`) {
+		t.Fatalf("the check did not say which hop saw it: %v", *seen)
+	}
+}
+
+func TestDlpForwardsTheRewrittenBody(t *testing.T) {
+	client, _ := dlpTestClient(t, `{"permitted":true,"action":"replaced","transformed_content":"{\"messages\":\"<IBAN_faf7e1c0>\"}","findings":[]}`)
+	request := inspectRequest(`{"messages":"DE89370400440532013000"}`, "application/json")
+	recorder := httptest.NewRecorder()
+	if client.apply(recorder, request, "strict") {
+		t.Fatal("a rewritten body is forwarded, not answered")
+	}
+	got, _ := io.ReadAll(request.Body)
+	if string(got) != `{"messages":"<IBAN_faf7e1c0>"}` {
+		t.Fatalf("body %q was not rewritten", got)
+	}
+	if request.ContentLength != int64(len(got)) {
+		t.Fatalf("content length %d does not match %d bytes", request.ContentLength, len(got))
+	}
+}
+
+func TestDlpLeavesAnUnmatchedBodyAlone(t *testing.T) {
+	client, _ := dlpTestClient(t, `{"permitted":true,"action":"allowed","transformed_content":"","findings":[]}`)
+	original := `{"messages":"nothing to see"}`
+	request := inspectRequest(original, "application/json")
+	if client.apply(httptest.NewRecorder(), request, "strict") {
+		t.Fatal("an allowed body is forwarded")
+	}
+	got, _ := io.ReadAll(request.Body)
+	if string(got) != original {
+		t.Fatalf("body changed to %q", got)
+	}
+}
+
+func TestDlpFailsOpenOnlyInObserve(t *testing.T) {
+	// A server that is not there at all: the check cannot be answered.
+	dead := &dlpClient{url: "http://127.0.0.1:1", nodeID: "n", token: "t", client: &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{}}}}
+	recorder := httptest.NewRecorder()
+	if dead.apply(recorder, inspectRequest(`{"a":1}`, "application/json"), "observe") {
+		t.Fatal("observe forwards a body it could not check")
+	}
+	recorder = httptest.NewRecorder()
+	if !dead.apply(recorder, inspectRequest(`{"a":1}`, "application/json"), "strict") {
+		t.Fatal("strict must refuse a body it could not check")
+	}
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status %d, want 403", recorder.Code)
+	}
+}
+
+func TestDlpIgnoresWhatItMustNotRead(t *testing.T) {
+	client, seen := dlpTestClient(t, `{"permitted":true,"action":"allowed","transformed_content":"","findings":[]}`)
+	cases := map[string]*http.Request{
+		"no sandbox":   inspectRequest(`{"a":1}`, "application/json"),
+		"not json":     inspectRequest(`{"a":1}`, "application/octet-stream"),
+		"a get":        inspectRequest(`{}`, "application/json"),
+		"an empty one": inspectRequest(``, "application/json"),
+	}
+	cases["no sandbox"].Header.Del("x-nestbox-sandbox")
+	cases["a get"].Method = http.MethodGet
+	if client.apply(httptest.NewRecorder(), cases["no sandbox"], "strict") {
+		t.Error("a request without a sandbox has nothing to check")
+	}
+	if client.apply(httptest.NewRecorder(), cases["not json"], "strict") {
+		t.Error("a binary body is not read")
+	}
+	if client.apply(httptest.NewRecorder(), cases["a get"], "strict") {
+		t.Error("a bodyless method is not read")
+	}
+	if client.apply(httptest.NewRecorder(), cases["an empty one"], "strict") {
+		t.Error("an empty body is not read")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("the control API was asked about %d bodies it should not see", len(*seen))
+	}
+}

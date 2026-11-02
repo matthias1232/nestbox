@@ -35,6 +35,12 @@ const defaultUpstream = "127.0.0.1:10002"
 // upstreamHandler re-encrypts a plain HTTP/1.1 request towards the host named in
 // its Host header, verified against roots.
 func upstreamHandler(roots *x509.CertPool, dial func(ctx context.Context, network, addr string) (net.Conn, error)) http.Handler {
+	return upstreamHandlerWith(roots, dial, newDlpClientFromEnv())
+}
+
+// upstreamHandlerWith is upstreamHandler with the content check passed in, so a
+// test can decide whether the check is part of the hop.
+func upstreamHandlerWith(roots *x509.CertPool, dial func(ctx context.Context, network, addr string) (net.Conn, error), dlp *dlpClient) http.Handler {
 	transport := &http.Transport{
 		TLSClientConfig:       &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
 		DialContext:           dial,
@@ -56,6 +62,12 @@ func upstreamHandler(roots *x509.CertPool, dial func(ctx context.Context, networ
 			r.Host = host
 			// A nil entry keeps the proxy from adding the loopback address.
 			r.Header["X-Forwarded-For"] = nil
+			// The proxy's own bookkeeping never reaches the destination. The
+			// sandbox id and the egress mode are how this hop learns what to
+			// check; they are not facts a model provider has any use for.
+			r.Header.Del("x-nestbox-sandbox")
+			r.Header.Del("x-nestbox-source-ip")
+			r.Header.Del("x-nestbox-egress-mode")
 		},
 		Transport:     transport,
 		FlushInterval: -1, // streamed answers (SSE) must not wait for a full buffer
@@ -67,6 +79,9 @@ func upstreamHandler(roots *x509.CertPool, dial func(ctx context.Context, networ
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := checkHost(r.Host); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if dlp != nil && dlp.apply(w, r, r.Header.Get("x-nestbox-egress-mode")) {
 			return
 		}
 		proxy.ServeHTTP(w, r)

@@ -451,6 +451,18 @@ static_resources:
                               # A window or an allow-all mode let the request
                               # through although a rule would have denied it.
                               - exact: x-nestbox-would-deny
+                          # The broker that re-encrypts this hop is where a body
+                          # is checked against the privacy policy: it holds the
+                          # decrypted bytes and can rewrite them, which the router
+                          # cannot. It needs to know whose body it is and what the
+                          # egress mode allows when the check itself cannot be
+                          # answered. Both come from the answer above, so a sandbox
+                          # cannot write them (the Lua filter removes every
+                          # `x-nestbox-*` header from the client first).
+                          allowed_upstream_headers:
+                            patterns:
+                              - exact: x-nestbox-sandbox
+                              - exact: x-nestbox-egress-mode
                       failure_mode_allow: false
                   - name: envoy.filters.http.router
                     typed_config:

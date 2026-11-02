@@ -49,6 +49,24 @@ pub struct SandboxScope {
 /// Used to turn "the container at 172.30.0.5" into a sandbox row: the runner
 /// knows addresses and names, the database knows ids. Names are unique within an
 /// environment, and the appliance has one, so the first match is the answer.
+/// The environment a sandbox belongs to, by id.
+///
+/// The egress broker knows the sandbox id (Envoy copies it out of the policy
+/// answer) and needs the tenant to write an incident. A missing row is `None`,
+/// not an error: a sandbox deleted a moment ago is the normal race.
+pub async fn sandbox_environment(
+    pool: &sqlx::PgPool,
+    sandbox_id: Uuid,
+) -> Result<Option<Uuid>, StoreError> {
+    let found: Option<Uuid> = sqlx::query_scalar(
+        "SELECT environment_id FROM sandboxes WHERE id = $1 AND status <> 'deleted'",
+    )
+    .bind(sandbox_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(found)
+}
+
 pub async fn sandbox_id_by_name(
     pool: &sqlx::PgPool,
     name: &str,

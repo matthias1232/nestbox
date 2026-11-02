@@ -35,8 +35,8 @@ use super::access_control::require;
 use super::ServiceContext;
 use crate::domain::auth::{Permission, Principal};
 use crate::domain::privacy::{
-    Action, Detector, Finding, IncidentAction, Marked, Outcome, PrivacyIncident, PrivacyMode,
-    PrivacySettings, PrivacyUpdate, apply,
+    Action, Detector, Finding, IncidentAction, IncidentSource, Marked, Outcome, PrivacyIncident,
+    PrivacyMode, PrivacySettings, PrivacyUpdate, apply,
 };
 use crate::error::{ApiError, ErrorCode};
 use crate::store::postgres::privacy as store;
@@ -107,6 +107,9 @@ pub struct FindingView {
     pub masked_value: String,
     /// What happened: `blocked`, `redacted`, `replaced` or `allowed`.
     pub action: String,
+    /// What the policy asked for. Differs from `action` in `observe`, where the
+    /// request went out unchanged although a detector matched.
+    pub requested: String,
 }
 
 /// The answer to one inspection.
@@ -950,8 +953,13 @@ fn scan_api_keys(text: &str, bytes: &[u8]) -> Vec<Span> {
 struct IncidentDraft {
     detector: Detector,
     action: IncidentAction,
+    /// What the policy asked for. Equal to `action` except in `observe`, where
+    /// the policy asks for a rewrite and the request goes out unchanged.
+    requested_action: IncidentAction,
     masked_value: String,
     value_fingerprint: String,
+    /// The substitute written into the body (`<IBAN_faf7e1c0>`, `[REDACTED]`).
+    replacement: String,
     cloud_delivery: bool,
 }
 
@@ -1031,8 +1039,10 @@ fn evaluate(
         .map(|decision| IncidentDraft {
             detector: decision.detector,
             action: decision.incident_action(),
+            requested_action: decision.action.incident_action(),
             masked_value: decision.masked_value.clone(),
             value_fingerprint: decision.token.clone(),
+            replacement: decision.replacement(),
             cloud_delivery: delivered,
         })
         .collect();
@@ -1114,11 +1124,35 @@ pub async fn set_settings(
             ));
         }
     }
+    // What the row said before the write. The history screen shows old and new
+    // side by side, and "which detector did I turn off" is unanswerable from the
+    // new values alone. `None` means nothing was ever saved, so the built-in
+    // strict policy was in force; that is a value, not a gap.
+    let previous = store::settings_for(&mut scope, sandbox_id)
+        .await
+        .map_err(ApiError::from)?;
     let mut settings = update.into_settings(sandbox_id);
     settings.updated_by = Some(principal.user_id);
     store::save_settings(&mut scope, &settings)
         .await
         .map_err(ApiError::from)?;
+    let summarize = |value: &PrivacySettings| {
+        json!({
+            "mode": value.mode.as_str(),
+            "detectors": value
+                .detectors
+                .iter()
+                .map(|detector| detector.as_str())
+                .collect::<Vec<_>>(),
+            "block_cloud_egress": value.block_cloud_egress,
+            "retention_days": value.retention_days,
+            "overrides": value
+                .actions
+                .iter()
+                .map(|(detector, action)| format!("{}={}", detector.as_str(), action.as_str()))
+                .collect::<Vec<_>>(),
+        })
+    };
     crate::store::postgres::audit::record(
         &mut scope,
         crate::store::postgres::audit::NewAuditEvent {
@@ -1129,10 +1163,16 @@ pub async fn set_settings(
             subject_id: Some(sandbox_id.unwrap_or(principal.environment_id)),
             detail: &json!({
                 "mode": settings.mode.as_str(),
-                "detectors": settings.detectors.iter().map(|detector| detector.as_str()).collect::<Vec<_>>(),
+                "detectors": settings
+                .detectors
+                .iter()
+                .map(|detector| detector.as_str())
+                .collect::<Vec<_>>(),
                 "block_cloud_egress": settings.block_cloud_egress,
                 "retention_days": settings.retention_days,
                 "overrides": settings.actions.len(),
+                "after": summarize(&settings),
+                "before": previous.as_ref().map(summarize),
             }),
             request_id: None,
         },
@@ -1200,6 +1240,34 @@ pub async fn clear_settings(
 /// calls on behalf of a sandbox's own traffic, and what it returns about the
 /// content is evidence, not configuration. The content itself is the caller's —
 /// it is inspected and handed back rewritten, never stored.
+/// What the request was, for the incident row.
+///
+/// Everything but `source` is optional because the test button on the settings
+/// screen knows none of it: it inspects a typed string, not a request.
+#[derive(Debug, Clone, Default)]
+pub struct InspectContext {
+    /// The host or URL the content was heading to.
+    pub destination: Option<String>,
+    /// Which hop saw the content.
+    pub source: IncidentSource,
+    pub method: Option<String>,
+    pub path: Option<String>,
+    pub model: Option<String>,
+    pub mcp_tool: Option<String>,
+    /// The conversation the request belonged to, when known.
+    pub conversation_id: Option<String>,
+}
+
+impl InspectContext {
+    /// The destination, with a blank string read as "not named".
+    fn destination(&self) -> Option<&str> {
+        self.destination
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+    }
+}
+
+/// Run the policy over one piece of text and record what it found.
 pub async fn inspect(
     ctx: &ServiceContext,
     principal: &Principal,
@@ -1208,13 +1276,32 @@ pub async fn inspect(
     content: &str,
     destination: Option<&str>,
 ) -> Result<InspectResult, ApiError> {
+    let context = InspectContext {
+        destination: destination.map(str::to_string),
+        ..InspectContext::default()
+    };
+    inspect_with(ctx, principal, sandbox_id, direction, content, &context).await
+}
+
+/// The one implementation: evaluate, record, answer.
+///
+/// The context is a borrow and does not enter the answer, so the caller — the
+/// test button, the accounting proxy, the egress broker — only has to say where
+/// the content was going and which hop caught it.
+pub async fn inspect_with(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Uuid,
+    direction: Direction,
+    content: &str,
+    context: &InspectContext,
+) -> Result<InspectResult, ApiError> {
     require(principal, Permission::TelemetryRead)?;
     if content.len() > MAX_CONTENT {
         return Err(ApiError::validation(format!(
             "Content must be at most {MAX_CONTENT} bytes."
         )));
     }
-    let destination = destination.filter(|value| !value.trim().is_empty());
 
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
@@ -1229,7 +1316,9 @@ pub async fn inspect(
         ));
     }
     let settings = resolve_settings(&mut scope, Some(sandbox_id)).await?;
+    let destination = context.destination();
     let evaluation = evaluate(&settings, direction, destination, content);
+    let mode = settings.mode.as_str();
     for incident in &evaluation.incidents {
         store::insert_incident(
             &mut scope,
@@ -1242,6 +1331,16 @@ pub async fn inspect(
                 value_fingerprint: &incident.value_fingerprint,
                 destination,
                 cloud_delivery: incident.cloud_delivery,
+                direction: direction.as_str(),
+                requested_action: incident.requested_action,
+                mode,
+                replacement: Some(incident.replacement.as_str()),
+                source: context.source,
+                method: context.method.as_deref(),
+                path: context.path.as_deref(),
+                model: context.model.as_deref(),
+                mcp_tool: context.mcp_tool.as_deref(),
+                conversation_id: context.conversation_id.as_deref(),
             },
         )
         .await
@@ -1250,6 +1349,42 @@ pub async fn inspect(
     scope.commit().await.map_err(ApiError::from)?;
 
     Ok(view(evaluation))
+}
+
+/// The policy history of one sandbox and the environment default it inherits.
+pub async fn changes(
+    ctx: &ServiceContext,
+    principal: &Principal,
+    sandbox_id: Option<Uuid>,
+    limit: i64,
+) -> Result<Vec<incident_store::DlpChange>, ApiError> {
+    require(principal, Permission::TelemetryRead)?;
+    // A sandbox's history belongs to its owner; without one, only an admin may
+    // read the environment's history, because it is the same act as reading the
+    // default policy.
+    if sandbox_id.is_none() && principal.role != crate::domain::auth::Role::Admin {
+        return Err(ApiError::forbidden("policy.read"));
+    }
+    let mut scope = TenantScope::begin_for(&ctx.pool, principal)
+        .await
+        .map_err(ApiError::from)?;
+    if let Some(sandbox_id) = sandbox_id {
+        if !store::sandbox_exists(&mut scope, sandbox_id)
+            .await
+            .map_err(ApiError::from)?
+        {
+            return Err(ApiError::not_found(
+                ErrorCode::SANDBOX_NOT_FOUND,
+                "No such sandbox in this environment.",
+            ));
+        }
+    }
+    let environment_id = scope.environment_id();
+    let items = incident_store::dlp_changes(&mut scope, sandbox_id, environment_id, limit)
+        .await
+        .map_err(ApiError::from)?;
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(items)
 }
 
 /// The wire shape of one evaluation.
@@ -1265,6 +1400,7 @@ fn view(evaluation: Evaluation) -> InspectResult {
             detector: decision.detector.as_str().to_string(),
             masked_value: decision.masked_value.clone(),
             action: decision.incident_action().as_str().to_string(),
+            requested: decision.action.incident_action().as_str().to_string(),
         })
         .collect();
     InspectResult {
@@ -1669,6 +1805,8 @@ pub async fn dlp_log(
     sandbox_id: Option<Uuid>,
     action: Option<&str>,
     detector: Option<&str>,
+    direction: Option<&str>,
+    source: Option<&str>,
     limit: i64,
 ) -> Result<Vec<incident_store::DlpEvent>, ApiError> {
     require(principal, Permission::SandboxRead)?;
@@ -1680,8 +1818,20 @@ pub async fn dlp_log(
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
-    let items = incident_store::dlp_events(&mut scope, sandbox_id, owner, since, action, detector, limit)
-        .await
+    let items = incident_store::dlp_events(
+        &mut scope,
+        incident_store::DlpLogQuery {
+            sandbox_id,
+            owner,
+            since,
+            action,
+            detector,
+            direction,
+            source,
+            limit,
+        },
+    )
+    .await
         .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
     Ok(items)

@@ -18,7 +18,8 @@ ENV CGO_ENABLED=0 \
     GOFLAGS=-mod=mod \
     GOPROXY=off
 
-COPY mitm/go.mod mitm/main.go mitm/main_test.go mitm/upstream.go mitm/upstream_test.go ./
+COPY mitm/go.mod mitm/main.go mitm/main_test.go mitm/upstream.go mitm/upstream_test.go \
+    mitm/dlp.go mitm/dlp_test.go ./
 RUN go vet ./... \
  && go test ./... \
  && go build -trimpath -ldflags='-s -w' -o /out/egress-mitm .

@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use super::super::TenantScope;
 use crate::domain::privacy::{
-    Action, Detector, IncidentAction, PrivacyIncident, PrivacySettings, PrivacyMode,
+    Action, Detector, IncidentAction, IncidentSource, PrivacyIncident, PrivacySettings, PrivacyMode,
 };
 use crate::error::StoreError;
 
@@ -28,7 +28,9 @@ const SETTINGS_COLUMNS: &str = "sandbox_id, mode, detectors, actions, \
 
 /// The incident columns, named for the same reason.
 const INCIDENT_COLUMNS: &str = "id, environment_id, sandbox_id, detector, action, severity, \
-     masked_value, value_fingerprint, destination, cloud_delivery, created_at";
+     masked_value, value_fingerprint, destination, cloud_delivery, direction, \
+     requested_action, mode, replacement, source, method, path, model, mcp_tool, \
+     conversation_id, created_at";
 
 /// One incident to write: a masked excerpt, a fingerprint, and what happened.
 ///
@@ -51,6 +53,22 @@ pub struct NewIncident<'a> {
     pub destination: Option<&'a str>,
     /// Whether the content counted as a delivery to a cloud destination.
     pub cloud_delivery: bool,
+    /// `inbound` or `outbound`.
+    pub direction: &'a str,
+    /// What the policy asked for; differs from `action` in `observe`.
+    pub requested_action: IncidentAction,
+    /// The mode in force when the finding happened.
+    pub mode: &'a str,
+    /// The substitute the detector wrote, never the value.
+    pub replacement: Option<&'a str>,
+    /// Which hop saw the content.
+    pub source: IncidentSource,
+    /// The request the finding belonged to, when known.
+    pub method: Option<&'a str>,
+    pub path: Option<&'a str>,
+    pub model: Option<&'a str>,
+    pub mcp_tool: Option<&'a str>,
+    pub conversation_id: Option<&'a str>,
 }
 
 /// Whether a sandbox exists in this environment.
@@ -201,8 +219,11 @@ pub async fn insert_incident(
 ) -> Result<Uuid, StoreError> {
     let id: Uuid = sqlx::query_scalar(
         "INSERT INTO privacy_incidents (environment_id, sandbox_id, detector, action, severity, \
-            masked_value, value_fingerprint, destination, cloud_delivery) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+            masked_value, value_fingerprint, destination, cloud_delivery, direction, \
+            requested_action, mode, replacement, source, method, path, model, mcp_tool, \
+            conversation_id) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, \
+            $17, $18, $19) \
          RETURNING id",
     )
     .bind(scope.environment_id())
@@ -214,6 +235,16 @@ pub async fn insert_incident(
     .bind(incident.value_fingerprint)
     .bind(incident.destination)
     .bind(incident.cloud_delivery)
+    .bind(incident.direction)
+    .bind(incident.requested_action.as_str())
+    .bind(incident.mode)
+    .bind(incident.replacement)
+    .bind(incident.source.as_str())
+    .bind(incident.method)
+    .bind(incident.path)
+    .bind(incident.model)
+    .bind(incident.mcp_tool)
+    .bind(incident.conversation_id)
     .fetch_one(scope.connection())
     .await?;
     Ok(id)
@@ -244,28 +275,56 @@ pub async fn list_incidents(
 
     let mut incidents = Vec::with_capacity(rows.len());
     for row in rows {
-        let detector: String = row.try_get("detector")?;
-        let detector = Detector::parse(&detector)
-            .ok_or_else(|| StoreError::UnexpectedData(format!("unknown detector: {detector}")))?;
-        let action: String = row.try_get("action")?;
-        let action = IncidentAction::parse(&action).ok_or_else(|| {
-            StoreError::UnexpectedData(format!("unknown incident action: {action}"))
-        })?;
-        incidents.push(PrivacyIncident {
-            id: row.try_get("id")?,
-            environment_id: row.try_get("environment_id")?,
-            sandbox_id: row.try_get("sandbox_id")?,
-            detector,
-            action,
-            severity: row.try_get("severity")?,
-            masked_value: row.try_get("masked_value")?,
-            value_fingerprint: row.try_get("value_fingerprint")?,
-            destination: row.try_get("destination")?,
-            cloud_delivery: row.try_get("cloud_delivery")?,
-            created_at: row.try_get("created_at")?,
-        });
+        incidents.push(incident_from_row(&row)?);
     }
     Ok(incidents)
+}
+
+/// One incident row, mapped to the domain type.
+///
+/// Shared by every reader so a new column is one mapping and not four. A
+/// spelling the code does not know is an error: silently dropping it would make
+/// the log disagree with the policy that produced it.
+fn incident_from_row(row: &sqlx::postgres::PgRow) -> Result<PrivacyIncident, StoreError> {
+    let detector: String = row.try_get("detector")?;
+    let detector = Detector::parse(&detector)
+        .ok_or_else(|| StoreError::UnexpectedData(format!("unknown detector: {detector}")))?;
+    let action: String = row.try_get("action")?;
+    let action = IncidentAction::parse(&action)
+        .ok_or_else(|| StoreError::UnexpectedData(format!("unknown incident action: {action}")))?;
+    let requested: Option<String> = row.try_get("requested_action")?;
+    let requested_action = match requested.as_deref() {
+        Some(value) => Some(IncidentAction::parse(value).ok_or_else(|| {
+            StoreError::UnexpectedData(format!("unknown requested action: {value}"))
+        })?),
+        None => None,
+    };
+    let source: String = row.try_get("source")?;
+    let source = IncidentSource::parse(&source)
+        .ok_or_else(|| StoreError::UnexpectedData(format!("unknown incident source: {source}")))?;
+    Ok(PrivacyIncident {
+        id: row.try_get("id")?,
+        environment_id: row.try_get("environment_id")?,
+        sandbox_id: row.try_get("sandbox_id")?,
+        detector,
+        action,
+        severity: row.try_get("severity")?,
+        masked_value: row.try_get("masked_value")?,
+        value_fingerprint: row.try_get("value_fingerprint")?,
+        destination: row.try_get("destination")?,
+        cloud_delivery: row.try_get("cloud_delivery")?,
+        direction: row.try_get("direction")?,
+        requested_action,
+        mode: row.try_get("mode")?,
+        replacement: row.try_get("replacement")?,
+        source: source.as_str().to_string(),
+        method: row.try_get("method")?,
+        path: row.try_get("path")?,
+        model: row.try_get("model")?,
+        mcp_tool: row.try_get("mcp_tool")?,
+        conversation_id: row.try_get("conversation_id")?,
+        created_at: row.try_get("created_at")?,
+    })
 }
 
 /// Delete this environment's incidents older than `cutoff` and report how many.
@@ -399,59 +458,108 @@ pub struct DlpEvent {
 /// only ever return the excerpt the incident row holds.
 pub async fn dlp_events(
     scope: &mut TenantScope<'_>,
-    sandbox_id: Option<Uuid>,
-    owner: Option<Uuid>,
-    since: DateTime<Utc>,
-    action: Option<&str>,
-    detector: Option<&str>,
-    limit: i64,
+    query: DlpLogQuery<'_>,
 ) -> Result<Vec<DlpEvent>, StoreError> {
-    let statement = format!(
-        "SELECT i.id, i.environment_id, i.sandbox_id, i.detector, i.action, i.severity, \
-                i.masked_value, i.value_fingerprint, i.destination, i.cloud_delivery, \
-                i.created_at, s.name AS sandbox_name \
-           FROM privacy_incidents i JOIN sandboxes s ON s.id = i.sandbox_id \
-          WHERE i.environment_id = $1 AND i.created_at >= $2 \
-            AND ($3::uuid IS NULL OR i.sandbox_id = $3) \
-            AND ($4::uuid IS NULL OR s.owner_user_id = $4) \
-            AND ($5::text IS NULL OR i.action = $5) \
-            AND ($6::text IS NULL OR i.detector = $6) \
-          ORDER BY i.created_at DESC, i.id DESC LIMIT $7"
-    );
-    let rows = sqlx::query(&statement)
+    // Qualified by hand: `id`, `environment_id` and `created_at` exist on both
+    // tables, so an unqualified list would be ambiguous the moment this joins.
+    let statement = "SELECT i.id, i.environment_id, i.sandbox_id, i.detector, i.action, \
+            i.severity, i.masked_value, i.value_fingerprint, i.destination, i.cloud_delivery, \
+            i.direction, i.requested_action, i.mode, i.replacement, i.source, i.method, \
+            i.path, i.model, i.mcp_tool, i.conversation_id, i.created_at, s.name AS sandbox_name \
+       FROM privacy_incidents i JOIN sandboxes s ON s.id = i.sandbox_id \
+      WHERE i.environment_id = $1 AND i.created_at >= $2 \
+        AND ($3::uuid IS NULL OR i.sandbox_id = $3) \
+        AND ($4::uuid IS NULL OR s.owner_user_id = $4) \
+        AND ($5::text IS NULL OR i.action = $5) \
+        AND ($6::text IS NULL OR i.detector = $6) \
+        AND ($7::text IS NULL OR i.direction = $7) \
+        AND ($8::text IS NULL OR i.source = $8) \
+      ORDER BY i.created_at DESC, i.id DESC LIMIT $9";
+    let rows = sqlx::query(statement)
         .bind(scope.environment_id())
-        .bind(since)
+        .bind(query.since)
+        .bind(query.sandbox_id)
+        .bind(query.owner)
+        .bind(query.action)
+        .bind(query.detector)
+        .bind(query.direction)
+        .bind(query.source)
+        .bind(query.limit.clamp(1, 500))
+        .fetch_all(scope.connection())
+        .await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(DlpEvent {
+            sandbox_name: row.try_get("sandbox_name")?,
+            incident: incident_from_row(&row)?,
+        });
+    }
+    Ok(out)
+}
+
+/// The DLP log's filters, so the signature stays readable as it grows.
+pub struct DlpLogQuery<'a> {
+    pub sandbox_id: Option<Uuid>,
+    /// Narrow to one owner's sandboxes. `None` means the whole environment.
+    pub owner: Option<Uuid>,
+    pub since: DateTime<Utc>,
+    pub action: Option<&'a str>,
+    pub detector: Option<&'a str>,
+    pub direction: Option<&'a str>,
+    pub source: Option<&'a str>,
+    pub limit: i64,
+}
+
+/// One entry of the policy history: an audit event about DLP settings.
+#[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
+pub struct DlpChange {
+    pub id: Uuid,
+    pub kind: String,
+    pub actor_label: String,
+    /// `sandbox` or `environment`: which row the change applied to.
+    pub subject_type: Option<String>,
+    pub subject_id: Option<Uuid>,
+    /// The stored detail: the new values, and for a save since migration 0079
+    /// the old ones under `before`.
+    pub detail: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+}
+
+/// The DLP policy history for one sandbox and the default it inherits.
+///
+/// Read from the audit trail rather than a table of its own: a change to the
+/// policy is already an audited act, and a second copy would be a second truth.
+/// A sandbox's own changes are selected by its id; the environment default by
+/// the environment's id with `subject_type = 'environment'`.
+pub async fn dlp_changes(
+    scope: &mut TenantScope<'_>,
+    sandbox_id: Option<Uuid>,
+    environment_id: Uuid,
+    limit: i64,
+) -> Result<Vec<DlpChange>, StoreError> {
+    let statement = "SELECT id, kind, actor_label, subject_type, subject_id, detail, created_at \
+           FROM audit_events \
+          WHERE environment_id = $1 AND kind LIKE 'privacy.%' \
+            AND (($2::uuid IS NOT NULL AND subject_type = 'sandbox' AND subject_id = $2) \
+                 OR subject_type = 'environment' AND subject_id = $3) \
+          ORDER BY created_at DESC, id DESC LIMIT $4";
+    let rows = sqlx::query(statement)
+        .bind(environment_id)
         .bind(sandbox_id)
-        .bind(owner)
-        .bind(action)
-        .bind(detector)
+        .bind(environment_id)
         .bind(limit.clamp(1, 500))
         .fetch_all(scope.connection())
         .await?;
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
-        let detector: String = row.try_get("detector")?;
-        let detector = Detector::parse(&detector)
-            .ok_or_else(|| StoreError::UnexpectedData(format!("unknown detector: {detector}")))?;
-        let action: String = row.try_get("action")?;
-        let action = IncidentAction::parse(&action).ok_or_else(|| {
-            StoreError::UnexpectedData(format!("unknown incident action: {action}"))
-        })?;
-        out.push(DlpEvent {
-            sandbox_name: row.try_get("sandbox_name")?,
-            incident: PrivacyIncident {
-                id: row.try_get("id")?,
-                environment_id: row.try_get("environment_id")?,
-                sandbox_id: row.try_get("sandbox_id")?,
-                detector,
-                action,
-                severity: row.try_get("severity")?,
-                masked_value: row.try_get("masked_value")?,
-                value_fingerprint: row.try_get("value_fingerprint")?,
-                destination: row.try_get("destination")?,
-                cloud_delivery: row.try_get("cloud_delivery")?,
-                created_at: row.try_get("created_at")?,
-            },
+        out.push(DlpChange {
+            id: row.try_get("id")?,
+            kind: row.try_get("kind")?,
+            actor_label: row.try_get("actor_label")?,
+            subject_type: row.try_get("subject_type")?,
+            subject_id: row.try_get("subject_id")?,
+            detail: row.try_get("detail")?,
+            created_at: row.try_get("created_at")?,
         });
     }
     Ok(out)
