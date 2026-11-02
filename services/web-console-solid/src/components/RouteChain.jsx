@@ -3,6 +3,15 @@
 import { For, Show } from 'solid-js';
 import '../styles/dlp.css';
 
+const STATE_PREFIX = { would: 'hätte: ' };
+
+/**
+ * Draw a route as pills joined by arrows.
+ *
+ * `state` is `passed` (normal), `blocked` (stopped here, red and crossed) or
+ * `would` (dashed and grey, for a path a policy would have allowed). `detail`
+ * becomes the tooltip, and `compact` shrinks the chain for a chat bubble.
+ */
 export default function RouteChain(props) {
   const hops = () => props.route || [];
   return (
@@ -12,14 +21,23 @@ export default function RouteChain(props) {
           {(hop, index) => (
             <>
               <Show when={index() > 0}>
-                <span class="route-arrow">→</span>
+                <span class="route-arrow" aria-hidden="true">
+                  →
+                </span>
               </Show>
               <span
                 class={`route-pill ${hop.state || 'passed'}`}
-                title={hop.detail || ''}
+                title={hop.detail || hop.label || ''}
+                data-state={hop.state || 'passed'}
               >
-                {hop.state === 'would' ? 'hätte: ' : ''}
+                {STATE_PREFIX[hop.state] || ''}
                 {hop.label}
+                <Show when={hop.state === 'blocked'}>
+                  <span class="route-x" aria-label="blockiert">
+                    {' '}
+                    ✕
+                  </span>
+                </Show>
               </span>
             </>
           )}
