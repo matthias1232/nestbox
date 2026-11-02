@@ -168,6 +168,30 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_list_has_no_match() {
+        let key = FindingKey {
+            sandbox_id: Uuid::new_v4(),
+            detector: Detector::Iban,
+            fingerprint: FINGERPRINT,
+            destination: None,
+        };
+        assert!(best_match(&[], &key, Utc::now()).is_none());
+    }
+
+    #[test]
+    fn a_named_destination_must_ignore_the_port_and_the_case() {
+        let sandbox = Uuid::new_v4();
+        let named = exception(Some(sandbox), None, Some("API.Example.com"), 0);
+        let key = FindingKey {
+            sandbox_id: sandbox,
+            detector: Detector::Iban,
+            fingerprint: FINGERPRINT,
+            destination: Some("api.example.com:443"),
+        };
+        assert!(best_match(&[named], &key, Utc::now()).is_some());
+    }
+
+    #[test]
     fn an_expired_exception_does_not_count() {
         let sandbox = Uuid::new_v4();
         let mut expired = exception(Some(sandbox), Some(FINGERPRINT), None, 0);
