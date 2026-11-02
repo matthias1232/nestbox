@@ -36,6 +36,13 @@
 .stack-cards .card.bad { border-left: 3px solid var(--bad); }
 .stack-cards .card.muted { border-left: 3px solid var(--fg-faint); }
 .stack-cards .card.kind-absent { border-style: dashed; background: transparent; }
+/* A card whose host just did something. Opacity only, so a pulse shows on a card
+   that is already green or red without changing what the colour says. */
+@keyframes stack-pulse { 0% { opacity: 1; } 50% { opacity: .4; } 100% { opacity: 1; } }
+.stack-cards .card.pulse { animation: stack-pulse 600ms ease-in-out; }
+@media (prefers-reduced-motion: reduce) {
+  .stack-cards .card.pulse { animation: none; }
+}
 .card-name { font-size: 12px; font-weight: 600; word-break: break-all; }
 .card-state { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--fg-muted); }
 

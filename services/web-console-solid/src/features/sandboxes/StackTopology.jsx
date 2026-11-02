@@ -9,7 +9,10 @@
 // Every card is a button. Selecting one lights its connections, and the panel
 // below shows what it is, its facts, how to open it (when it has an address) and
 // its log, read through the same viewer wherever it comes from.
-
+//
+// The optional `pulse` prop is a set of hosts that just did something; those
+// cards flash for a moment (see `TopologyPanel`). Without it the diagram is
+// exactly as it was.
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 import * as sandboxApi from '../../api/sandboxes.js';
 import * as systemApi from '../../api/system.js';
@@ -20,6 +23,16 @@ import '../../styles/stack-topology.css';
 const POLL_MS = 5000;
 const WINDOWS = ['1m', '5m', '15m', '1h'];
 const STATUS_WORD = { ok: 'ok', warn: 'attention', error: 'failing', idle: 'stopped', unknown: 'unknown', absent: 'not there' };
+
+// The host a card stands for. A destination card is named `host:port`, which is
+// what the reader wants to see; a pulse names the host alone, so the port is cut
+// off here and nowhere else.
+function pulseHost(node) {
+  const name = String(node?.name || '');
+  if (node?.kind !== 'destination') return name;
+  const cut = name.lastIndexOf(':');
+  return cut > 0 ? name.slice(0, cut) : name;
+}
 
 async function copy(text) {
   try {
@@ -205,7 +218,7 @@ export default function StackTopology(props) {
                               cards.set(item.id, element);
                               onCleanup(() => cards.delete(item.id));
                             }}
-                            class={`card ${tone(item.status)} ${selected() === item.id ? 'selected' : ''} kind-${item.kind}`}
+                            class={`card ${tone(item.status)} ${selected() === item.id ? 'selected' : ''} kind-${item.kind}${props.pulse?.has?.(pulseHost(item)) ? ' pulse' : ''}`}
                             onClick={() => setSelected(item.id)}
                             title={item.description}
                           >
