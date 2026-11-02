@@ -26,6 +26,17 @@ export default function UsageView(props) {
   const peak = () => Math.max(1, ...rows().map((row) => row.prompt_tokens + row.completion_tokens));
   const groups = () => (props.sandboxId ? GROUPS.filter((item) => item.id !== 'sandbox') : GROUPS);
 
+  // The price list sits at the bottom of this view, folded away. A row without a
+  // price opens it and brings it into sight; there is nowhere to jump inside a
+  // sandbox tab, where the list is not rendered at all.
+  function jumpToPrices() {
+    const target = document.getElementById('usage-price-list');
+    if (!target) return;
+    const details = target.querySelector('details');
+    if (details) details.open = true;
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   return (
     <section class="tab-panel">
       <div class="controls">
@@ -67,11 +78,11 @@ export default function UsageView(props) {
               <th>{GROUPS.find((item) => item.id === group())?.label}</th>
               <th class="num">Calls</th><th class="num">Read</th><th class="num">Written</th>
               <th class="num">Cache reads</th><th class="num">Cache writes</th><th>Cache hit</th>
-              <th class="num">API-key spend</th><th class="num">Account (est.)</th><th></th>
+              <th class="num">API-key spend</th><th class="num">Account (est.)</th><th>Price</th><th></th>
             </tr>
           </thead>
           <tbody>
-            <For each={rows()} fallback={<tr><td colspan="10" class="muted small">No model call with counters in this window. Counters come from the proxy reading the answers, so the sandbox needs an inspecting egress mode (transparent or hybrid), or its agent must use the accounting proxy.</td></tr>}>
+            <For each={rows()} fallback={<tr><td colspan="11" class="muted small">No model call with counters in this window. Counters come from the proxy reading the answers, so the sandbox needs an inspecting egress mode (transparent or hybrid), or its agent must use the accounting proxy.</td></tr>}>
               {(row) => (
                 <tr>
                   <td class="mono small">{keyLabel(group(), row.key)}</td>
@@ -90,6 +101,18 @@ export default function UsageView(props) {
                   </td>
                   <td class="num">{money(row.cost_micros)}</td>
                   <td class="num muted">{money(row.estimated_cost_micros)}</td>
+                  <td class="small">
+                    <Show when={row.unpriced_requests > 0}>
+                      <span class="badge warn" title={`${row.unpriced_requests} calls in this row have no price`}>
+                        kein Preis
+                      </span>
+                      <Show when={!props.sandboxId}>
+                        <button class="tiny secondary" style="margin-left:.4rem" onClick={jumpToPrices}>
+                          Preise
+                        </button>
+                      </Show>
+                    </Show>
+                  </td>
                   <td style="width:90px"><div style={`height:6px;border-radius:3px;background:var(--chart-1, #60a5fa);width:${Math.max(2, Math.round(((row.prompt_tokens + row.completion_tokens) / peak()) * 100))}%`} /></td>
                 </tr>
               )}
@@ -97,7 +120,11 @@ export default function UsageView(props) {
           </tbody>
         </table>
       </div>
-      <Show when={!props.sandboxId}><PriceList onChanged={poll.refresh} /></Show>
+      <Show when={!props.sandboxId}>
+        <div id="usage-price-list">
+          <PriceList onChanged={poll.refresh} />
+        </div>
+      </Show>
       <p class="muted small">
         Read = everything the model read (fresh input + cache reads + cache writes). Spend is only for calls
         made with an API key; a signed-in account (Claude, Codex) is shown as an estimate at list price and is

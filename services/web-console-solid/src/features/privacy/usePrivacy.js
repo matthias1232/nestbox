@@ -40,6 +40,11 @@ function draftFrom(settings) {
     detectors: [...(settings?.detectors || [])],
     actions: { ...(settings?.actions || {}) },
     block_cloud_egress: Boolean(settings?.block_cloud_egress),
+    // An absent value means the built-in policy: owners may not grant
+    // exceptions, and an administrator may read the chats. Both are the
+    // server's defaults, not a guess about the row.
+    owners_may_grant_exceptions: Boolean(settings?.owners_may_grant_exceptions),
+    admin_chat_view: settings?.admin_chat_view == null ? true : Boolean(settings.admin_chat_view),
     retention_days: Number.isFinite(settings?.retention_days) ? settings.retention_days : 30,
     enforce_hosts: [...(settings?.enforce_hosts || [])],
   };
@@ -130,6 +135,12 @@ export function usePrivacy() {
   const setBlockCloudEgress = (value) =>
     setDraft({ ...draft(), block_cloud_egress: Boolean(value) });
 
+  const setOwnersMayGrantExceptions = (value) =>
+    setDraft({ ...draft(), owners_may_grant_exceptions: Boolean(value) });
+
+  const setAdminChatView = (value) =>
+    setDraft({ ...draft(), admin_chat_view: Boolean(value) });
+
   const setRetentionDays = (value) => setDraft({ ...draft(), retention_days: value });
   // One host per line, blank lines dropped: the server checks the shape.
   const setEnforceHosts = (value) =>
@@ -167,6 +178,8 @@ export function usePrivacy() {
         detectors: draft().detectors,
         actions: draft().actions,
         block_cloud_egress: draft().block_cloud_egress,
+        owners_may_grant_exceptions: draft().owners_may_grant_exceptions,
+        admin_chat_view: draft().admin_chat_view,
         retention_days: Number(draft().retention_days),
         enforce_hosts: draft().enforce_hosts,
       };
@@ -268,6 +281,8 @@ export function usePrivacy() {
     toggleDetector,
     setAction,
     setBlockCloudEgress,
+    setOwnersMayGrantExceptions,
+    setAdminChatView,
     setRetentionDays,
     actionFor,
     save,

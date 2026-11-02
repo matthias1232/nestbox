@@ -3,6 +3,8 @@
 import { For, Show, createSignal } from 'solid-js';
 import * as deck from '../../api/deck.js';
 import * as policies from '../../api/policies.js';
+import Countdown from '../../components/Countdown.jsx';
+import QuickAllow, { grantedText } from '../../components/QuickAllow.jsx';
 import StatusBadge from '../../components/StatusBadge.jsx';
 import { usePolling } from '../../components/Poll.js';
 
@@ -15,9 +17,22 @@ export default function TrafficTab(props) {
   const [error, setError] = createSignal(null);
   const [message, setMessage] = createSignal(null);
   const [undo, setUndo] = createSignal(null);
+  const [quick, setQuick] = createSignal([]);
+  const [quickError, setQuickError] = createSignal(null);
   const poll = usePolling(
     () => deck.traffic(props.sandbox.id, { window: windowSpan(), filter: filter(), limit: 100 }),
     { everyMs: 4000, onData: (d) => { setData(d); setError(null); }, onError: (e) => setError(e.message) },
+  );
+
+  // The rules that still have time on them. Their list is polled slower than the
+  // traffic: a countdown ticks itself, and a new rule arrives with a click.
+  const quickPoll = usePolling(
+    () => policies.quickAllowList(props.sandbox.id),
+    {
+      everyMs: 30000,
+      onData: (d) => { setQuick(Array.isArray(d) ? d : d?.items || []); setQuickError(null); },
+      onError: (e) => setQuickError(e.message),
+    },
   );
 
   // One click: the rule is created enabled and the decider reads it on its next
@@ -51,6 +66,16 @@ export default function TrafficTab(props) {
     }
   }
 
+  // A quick allow is an ordinary rule with an end, so the list of windows and the
+  // traffic both learn about it at once. The line at the top keeps the answer
+  // visible after the row it came from was redrawn by the next poll.
+  function quickAllowed(rule) {
+    setUndo(null);
+    setMessage(grantedText(rule));
+    quickPoll.refresh();
+    poll.refresh();
+  }
+
   const s = () => data()?.summary;
   return (
     <section class="tab-panel">
@@ -68,6 +93,20 @@ export default function TrafficTab(props) {
       </div>
       <Show when={error()}><p class="error">{error()}</p></Show>
       <Show when={message()}><p class="notice">{message()} <Show when={undo()}><button class="tiny secondary" onClick={revert}>Undo</button></Show></p></Show>
+      <Show when={quick().length}>
+        <div class="controls" style="flex-wrap:wrap">
+          <span class="muted small">Befristete Freigaben</span>
+          <For each={quick()}>
+            {(rule) => (
+              <span class="badge info" title="Wird beim Ablauf automatisch entfernt">
+                <span class="mono">{rule.host}{rule.port ? `:${rule.port}` : ''}</span>
+                <Countdown until={rule.expires_at} onExpire={() => quickPoll.refresh()} />
+              </span>
+            )}
+          </For>
+        </div>
+      </Show>
+      <Show when={quickError()}><p class="error small">{quickError()}</p></Show>
       <Show when={(data()?.items || []).length} fallback={<p class="muted">No request in this window. Run something in the sandbox that reaches the network and it appears here within seconds.</p>}>
         <div class="table-scroll">
           <table class="dense">
@@ -83,7 +122,20 @@ export default function TrafficTab(props) {
                     <td class="mono small">{e.status ?? '—'}</td>
                     <td>{dlpBadge(e.dlp)}</td>
                     <td class="small muted">{e.reason}</td>
-                    <td><Show when={e.decision === 'deny'}><button class="tiny primary" onClick={() => allow(e)}>Allow</button> <button class="tiny secondary" title="Allow this host on every port" onClick={() => allow(e, true)}>any port</button></Show></td>
+                    <td>
+                      <Show when={e.decision === 'deny'}>
+                        <div class="controls" style="flex-wrap:wrap">
+                          <button class="tiny primary" onClick={() => allow(e)}>Allow</button>
+                          <button class="tiny secondary" title="Allow this host on every port" onClick={() => allow(e, true)}>any port</button>
+                          <QuickAllow
+                            sandboxId={props.sandbox.id}
+                            host={e.host}
+                            port={e.port}
+                            onDone={quickAllowed}
+                          />
+                        </div>
+                      </Show>
+                    </td>
                   </tr>
                 )}
               </For>
