@@ -156,6 +156,7 @@ func (c *dlpClient) apply(w http.ResponseWriter, r *http.Request, mode string) (
 	if r.Body == nil {
 		return false
 	}
+	log.Printf("egress-dlp: entered %s %s ct=%q len=%d sandbox=%q", r.Method, r.Host, r.Header.Get("content-type"), r.ContentLength, r.Header.Get("x-nestbox-sandbox"))
 	switch r.Method {
 	case http.MethodPost, http.MethodPut, http.MethodPatch:
 	default:
