@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The hop must do exactly three things with an answer from the control API:
@@ -165,5 +166,137 @@ func TestDlpIgnoresWhatItMustNotRead(t *testing.T) {
 	}
 	if len(*seen) != 0 {
 		t.Fatalf("the control API was asked about %d bodies it should not see", len(*seen))
+	}
+}
+
+func TestDlpSendsTheRequestRef(t *testing.T) {
+	client, seen := dlpTestClient(t, `{"permitted":true,"action":"allowed"}`)
+	request := inspectRequest(`{"a":1}`, "application/json")
+	request.Header.Set("x-request-id", "req_abc123")
+	client.apply(httptest.NewRecorder(), request)
+	if len(*seen) != 1 {
+		t.Fatalf("the control API was asked %d times, want 1", len(*seen))
+	}
+	// Without the ref the console cannot tie the body check to the turn the
+	// client asked for, and the check looks like an orphan row.
+	if !strings.Contains((*seen)[0], `"request_ref":"req_abc123"`) {
+		t.Fatalf("the check did not carry the request ref: %s", (*seen)[0])
+	}
+}
+
+func TestDlpForwardsARecordedDestinationWhenTheCheckGoesDown(t *testing.T) {
+	const sandbox = "22222222-2222-2222-2222-222222222222"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		// The policy enforces here in general, but this destination is only
+		// recorded: the hop never had the right to stop it.
+		_, _ = io.WriteString(w, `{"permitted":true,"action":"allowed","mode":"strict","enforcement":"record_only"}`)
+	}))
+	t.Cleanup(server.Close)
+	client := &dlpClient{url: server.URL, nodeID: "n", token: "t", client: server.Client()}
+
+	if client.apply(httptest.NewRecorder(), inspectRequest(`{"a":1}`, "application/json")) {
+		t.Fatal("an allowed body is forwarded")
+	}
+
+	// The control API goes away.
+	client.url = "http://127.0.0.1:1"
+	client.client = &http.Client{}
+
+	if client.apply(httptest.NewRecorder(), inspectRequest(`{"a":2}`, "application/json")) {
+		t.Fatalf("a destination that was only recorded must not be refused by an outage (sandbox %s)", sandbox)
+	}
+
+	// A destination that was never recorded has no such standing, even though
+	// the mode is the same: the outage may not become a way around it.
+	other := inspectRequest(`{"a":3}`, "application/json")
+	other.Host = "api.example.com"
+	recorder := httptest.NewRecorder()
+	if !client.apply(recorder, other) {
+		t.Fatal("a destination that was never recorded must be refused when the check cannot answer")
+	}
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status %d, want 503", recorder.Code)
+	}
+}
+
+func TestDlpDropsAcceptEncodingWhenTheAnswerCarriesPlaceholders(t *testing.T) {
+	client, _ := dlpTestClient(t, `{"permitted":true,"action":"allowed","findings":[],"restore":[{"placeholder":"<IBAN_1>","value":"DE89370400440532013000"}]}`)
+	request := inspectRequest(`{"messages":"<IBAN_1>"}`, "application/json")
+	request.Header.Set("Accept-Encoding", "gzip, br")
+	if client.apply(httptest.NewRecorder(), request) {
+		t.Fatal("an allowed body is forwarded")
+	}
+	// restore.go walks the answer; a compressed answer is opaque there and the
+	// placeholder would reach the sandbox instead of the value it stands for.
+	if got := request.Header.Get("Accept-Encoding"); got != "" {
+		t.Fatalf("the request still asks for %q", got)
+	}
+}
+
+func TestDlpKeepsCompressionWhenThereIsNothingToRestore(t *testing.T) {
+	client, _ := dlpTestClient(t, `{"permitted":true,"action":"allowed","findings":[]}`)
+	request := inspectRequest(`{"a":1}`, "application/json")
+	request.Header.Set("Accept-Encoding", "gzip")
+	if client.apply(httptest.NewRecorder(), request) {
+		t.Fatal("an allowed body is forwarded")
+	}
+	if got := request.Header.Get("Accept-Encoding"); got != "gzip" {
+		t.Fatalf("compression was turned off for a body with nothing to restore: %q", got)
+	}
+}
+
+func TestDlpReportsARefusalWithoutAFinding(t *testing.T) {
+	reports := make(chan string, 4)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if r.URL.Path == "/api/v1/internal/privacy/refusal" {
+			// Same credential as the body check: one identity, one rotation.
+			if r.Header.Get("x-nestbox-node") == "" || !strings.HasPrefix(r.Header.Get("authorization"), "Bearer ") {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			reports <- string(body)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = io.WriteString(w, `{"permitted":true,"action":"allowed"}`)
+	}))
+	t.Cleanup(server.Close)
+	client := &dlpClient{url: server.URL, nodeID: "n", token: "t", client: server.Client()}
+
+	request := inspectRequest(`{"a":1}`, "application/json")
+	// "localhost" keeps the "would have reached" lookup off the internet.
+	request.Host = "localhost"
+	request.ContentLength = maxInspectedBody + 1
+	request.Header.Set("x-request-id", "req_413")
+	recorder := httptest.NewRecorder()
+	if !client.apply(recorder, request) {
+		t.Fatal("a body over the limit must not be forwarded unchecked")
+	}
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status %d, want 413", recorder.Code)
+	}
+	if got := recorder.Header().Get(upstreamWouldHeader); got == "" {
+		t.Fatal("the refusal does not say which address the request would have reached")
+	}
+
+	select {
+	case body := <-reports:
+		for _, want := range []string{
+			`"kind":"too_large"`,
+			`"sandbox_id":"22222222-2222-2222-2222-222222222222"`,
+			`"destination":"localhost"`,
+			`"method":"POST"`,
+			`"path":"/v1/messages"`,
+			`"request_ref":"req_413"`,
+		} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("the refusal report does not carry %s: %s", want, body)
+			}
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the refusal was not reported; the console would show a gap where a refusal was")
 	}
 }
