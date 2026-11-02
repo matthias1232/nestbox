@@ -893,3 +893,5 @@ mod runtime_choice_tests {
         assert_eq!(runtime_choice(false, "forward_proxy"), "docker-development");
     }
 }
+
+// (rebuild marker: the runtime is chosen per egress mode)
