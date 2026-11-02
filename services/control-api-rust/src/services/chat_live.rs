@@ -14,6 +14,7 @@ use serde::Deserialize;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use crate::domain::telemetry::LiveEvent;
 use crate::error::ApiError;
 use crate::services::ServiceContext;
 
@@ -69,9 +70,104 @@ pub fn should_publish(last: Option<Instant>, now: Instant, done: bool) -> bool {
 }
 
 /// Accept one report, mask it and publish it.
+///
+/// A report is untrusted in one respect: it carries text. The text is masked here,
+/// with the same policy the request will be checked against, so a live viewer
+/// cannot see more than the provider did.
 pub async fn accept(ctx: &ServiceContext, chunk: LiveChunk) -> Result<(), ApiError> {
-    let _ = (ctx, chunk);
+    let reference = chunk.request_ref.trim();
+    if reference.is_empty() || reference.chars().count() > 100 {
+        return Err(ApiError::validation(
+            "request_ref must be 1 to 100 characters.",
+        ));
+    }
+    let environment = match crate::store::postgres::egress::sandbox_environment(
+        &ctx.pool,
+        chunk.sandbox_id,
+    )
+    .await
+    .map_err(ApiError::from)?
+    {
+        Some(environment) => environment,
+        None => {
+            return Err(ApiError::not_found(
+                crate::error::ErrorCode::NOT_FOUND,
+                "No such sandbox in this environment.",
+            ))
+        }
+    };
+
+    if let Some(start) = &chunk.started {
+        let user_text = mask(ctx, environment, chunk.sandbox_id, &start.user_text).await;
+        ctx.bus.publish(LiveEvent::ChatStarted {
+            environment_id: environment,
+            sandbox_id: chunk.sandbox_id,
+            request_ref: reference.to_string(),
+            ts: chrono::Utc::now(),
+            model: start.model.clone(),
+            host: start.host.clone(),
+            provider: crate::domain::chat_turn::provider_for(
+                start.host.as_deref().unwrap_or_default(),
+            )
+            .to_string(),
+            account_kind: start.account_kind.clone(),
+            dlp: None,
+            delivered: true,
+            user_text,
+        });
+    }
+
+    let now = Instant::now();
+    let previous = {
+        let mut guard = match last_report().lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard.retain(|_, at| now.duration_since(*at) < FORGET);
+        let previous = guard.get(reference).copied();
+        if should_publish(previous, now, chunk.done) || chunk.started.is_some() {
+            guard.insert(reference.to_string(), now);
+            if chunk.done {
+                guard.remove(reference);
+            }
+            previous
+        } else {
+            return Ok(());
+        }
+    };
+    let _ = previous;
+
+    let text = mask(ctx, environment, chunk.sandbox_id, &chunk.text_so_far).await;
+    ctx.bus.publish(LiveEvent::ChatDelta {
+        environment_id: environment,
+        sandbox_id: chunk.sandbox_id,
+        request_ref: reference.to_string(),
+        text_so_far: crate::domain::chat_turn::truncate_chars(&text, LIVE_TEXT_MAX),
+        input_tokens: chunk.input_tokens,
+        output_tokens: chunk.output_tokens,
+        done: chunk.done,
+    });
     Ok(())
+}
+
+/// Mask a live text with the sandbox's own policy.
+///
+/// A failure returns the text empty rather than raw: a live view that cannot be
+/// masked must show nothing, not everything.
+async fn mask(ctx: &ServiceContext, environment: Uuid, sandbox_id: Uuid, text: &str) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    match crate::services::privacy_service::scrub_batch(
+        ctx,
+        environment,
+        &[(sandbox_id, text.to_string())],
+    )
+    .await
+    {
+        Ok(mut masked) if !masked.is_empty() => masked.remove(0),
+        _ => String::new(),
+    }
 }
 
 /// Longest answer text a report may carry.
@@ -82,4 +178,23 @@ pub(crate) fn live_text_max() -> usize {
 /// Longest user text a start report may carry.
 pub(crate) fn live_user_max() -> usize {
     LIVE_USER_MAX
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_first_report_goes_out_immediately() {
+        assert!(should_publish(None, Instant::now(), false));
+    }
+
+    #[test]
+    fn a_burst_is_throttled_but_the_last_report_is_not() {
+        let start = Instant::now();
+        assert!(!should_publish(Some(start), start + Duration::from_millis(50), false));
+        assert!(should_publish(Some(start), start + Duration::from_millis(300), false));
+        // `done` is always published, however soon it follows.
+        assert!(should_publish(Some(start), start + Duration::from_millis(1), true));
+    }
 }
