@@ -310,7 +310,7 @@ fn turn_from_row(row: &sqlx::postgres::PgRow) -> Result<ChatTurn, StoreError> {
 const INCIDENT_COLUMNS: &str = "id, environment_id, sandbox_id, detector, action, severity, \
     masked_value, value_fingerprint, destination, cloud_delivery, direction, requested_action, \
     mode, replacement, source, method, path, model, mcp_tool, conversation_id, occurrences, \
-    last_seen_at, created_at";
+    last_seen_at, request_ref, exception_id, created_at";
 
 /// The findings recorded for one request, newest first.
 ///
@@ -376,6 +376,8 @@ fn incident_from_row(row: &sqlx::postgres::PgRow) -> Result<PrivacyIncident, Sto
         conversation_id: row.try_get("conversation_id")?,
         occurrences: row.try_get("occurrences")?,
         last_seen_at: row.try_get("last_seen_at")?,
+        request_ref: row.try_get("request_ref").ok().flatten(),
+        exception_id: row.try_get("exception_id").ok().flatten(),
         created_at: row.try_get("created_at")?,
     })
 }
