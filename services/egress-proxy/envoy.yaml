@@ -234,6 +234,15 @@ static_resources:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
                       default_source_code:
                         filename: /tmp/mcp.lua
+                  # Second, tiny Lua filter: it turns the tunnel decision the
+                  # first one fetched into a header while the headers can still
+                  # be continued, which is the only moment Envoy re-resolves the
+                  # route (see extensions/route.lua).
+                  - name: envoy.filters.http.lua
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+                      default_source_code:
+                        filename: /tmp/route.lua
                   - name: envoy.filters.http.ext_authz
                     typed_config:
                       "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz

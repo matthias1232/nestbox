@@ -387,21 +387,18 @@ local function check_tunnel(handle, authority, source_address)
       meta:set("envoy.filters.http.ext_authz", name, value)
     end
   end
-  -- `transparent` and `hybrid` mean this sandbox may have its TLS read. Mark the
-  -- request so the route with the terminating cluster matches; every other value
-  -- (including a proxy that does not know the header) stays a blind tunnel.
-  -- `replace`, not `add`: a client must not be able to force inspection on itself
-  -- by sending the header, because that would only break its own TLS.
+  -- `transparent` and `hybrid` mean this sandbox may have its TLS read. The
+  -- answer is handed to the next filter as metadata, not written here: a header
+  -- mutation made after this filter's `httpCall` does not clear the route cache,
+  -- so the route would stay the one chosen for the request as it arrived. The
+  -- filter in `route.lua` mutates the header while the headers are still
+  -- continuable, which is what makes Envoy re-resolve the route.
   local mode = response_headers["x-nestbox-egress-mode"]
-  if mode == "transparent" or mode == "hybrid" then
-    handle:headers():replace("x-nestbox-inspect", "1")
-  else
-    handle:headers():replace("x-nestbox-inspect", "0")
-  end
-  -- The route depends on the header we just set: the route was chosen before
-  -- this filter ran, so without clearing the cache the inspection route (or the
-  -- plain tunnel) chosen for the request as it arrived is the one that is used.
-  handle:clearRouteCache()
+  handle:streamInfo():dynamicMetadata():set(
+    "nestbox_route",
+    "inspect",
+    (mode == "transparent" or mode == "hybrid") and "1" or "0"
+  )
   if response_headers[":status"] ~= "200" then
     handle:respond(
       { [":status"] = "403", ["x-nestbox-decision"] = response_headers["x-nestbox-decision"] or "deny" },
@@ -420,6 +417,7 @@ function envoy_on_request(handle)
   request_headers:remove("x-nestbox-node")
   request_headers:remove("x-nestbox-node-token")
   request_headers:remove("x-nestbox-source-ip")
+  request_headers:remove("x-nestbox-inspect")
   -- The restored address when a PROXY header gave one (the decrypted hop from
   -- the certificate broker), the socket's own address otherwise.
   local info = handle:streamInfo()
