@@ -42,6 +42,30 @@ requests are inspected — a streamed answer cannot be rewritten mid-stream. The
 sandbox id and the egress mode reach this process as upstream headers that Envoy
 copied out of the policy answer; a client cannot set them.
 
+### What the console learns about the far end (`NESTBOX_ROUTER_HEADERS`)
+
+`mitm/meta.go` adds the address a request actually reached to the answer
+(`x-nestbox-upstream-ip`), taken from the connection the transport opened and not
+from the name in the `Host` header: a routing proxy makes the two differ, and the
+console must show the address that was used. A refused request has no connection,
+so `x-nestbox-upstream-ip-would` carries the first address the name resolves to,
+looked up with a 1 s deadline and cached for 5 minutes. That field says "would
+have reached" and never "reached".
+
+When the sandbox sends its traffic through an LLM router, the router names the
+provider and the model in headers of its own. `NESTBOX_ROUTER_HEADERS` names
+them, comma separated, provider first and model second — for example
+`x-omniroute-provider,x-omniroute-model`. Their values are copied to
+`x-nestbox-router-provider` and `x-nestbox-router-model`, and only when the
+router sent one. Unset or empty writes nothing, which is the truth for a direct
+connection: an empty header would read as "the router was asked and did not
+answer", a different fact.
+
+A refusal this hop writes itself (`unavailable`, `too_large`) is reported to the
+control API in the background, because the control API never saw that request and
+the console would otherwise show a gap where a refusal was. A `blocked` refusal
+is not reported twice: the control API wrote it, together with its findings.
+
 ## Update (ADR 0034)
 
 The default HTTPS path is a *decided tunnel*, not the broker described below: the
@@ -95,6 +119,8 @@ Two decisions were made here that are easy to get wrong:
 | `extensions/mcp.lua` | Recognise JSON-RPC MCP on request and response; never rewrite a body |
 | `mitm/main.go` | Sign a leaf per SNI, terminate TLS, forward to the inner listener |
 | `mitm/restore.go` | Turn pseudonymised placeholders back into their values in the answer, for JSON and for server-sent events |
+| `mitm/meta_test.go` | The upstream address from the connection trace, the `x-nestbox-upstream-ip-would` lookup, and the router headers |
+| `mitm/livetap_test.go` | The live reader: the sandbox gets the same bytes, the control API gets the text so far |
 | `mitm/main_test.go` | The certificate tests: host SAN, CA signature, cache |
 | `start-egress-proxy.sh` | Start the broker, then `exec envoy` so Envoy stays PID 1 |
 

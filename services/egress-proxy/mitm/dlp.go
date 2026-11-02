@@ -65,6 +65,10 @@ type dlpClient struct {
 	// when the check cannot answer: `observe` may let a body through, and a mode
 	// nobody has seen may not.
 	modes sync.Map
+	// The last enforcement the control API reported, per sandbox and
+	// destination. A destination that is only recorded cannot be refused by an
+	// outage either: the policy never asked this hop to stop it.
+	hosts sync.Map
 }
 
 // newDlpClientFromEnv builds the client from the proxy's own identity.
@@ -109,6 +113,9 @@ type dlpRequest struct {
 	Model          string `json:"model,omitempty"`
 	McpTool        string `json:"mcp_tool,omitempty"`
 	ConversationID string `json:"conversation_id,omitempty"`
+	// The id the caller gave this request, so the console can tie the body
+	// check, the live stream and the refusal report to one row.
+	RequestRef string `json:"request_ref,omitempty"`
 }
 
 // dlpFinding is what the console lists: kind, masked excerpt, what happened.
@@ -128,6 +135,10 @@ type dlpVerdict struct {
 	// The policy mode that answered, so this hop can fall back to the same
 	// decision when it cannot ask.
 	Mode string `json:"mode"`
+	// What the policy did with this destination and this body:
+	// `record_only` and `exempt` mean nothing was to be stopped here, so an
+	// outage may not start stopping it.
+	Enforcement string `json:"enforcement"`
 	// Placeholders to turn back into their values on the way out, for
 	// `pseudonymize`. Only the answer of this request carries them.
 	Restore []restorePair `json:"restore"`
@@ -199,12 +210,23 @@ func (c *dlpClient) apply(w http.ResponseWriter, r *http.Request) (handled bool)
 		log.Printf("egress-dlp: %s %s: no sandbox in the request; body not checked", r.Method, r.Host)
 		return false
 	}
+	// Everything the check, the refusal report and the console need about this
+	// request is gathered once, before the body is touched: a body that is
+	// refused for its size never gets a Content field.
+	body := dlpRequest{
+		SandboxID:   sandboxID,
+		Destination: r.Host,
+		Source:      "egress",
+		Method:      r.Method,
+		Path:        r.URL.Path,
+		RequestRef:  strings.TrimSpace(r.Header.Get("x-request-id")),
+	}
 	if r.ContentLength > maxInspectedBody {
-		return c.refuseOversize(w, r, sandboxID)
+		return c.refuseOversize(w, r, body)
 	}
 	original, err := io.ReadAll(io.LimitReader(r.Body, maxInspectedBody+1))
 	if err != nil {
-		return c.refuseUnavailable(w, r, sandboxID, err)
+		return c.refuseUnavailable(w, r, body, err)
 	}
 	_ = r.Body.Close()
 	if len(original) == 0 {
@@ -212,18 +234,11 @@ func (c *dlpClient) apply(w http.ResponseWriter, r *http.Request) (handled bool)
 		return false
 	}
 	if len(original) > maxInspectedBody {
-		return c.refuseOversize(w, r, sandboxID)
+		return c.refuseOversize(w, r, body)
 	}
 	r.Body = io.NopCloser(bytes.NewReader(original))
 
-	body := dlpRequest{
-		SandboxID:   sandboxID,
-		Content:     string(original),
-		Destination: r.Host,
-		Source:      "egress",
-		Method:      r.Method,
-		Path:        r.URL.Path,
-	}
+	body.Content = string(original)
 	text := string(original)
 	body.Model = jsonField(text, modelPattern)
 	body.ConversationID = jsonField(text, conversationPattern)
@@ -237,15 +252,17 @@ func (c *dlpClient) apply(w http.ResponseWriter, r *http.Request) (handled bool)
 	verdict, err := c.inspect(ctx, body)
 	if err == nil {
 		c.modes.Store(sandboxID, verdict.Mode)
+		c.hosts.Store(hostKey(sandboxID, r.Host), verdict.Enforcement)
 		if len(verdict.Findings) > 0 || !verdict.Permitted {
 			log.Printf("egress-dlp: %s %s: %s (%d findings)", r.Method, r.Host, verdict.Action, len(verdict.Findings))
 		}
 	}
 	if err != nil {
-		return c.refuseUnavailable(w, r, sandboxID, err)
+		return c.refuseUnavailable(w, r, body, err)
 	}
 	if !verdict.Permitted {
 		w.Header().Set(dlpHeader, "blocked")
+		markWould(w, r)
 		writeDlpRefusal(w, http.StatusForbidden, "privacy.blocked",
 			"The content policy refused this request.")
 		return true
@@ -258,6 +275,12 @@ func (c *dlpClient) apply(w http.ResponseWriter, r *http.Request) (handled bool)
 		w.Header().Set(dlpHeader, "replaced")
 	}
 	if len(verdict.Restore) > 0 {
+		// The answer carries placeholders that restore.go turns back into their
+		// values, and that walk needs a readable body. A compressed answer is
+		// opaque bytes there, so the placeholder would reach the sandbox as
+		// `<IBAN_...>`. Negotiation happens on the request, so this is the one
+		// place the compression can be turned off.
+		r.Header.Del("Accept-Encoding")
 		*r = *r.WithContext(context.WithValue(r.Context(), restoreKey{}, verdict.Restore))
 		w.Header().Set(dlpHeader, "pseudonymized")
 	}
@@ -266,26 +289,60 @@ func (c *dlpClient) apply(w http.ResponseWriter, r *http.Request) (handled bool)
 
 // mayFailOpen reports whether an unanswered check may be forwarded.
 //
-// It follows the *policy* mode the control API last reported, not the egress
-// mode: comparing the egress mode made this branch dead code, because a
-// transparent sandbox is never told "observe" (finding A3).
-func (c *dlpClient) mayFailOpen(sandboxID string) bool {
-	mode, seen := c.modes.Load(sandboxID)
-	if !seen {
-		return false
+// It follows the *policy* the control API last reported, not the egress mode:
+// comparing the egress mode made this branch dead code, because a transparent
+// sandbox is never told "observe" (finding A3).
+//
+// Two answers count. `observe` and `off` say no decision was ever enforced, so
+// an outage changes nothing. A destination the policy last reported as
+// `record_only` or `exempt` is the narrower case of the same fact, and it is
+// keyed by sandbox and destination: an outage of the control API must not start
+// refusing traffic that was only ever being watched, but it must also not let a
+// destination that *was* being enforced through (finding R8).
+func (c *dlpClient) mayFailOpen(sandboxID, host string) bool {
+	if mode, seen := c.modes.Load(sandboxID); seen {
+		value, _ := mode.(string)
+		if value == "observe" || value == "off" {
+			return true
+		}
 	}
-	value, _ := mode.(string)
-	return value == "observe" || value == "off"
+	if enforcement, seen := c.hosts.Load(hostKey(sandboxID, host)); seen {
+		value, _ := enforcement.(string)
+		if value == "record_only" || value == "exempt" {
+			return true
+		}
+	}
+	return false
+}
+
+// hostKey is how the last enforcement of one destination is kept.
+func hostKey(sandboxID, host string) string {
+	return sandboxID + "|" + hostOnly(host)
+}
+
+// markWould writes the address a refused request would have reached, before the
+// refusal status is written.
+//
+// The header is what makes a refusal inspectable: the console can show that
+// api.anthropic.com resolves to an address in the provider's range and not to
+// something this node invented. An unresolved name writes nothing rather than
+// a placeholder that looks like an address.
+func markWould(w http.ResponseWriter, r *http.Request) {
+	if ip := lookupWould(r.Host); ip != "" {
+		w.Header().Set(upstreamWouldHeader, ip)
+	}
 }
 
 // refuseUnavailable answers a request whose check could not be answered.
-func (c *dlpClient) refuseUnavailable(w http.ResponseWriter, r *http.Request, sandboxID string, cause error) bool {
-	if c.mayFailOpen(sandboxID) {
-		log.Printf("egress-dlp: %s: %v; the policy is observe, forwarding", r.Host, cause)
+func (c *dlpClient) refuseUnavailable(w http.ResponseWriter, r *http.Request, body dlpRequest, cause error) bool {
+	if c.mayFailOpen(body.SandboxID, r.Host) {
+		log.Printf("egress-dlp: %s: %v; the policy records this destination, forwarding", r.Host, cause)
 		return false
 	}
 	log.Printf("egress-dlp: %s: %v; refusing", r.Host, cause)
 	w.Header().Set(dlpHeader, "unavailable")
+	markWould(w, r)
+	c.reportRefusal(body, refusalKindUnavailable)
 	writeDlpRefusal(w, http.StatusServiceUnavailable, "privacy.unavailable",
 		"The content check could not be answered, so the request was refused.")
 	return true
@@ -296,16 +353,85 @@ func (c *dlpClient) refuseUnavailable(w http.ResponseWriter, r *http.Request, sa
 // Padding a prompt past the limit would otherwise be a way around the policy,
 // and a body that is never read cannot be touched up: half a JSON document is
 // not a smaller document.
-func (c *dlpClient) refuseOversize(w http.ResponseWriter, r *http.Request, sandboxID string) bool {
-	if c.mayFailOpen(sandboxID) {
-		log.Printf("egress-dlp: %s: body over %d bytes; the policy is observe, forwarding", r.Host, maxInspectedBody)
+func (c *dlpClient) refuseOversize(w http.ResponseWriter, r *http.Request, body dlpRequest) bool {
+	if c.mayFailOpen(body.SandboxID, r.Host) {
+		log.Printf("egress-dlp: %s: body over %d bytes; the policy records this destination, forwarding", r.Host, maxInspectedBody)
 		return false
 	}
 	log.Printf("egress-dlp: %s: body over %d bytes; refusing", r.Host, maxInspectedBody)
 	w.Header().Set(dlpHeader, "too_large")
+	markWould(w, r)
+	c.reportRefusal(body, refusalKindTooLarge)
 	writeDlpRefusal(w, http.StatusRequestEntityTooLarge, "privacy.too_large",
 		"The request is larger than the content check reads (8 MiB) and the policy does not let unchecked content leave.")
 	return true
+}
+
+// The two refusals this hop writes itself, as the control API names them.
+const (
+	refusalKindUnavailable = "unavailable"
+	refusalKindTooLarge    = "too_large"
+)
+
+// reportRefusal tells the control API about a refusal that carries no finding.
+//
+// A blocked body is reported by the control API itself, because it is the one
+// that matched something. A request refused for its size or for an unanswered
+// check never reached it, so without this the console would show a gap where a
+// refusal was. It runs in the background: the sandbox already has its answer,
+// and a control API slow to record must not hold the refusal open. A failure is
+// logged and dropped — the alternative, retrying, would turn one outage into a
+// queue.
+func (c *dlpClient) reportRefusal(body dlpRequest, kind string) {
+	if c == nil || c.url == "" {
+		return
+	}
+	report := struct {
+		SandboxID   string `json:"sandbox_id"`
+		Kind        string `json:"kind"`
+		Destination string `json:"destination,omitempty"`
+		Method      string `json:"method,omitempty"`
+		Path        string `json:"path,omitempty"`
+		RequestRef  string `json:"request_ref,omitempty"`
+		Model       string `json:"model,omitempty"`
+	}{
+		SandboxID:   body.SandboxID,
+		Kind:        kind,
+		Destination: body.Destination,
+		Method:      body.Method,
+		Path:        body.Path,
+		RequestRef:  body.RequestRef,
+		Model:       body.Model,
+	}
+	payload, err := json.Marshal(report)
+	if err != nil {
+		log.Printf("egress-dlp: refusal report for %s could not be built: %v", body.Destination, err)
+		return
+	}
+	url := c.url + "/api/v1/internal/privacy/refusal"
+	nodeID, token, client := c.nodeID, c.token, c.client
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+		if err != nil {
+			log.Printf("egress-dlp: refusal report for %s: %v", body.Destination, err)
+			return
+		}
+		req.Header.Set("content-type", "application/json")
+		req.Header.Set("x-nestbox-node", nodeID)
+		req.Header.Set("authorization", "Bearer "+token)
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("egress-dlp: refusal report for %s: %v", body.Destination, err)
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		if resp.StatusCode >= 300 {
+			log.Printf("egress-dlp: refusal report for %s: %s", body.Destination, resp.Status)
+		}
+	}()
 }
 
 // dlpHeader tells the sandbox — and, through Envoy's access log, the console —
