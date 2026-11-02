@@ -153,8 +153,7 @@ func (c *dlpClient) inspect(ctx context.Context, body dlpRequest) (dlpVerdict, e
 // body it read and then failed to check while the mode forbids that; that case
 // is the 503 below.
 func (c *dlpClient) apply(w http.ResponseWriter, r *http.Request, mode string) (handled bool) {
-	sandboxID := strings.TrimSpace(r.Header.Get("x-nestbox-sandbox"))
-	if sandboxID == "" || r.Body == nil {
+	if r.Body == nil {
 		return false
 	}
 	switch r.Method {
@@ -165,7 +164,17 @@ func (c *dlpClient) apply(w http.ResponseWriter, r *http.Request, mode string) (
 	if !strings.Contains(strings.ToLower(r.Header.Get("content-type")), "json") {
 		return false
 	}
-	if r.ContentLength == 0 || r.ContentLength > maxInspectedBody {
+	sandboxID := strings.TrimSpace(r.Header.Get("x-nestbox-sandbox"))
+	if sandboxID == "" {
+		// Envoy copies the id out of the policy answer. An empty one means the
+		// request was not identified, and a body nobody can be blamed for is not
+		// a body this hop may refuse. Say so once per request: silence here was
+		// how "the check ran and found nothing" looked exactly like "the check
+		// never ran".
+		log.Printf("egress-dlp: %s %s: no sandbox in the request; body not checked", r.Method, r.Host)
+		return false
+	}
+	if r.ContentLength > maxInspectedBody {
 		return false
 	}
 	original, err := io.ReadAll(io.LimitReader(r.Body, maxInspectedBody+1))
@@ -198,6 +207,13 @@ func (c *dlpClient) apply(w http.ResponseWriter, r *http.Request, mode string) (
 	ctx, cancel := context.WithTimeout(r.Context(), dlpTimeout)
 	defer cancel()
 	verdict, err := c.inspect(ctx, body)
+	if err == nil {
+		// One line per request that found something. A clean request stays quiet,
+		// because a log nobody can read is a log nobody reads.
+		if len(verdict.Findings) > 0 || !verdict.Permitted {
+			log.Printf("egress-dlp: %s %s: %s (%d findings)", r.Method, r.Host, verdict.Action, len(verdict.Findings))
+		}
+	}
 	if err != nil {
 		if mode == "observe" {
 			log.Printf("egress-dlp: %s: %v; observe mode forwards", r.Host, err)
