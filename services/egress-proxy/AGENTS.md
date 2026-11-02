@@ -245,3 +245,5 @@ that server's certificate against the system roots plus `/etc/envoy/mozilla-ca.p
 name on a shared address against the first one's and refused wildcard certificates
 (both a bare 503 in the sandbox). Policy is still decided by Envoy's ext_authz
 before the request reaches this port; the port is loopback only.
+| `mitm/livetap.go` | Report a streamed answer live, without changing a byte of it |
+| `mitm/meta.go` | Record the upstream address and the router's own headers |

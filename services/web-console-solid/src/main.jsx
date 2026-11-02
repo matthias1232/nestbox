@@ -5,6 +5,7 @@ import { SessionProvider } from './state/session.jsx';
 import App from './App.jsx';
 import './styles/tokens.css';
 import './styles/app.css';
+import './styles/dlp.css';
 
 const root = document.getElementById('root');
 render(

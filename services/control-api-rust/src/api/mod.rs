@@ -6,6 +6,8 @@
 
 pub mod access;
 pub mod accounting;
+pub mod chat_live;
+pub mod chats;
 pub mod agent_auth;
 pub mod auth;
 pub mod cluster;
@@ -34,9 +36,12 @@ pub mod persistent_roots;
 pub mod policies;
 pub mod presence;
 pub mod privacy;
+pub mod privacy_exceptions;
+pub mod privacy_refusal;
 pub mod principal;
 pub mod providers;
 pub mod proxies;
+pub mod quick_allow;
 pub mod secrets;
 pub mod recipes;
 pub mod rule_bulk;
@@ -77,6 +82,14 @@ fn internal_privacy_router(state: AppState) -> Router {
             "/api/v1/internal/privacy/inspect",
             post(accounting::inspect),
         )
+        // A refusal without a finding is still a decision about a person's
+        // request, and the chat has to be able to say so.
+        .route(
+            "/api/v1/internal/privacy/refusal",
+            post(privacy_refusal::refusal),
+        )
+        // Live reports from the broker and the accounting proxy. Nothing stored.
+        .route("/api/v1/internal/chats/live", post(chat_live::accept))
         .layer(axum::extract::DefaultBodyLimit::max(9 * 1024 * 1024))
         .with_state(state)
 }
@@ -295,6 +308,27 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/privacy/overview", get(privacy::dlp_overview))
         .route("/api/v1/privacy/log", get(privacy::dlp_log))
         .route("/api/v1/privacy/changes", get(privacy::dlp_changes))
+        // Chats: the turn list, its groups, one turn, the live stream, and the
+        // audit of an administrator watching it.
+        .route("/api/v1/chats/turns", get(chats::turns))
+        .route("/api/v1/chats/groups", get(chats::groups))
+        .route("/api/v1/chats/turns/{id}", get(chats::turn))
+        .route("/api/v1/chats/stream", get(events::chats_stream))
+        .route("/api/v1/live/watch", post(chats::live_watch))
+        // DLP exceptions: allow a finding on purpose.
+        .route(
+            "/api/v1/privacy/exceptions",
+            get(privacy_exceptions::list).post(privacy_exceptions::create),
+        )
+        .route(
+            "/api/v1/privacy/exceptions/{id}",
+            axum::routing::delete(privacy_exceptions::delete),
+        )
+        // A rule with an end, created from the live view.
+        .route(
+            "/api/v1/sandboxes/{id}/quick-allow",
+            get(quick_allow::list).post(quick_allow::create),
+        )
         .route("/api/v1/privacy/purge", post(privacy::purge))
         // Media rendering: the environment default, a sandbox's own choice,
         // the renders and their assets.

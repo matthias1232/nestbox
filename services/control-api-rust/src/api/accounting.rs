@@ -318,7 +318,7 @@ pub async fn ingest(
 /// node's own token, which the control API already verifies for every policy
 /// check. Accepting both is not a second trust boundary — both are processes on
 /// this appliance, and neither is reachable from a sandbox.
-async fn ingest_authorised(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
+pub(crate) async fn ingest_authorised(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
     if authorised(headers).is_ok() {
         return Ok(());
     }

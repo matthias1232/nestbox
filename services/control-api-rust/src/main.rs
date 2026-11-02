@@ -182,6 +182,11 @@ async fn main() {
                     Err(error) => tracing::debug!(code = error.code.0, "reconcile pass skipped"),
                 }
                 if let Err(error) =
+                    nestbox_control_api::services::quick_allow::expire_due(&services).await
+                {
+                    tracing::warn!(code = error.code.0, message = %error.message, "rule expiry failed");
+                }
+                if let Err(error) =
                     nestbox_control_api::services::telemetry_service::pull_openshell_events(&services).await
                 {
                     tracing::warn!(code = error.code.0, message = %error.message, "OpenShell event pull failed");

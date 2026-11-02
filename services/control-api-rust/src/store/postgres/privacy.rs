@@ -24,7 +24,8 @@ use crate::error::StoreError;
 /// The settings columns, named so a schema change is a mapping error rather than
 /// a silently swapped field.
 const SETTINGS_COLUMNS: &str = "sandbox_id, mode, detectors, actions, \
-     block_cloud_egress, retention_days, enforce_hosts, updated_by, updated_at";
+     block_cloud_egress, retention_days, enforce_hosts, owners_may_grant_exceptions, \
+     admin_chat_view, updated_by, updated_at";
 
 /// The incident columns, named for the same reason.
 const INCIDENT_COLUMNS: &str = "id, environment_id, sandbox_id, detector, action, severity, \
@@ -141,6 +142,8 @@ pub async fn settings_for(
         block_cloud_egress: row.try_get("block_cloud_egress")?,
         retention_days: row.try_get("retention_days")?,
         enforce_hosts: row.try_get("enforce_hosts")?,
+        owners_may_grant_exceptions: row.try_get("owners_may_grant_exceptions")?,
+        admin_chat_view: row.try_get("admin_chat_view")?,
         updated_by: row.try_get("updated_by")?,
         updated_at: Some(updated_at),
     }))
@@ -166,8 +169,9 @@ pub async fn save_settings(
 
     sqlx::query(
         "INSERT INTO privacy_settings (environment_id, sandbox_id, mode, detectors, actions, \
-            block_cloud_egress, retention_days, enforce_hosts, updated_by, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now()) \
+            block_cloud_egress, retention_days, enforce_hosts, owners_may_grant_exceptions, \
+            admin_chat_view, updated_by, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now()) \
          ON CONFLICT ON CONSTRAINT privacy_settings_scope DO UPDATE SET \
             mode = EXCLUDED.mode, \
             detectors = EXCLUDED.detectors, \
@@ -175,6 +179,8 @@ pub async fn save_settings(
             block_cloud_egress = EXCLUDED.block_cloud_egress, \
             retention_days = EXCLUDED.retention_days, \
             enforce_hosts = EXCLUDED.enforce_hosts, \
+            owners_may_grant_exceptions = EXCLUDED.owners_may_grant_exceptions, \
+            admin_chat_view = EXCLUDED.admin_chat_view, \
             updated_by = EXCLUDED.updated_by, \
             updated_at = now()",
     )
@@ -186,6 +192,8 @@ pub async fn save_settings(
     .bind(settings.block_cloud_egress)
     .bind(settings.retention_days)
     .bind(&settings.enforce_hosts)
+    .bind(settings.owners_may_grant_exceptions)
+    .bind(settings.admin_chat_view)
     .bind(settings.updated_by)
     .execute(scope.connection())
     .await?;

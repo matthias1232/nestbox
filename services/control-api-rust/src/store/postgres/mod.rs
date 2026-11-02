@@ -29,6 +29,7 @@ pub mod node_gateway;
 pub mod nodes;
 pub mod persistent_roots;
 pub mod policies;
+pub mod privacy_exceptions;
 pub mod presence;
 pub mod privacy;
 pub mod backups;

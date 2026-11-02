@@ -153,3 +153,15 @@ export function assignMany(id, sandboxIds) {
 export function copyRules(body) {
   return request('network-rules/copy', { method: 'POST', body });
 }
+
+// A rule with an end: allow one destination for 15 min, 1 h, 24 h or forever.
+export function quickAllow(sandboxId, host, port, minutes) {
+  return request(`sandboxes/${sandboxId}/quick-allow`, {
+    method: 'POST',
+    body: { host, port: port ?? null, minutes: minutes ?? null },
+  });
+}
+
+export function quickAllowList(sandboxId) {
+  return request(`sandboxes/${sandboxId}/quick-allow`);
+}

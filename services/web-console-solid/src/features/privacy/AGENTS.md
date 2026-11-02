@@ -47,3 +47,7 @@ purge controls for anyone who is not an admin.
 first two differ — the row says "recorded only · would have refused" — and that
 difference is the only evidence that content left after a match. Never collapse
 them into one word: "allowed" alone reads as "nothing was found".
+| `PrivacyDlpSection.jsx` | The DLP section of the Content privacy page |
+| `PrivacyExtraSettings.jsx` | The two environment switches for exceptions and chat reading |
+| `DlpFindingDrawer.jsx` | One finding in full, with the way to allow it on purpose |
+| `DlpExceptionsTable.jsx` | The findings allowed on purpose, and when they stop |

@@ -1,10 +1,13 @@
 // The agent situation page: organisation totals, the live map, and one agent
 // in detail. The page is markup and layout; the stream lives in the hook.
 
-import { Show, onMount } from 'solid-js';
+import { Show, createSignal, onMount } from 'solid-js';
 import Empty from '../../components/Empty.jsx';
 import AgentSituationMap from './AgentSituationMap.jsx';
 import AgentPanel from './AgentPanel.jsx';
+import AllChats from './AllChats.jsx';
+import RequestStream from './RequestStream.jsx';
+import Segmented from '../../components/Segmented.jsx';
 import { useLiveAgents } from './useLiveAgents.js';
 import { formatCost, formatCount } from './format.js';
 import './live.css';
@@ -15,7 +18,14 @@ const CONNECTION = {
   lost: { tone: 'bad', label: 'disconnected' },
 };
 
+const VIEWS = [
+  { value: 'map', label: 'Agenten-Karte' },
+  { value: 'requests', label: 'Requests live' },
+  { value: 'chats', label: 'Alle Chats' },
+];
+
 export default function LivePage() {
+  const [view, setView] = createSignal('map');
   const live = useLiveAgents();
   onMount(() => live.start());
 
@@ -75,6 +85,14 @@ export default function LivePage() {
         </article>
       </div>
 
+      <div class="controls">
+        <Segmented options={VIEWS} value={view()} onChange={setView} />
+      </div>
+
+      <Show when={view() === 'requests'}><RequestStream /></Show>
+      <Show when={view() === 'chats'}><AllChats /></Show>
+
+      <Show when={view() === 'map'}>
       <div class="live-body">
         <section class="live-map-panel" aria-label="Agent map">
           <Show
@@ -109,6 +127,7 @@ export default function LivePage() {
         unreported value is <code>n/a</code>, never zero. A moving dot marks one
         real event, and nothing moves while the environment is idle.
       </p>
+      </Show>
     </section>
   );
 }

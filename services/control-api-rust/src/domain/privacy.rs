@@ -399,6 +399,11 @@ pub struct PrivacySettings {
     pub block_cloud_egress: bool,
     /// How long an incident is kept, in days.
     pub retention_days: i32,
+    /// Whether a sandbox's owner may grant DLP exceptions for it.
+    pub owners_may_grant_exceptions: bool,
+    /// Whether an administrator may read chat content. End users are told which
+    /// way this is set (ADR 0063).
+    pub admin_chat_view: bool,
     /// Hosts whose content is checked on top of the model hosts. The transparent
     /// hop sees every request a sandbox makes, including a browser's; rewriting a
     /// shop's form because a value looked like an e-mail is breakage, not
@@ -424,6 +429,8 @@ impl PrivacySettings {
             block_cloud_egress: true,
             retention_days: DEFAULT_RETENTION_DAYS,
             enforce_hosts: Vec::new(),
+            owners_may_grant_exceptions: false,
+            admin_chat_view: true,
             updated_by: None,
             updated_at: None,
         }
@@ -475,6 +482,19 @@ pub struct PrivacyUpdate {
     /// Extra hosts to check. The model hosts are always checked.
     #[serde(default)]
     pub enforce_hosts: Vec<String>,
+    /// Defaults to `false`: an owner may not grant exceptions unless an operator
+    /// says so.
+    #[serde(default)]
+    pub owners_may_grant_exceptions: bool,
+    /// Defaults to `true`.
+    #[serde(default = "default_true")]
+    pub admin_chat_view: bool,
+}
+
+/// The default for an opt-out switch that protects a person's work from default
+/// prying: off is the safe default, on is the documented decision.
+fn default_true() -> bool {
+    true
 }
 
 impl Default for PrivacyUpdate {
@@ -487,6 +507,8 @@ impl Default for PrivacyUpdate {
             block_cloud_egress: settings.block_cloud_egress,
             retention_days: settings.retention_days,
             enforce_hosts: settings.enforce_hosts,
+            owners_may_grant_exceptions: settings.owners_may_grant_exceptions,
+            admin_chat_view: settings.admin_chat_view,
         }
     }
 }
@@ -545,6 +567,8 @@ impl PrivacyUpdate {
             block_cloud_egress: self.block_cloud_egress,
             retention_days: self.retention_days,
             enforce_hosts: self.enforce_hosts,
+            owners_may_grant_exceptions: self.owners_may_grant_exceptions,
+            admin_chat_view: self.admin_chat_view,
             updated_by: None,
             updated_at: None,
         }

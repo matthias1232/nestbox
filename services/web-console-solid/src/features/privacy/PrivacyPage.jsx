@@ -105,10 +105,7 @@ export default function PrivacyPage(props) {
         </p>
       </header>
 
-      <h3>Data loss protection at a glance</h3>
-      <DlpDashboard />
-      <h3>What the detectors found</h3>
-      <DlpLog limit={100} />
+      <PrivacyDlpSection />
 
       <Show when={privacy.error()}><p class="error">{privacy.error()}</p></Show>
       <Show when={privacy.notice()}><p class="notice">{privacy.notice()}</p></Show>
@@ -280,6 +277,7 @@ export default function PrivacyPage(props) {
           <p class="muted small">
             How long the server keeps incidents. The purge below takes its own day count.
           </p>
+          <PrivacyExtraSettings privacy={privacy} isAdmin={isAdmin()} />
           <label class="small">
             Hosts to check in addition to the model hosts
             <textarea

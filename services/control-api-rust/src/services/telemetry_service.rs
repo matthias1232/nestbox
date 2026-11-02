@@ -109,6 +109,21 @@ pub struct ProxyTrafficEntry {
     /// `key` or `account`: how the call was authenticated. Never the credential.
     #[serde(default)]
     pub llm_auth: Option<String>,
+    /// The address the request reached, as the broker observed it.
+    #[serde(default)]
+    pub upstream_ip: Option<String>,
+    /// The address a refused request would have reached.
+    #[serde(default)]
+    pub upstream_ip_would: Option<String>,
+    /// What Envoy reports as the upstream of a tunnel.
+    #[serde(default)]
+    pub upstream_host: Option<String>,
+    /// Which provider the router actually used, when it says.
+    #[serde(default)]
+    pub router_provider: Option<String>,
+    /// Which model the router actually used, when it says.
+    #[serde(default)]
+    pub router_model: Option<String>,
     /// What the content check did with this request, as the broker reported it:
     /// `blocked`, `replaced`, `pseudonymized`, `unavailable`, `too_large`. Absent
     /// when the check does not apply (a tunnel, a non-JSON body, an exempt host).
@@ -1090,6 +1105,11 @@ mod tests {
             ts: None,
             sandbox_id: None,
             dlp: None,
+            upstream_ip: None,
+            upstream_ip_would: None,
+            upstream_host: None,
+            router_provider: None,
+            router_model: None,
             host: "mcp.example.com".into(),
             port: Some(443),
             protocol: Some("HTTP/2".into()),
@@ -1462,6 +1482,11 @@ pub async fn pull_openshell_events(ctx: &ServiceContext) -> Result<u64, ApiError
 
             let entry = ProxyTrafficEntry {
                 dlp: None,
+                upstream_ip: None,
+                upstream_ip_would: None,
+                upstream_host: None,
+                router_provider: None,
+                router_model: None,
                 ts,
                 sandbox_id: Some(*sandbox_id),
                 host: host.to_string(),

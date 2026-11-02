@@ -19,6 +19,9 @@ import LiveChatsPanel from './LiveChatsPanel.jsx';
 import ModelsCard from './ModelsCard.jsx';
 import MoveDialog from './MoveDialog.jsx';
 import NetworkCard from './NetworkCard.jsx';
+import LiveEventsPanel from './LiveEventsPanel.jsx';
+import RequestStreamCard from './RequestStreamCard.jsx';
+import WorkboxNotice from './WorkboxNotice.jsx';
 import PrivacyCard from './PrivacyCard.jsx';
 import SessionsPanel from './SessionsPanel.jsx';
 import TopologyPanel from './TopologyPanel.jsx';
@@ -161,9 +164,12 @@ function Workbox(props) {
 
         <AllowAllBanner control={summary()} sandboxId={props.id} onChanged={state.refresh} />
 
+        <WorkboxNotice sandboxId={props.id} />
+
         <div class="wb-cards">
           <AgentsCard sandboxId={props.id} control={summary()} onChanged={state.refresh} />
           <NetworkCard sandboxId={props.id} control={summary()} onChanged={state.refresh} />
+          <RequestStreamCard sandboxId={props.id} />
           <PrivacyCard sandboxId={props.id} />
           <ModelsCard sandboxId={props.id} control={summary()} />
         </div>
@@ -172,6 +178,7 @@ function Workbox(props) {
           <div class="wb-main">
             <LiveChatsPanel sandbox={sandbox()} />
             <TopologyPanel sandbox={sandbox()} />
+            <LiveEventsPanel sandbox={sandbox()} />
           </div>
 
           <SessionsPanel sandbox={sandbox()} control={summary()} />

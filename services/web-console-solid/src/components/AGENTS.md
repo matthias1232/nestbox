@@ -48,3 +48,10 @@ not gateways and sandboxes.
 Workbox primitives: `Switch`, `Segmented`, `Countdown`, `ConfirmDialog`, `Banner`, `PresenceDots`.
 They hold no rules: the caller decides, the component draws. Their shared styles live in
 `styles/controls.css`, which each of them imports.
+| `dataTable.js` | Sort, filter, search, group and CSV as pure functions |
+| `DataTable.jsx` | The shared table: toolbar, filters, groups, export, live rows |
+| `DlpBadge.jsx` | One badge per content-check state, in the shared colours |
+| `dlpText.js` | Split a masked text into replaced, pseudonymised and unknown parts |
+| `DlpText.jsx` | A masked text with its findings marked |
+| `RouteChain.jsx` | The way a request took, or would have taken |
+| `liveTicker.js` | A bounded, keyed list of live events |

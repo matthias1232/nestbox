@@ -127,3 +127,8 @@ the invitation preview are public on purpose: the token in the path is the crede
 handler parses, authorises through `Auth`, and delegates; the two internal routes
 (`accounting/models/{sandbox}`, `node/egress-lock`) authenticate a service instead — `node/egress-lock`
 verifies the node token in the service, with the same check that guards the node package fetch.
+| `chats.rs` | Chat turns, groups, one turn, the live-watch audit |
+| `chat_live.rs` | The internal live report from the broker and the accounting proxy |
+| `privacy_exceptions.rs` | DLP exceptions: list, create, delete |
+| `privacy_refusal.rs` | A refusal without a finding, reported by the proxy |
+| `quick_allow.rs` | Allow rules with an end |

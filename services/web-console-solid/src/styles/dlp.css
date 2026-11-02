@@ -1,0 +1,64 @@
+/* The content-check colour language, and the table and chat surfaces that use it.
+   One definition, so "orange means rewritten" is true on every screen. */
+:root {
+  --dlp-blocked: #dc2626;
+  --dlp-replaced: #ea580c;
+  --dlp-pseudo: #7c3aed;
+  --dlp-recorded: #2563eb;
+  --dlp-failed: #7f1d1d;
+  --dlp-exempt: #6b7280;
+  --dlp-clean: #16a34a;
+  --chat-user: color-mix(in srgb, #16a34a 16%, transparent);
+  --chat-model: color-mix(in srgb, currentColor 6%, transparent);
+  --chat-tool: color-mix(in srgb, #d97706 14%, transparent);
+}
+
+.dlp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75em;
+  color: #fff;
+  white-space: nowrap;
+}
+.dlp-badge[data-state='blocked'] { background: var(--dlp-blocked); }
+.dlp-badge[data-state='replaced'],
+.dlp-badge[data-state='redacted'] { background: var(--dlp-replaced); }
+.dlp-badge[data-state='pseudonymized'] { background: var(--dlp-pseudo); }
+.dlp-badge[data-state='allowed'] { background: var(--dlp-recorded); }
+.dlp-badge[data-state='unavailable'],
+.dlp-badge[data-state='too_large'] { background: var(--dlp-failed); }
+.dlp-badge[data-state='exempt'],
+.dlp-badge[data-state='skipped'] { background: var(--dlp-exempt); }
+.dlp-badge[data-state='clean'] { background: var(--dlp-clean); }
+
+.dlp-del { color: var(--dlp-replaced); text-decoration: line-through 2px; }
+.dlp-ins { color: var(--dlp-replaced); font-weight: 600; text-decoration: none; cursor: pointer; }
+.dlp-pseudo { color: var(--dlp-pseudo); border-bottom: 2px dashed var(--dlp-pseudo); cursor: pointer; }
+.dlp-recorded { border-bottom: 2px dotted var(--dlp-recorded); }
+.dlp-blocked-text { text-decoration: line-through 2px var(--dlp-blocked); opacity: 0.8; }
+
+.data-table table.dense th.sortable { cursor: pointer; user-select: none; }
+.data-table table.dense thead { position: sticky; top: 0; z-index: 1; background: var(--card, transparent); }
+.data-table .filter-row th { padding-block: 0.15rem; }
+.data-table .group-row td { background: color-mix(in srgb, currentColor 6%, transparent); }
+.data-table tr.row-new { animation: rowNew 600ms ease-out; }
+@keyframes rowNew {
+  from { background: color-mix(in srgb, var(--dlp-recorded) 22%, transparent); }
+  to { background: transparent; }
+}
+
+.route-chain { display: inline-flex; flex-wrap: wrap; gap: 0.2rem; align-items: center; font-size: 0.78em; }
+.route-chain.compact { font-size: 0.72em; }
+.route-pill {
+  padding: 0.05rem 0.45rem;
+  border-radius: 6px;
+  border: 1px solid var(--border, currentColor);
+  background: var(--card, transparent);
+  white-space: nowrap;
+}
+.route-pill.blocked { border-color: var(--dlp-blocked); color: var(--dlp-blocked); }
+.route-pill.would { border-style: dashed; opacity: 0.65; }
+.route-arrow { opacity: 0.5; }

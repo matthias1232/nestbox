@@ -74,8 +74,13 @@ func upstreamHandlerWith(roots *x509.CertPool, dial func(ctx context.Context, ne
 		// A pseudonymised request comes back with placeholders in the answer.
 		// They are turned back here, in the hop that holds the plaintext.
 		ModifyResponse: func(resp *http.Response) error {
+			annotateResponse(resp)
 			pairs, _ := resp.Request.Context().Value(restoreKey{}).([]restorePair)
-			return restoreResponse(resp, pairs)
+			if err := restoreResponse(resp, pairs); err != nil {
+				return err
+			}
+			tapLive(resp)
+			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			log.Printf("egress-upstream: %s: %v", r.Host, err)
@@ -87,10 +92,14 @@ func upstreamHandlerWith(roots *x509.CertPool, dial func(ctx context.Context, ne
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		r = r.WithContext(context.WithValue(r.Context(), liveInfoKey{}, liveInfo{
+			SandboxID:  r.Header.Get("x-nestbox-sandbox"),
+			RequestRef: r.Header.Get("x-request-id"),
+		}))
 		if dlp != nil && dlp.apply(w, r) {
 			return
 		}
-		proxy.ServeHTTP(w, r)
+		proxy.ServeHTTP(w, traceUpstream(r))
 	})
 }
 

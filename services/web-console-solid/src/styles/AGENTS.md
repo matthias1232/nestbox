@@ -30,3 +30,4 @@ uses it, not from `main.jsx`.
 - Density is a token, not a per-table decision: the console is for scanning.
 - The graph and the table must survive a narrow viewport: horizontal scroll
   rather than a squeezed layout.
+| `dlp.css` | The content-check colour language, the shared table and the chat bubbles |

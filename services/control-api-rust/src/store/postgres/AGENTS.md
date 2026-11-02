@@ -110,3 +110,5 @@ serves.
   transaction boundary — while `mcp.rs` owns the server catalogue and what
   discovery found. If the two ever need one transaction, this is the place to
   join them.
+| `chat_turns.rs` | Rows of `chat_turns`: insert, query, group |
+| `privacy_exceptions.rs` | Rows of `privacy_exceptions` |

@@ -50,3 +50,6 @@ that one module from here, because the tab strip in the Admin Center and in the
 Workbox is the same list. It is pure logic — no JSX, no state, no API call — so
 it cannot become a second truth. The same holds for `useLive.js`, which a
 terminal imports for its presence events so a page keeps one event stream.
+| `RequestStreamCard.jsx` | Which models this sandbox uses right now |
+| `WorkboxNotice.jsx` | What the end user is told about who may read the chats |
+| `LiveEventsPanel.jsx` | Proxy, OpenShell and MCP events of this sandbox |

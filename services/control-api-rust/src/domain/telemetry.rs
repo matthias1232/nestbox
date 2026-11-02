@@ -224,6 +224,37 @@ impl TelemetryEvent {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LiveEvent {
     Telemetry(TelemetryEvent),
+    /// A model request left or was refused; `user_text` is masked.
+    ChatStarted {
+        environment_id: Uuid,
+        sandbox_id: Uuid,
+        request_ref: String,
+        ts: DateTime<Utc>,
+        model: Option<String>,
+        host: Option<String>,
+        provider: String,
+        account_kind: Option<String>,
+        dlp: Option<String>,
+        delivered: bool,
+        user_text: String,
+    },
+    /// The answer so far, masked. Never stored.
+    ChatDelta {
+        environment_id: Uuid,
+        sandbox_id: Uuid,
+        request_ref: String,
+        text_so_far: String,
+        input_tokens: Option<i64>,
+        output_tokens: Option<i64>,
+        done: bool,
+    },
+    /// A turn was stored in `chat_turns`.
+    ChatDone {
+        environment_id: Uuid,
+        sandbox_id: Option<Uuid>,
+        turn_id: Uuid,
+        request_ref: Option<String>,
+    },
     SandboxStateChanged {
         sandbox_id: Uuid,
         environment_id: Uuid,
@@ -275,10 +306,33 @@ pub enum LiveEvent {
 }
 
 impl LiveEvent {
+    /// Whether this is one of the three chat events.
+    pub fn is_chat(&self) -> bool {
+        matches!(
+            self,
+            Self::ChatStarted { .. } | Self::ChatDelta { .. } | Self::ChatDone { .. }
+        )
+    }
+
+    /// The sandbox of a chat event.
+    pub fn chat_sandbox(&self) -> Option<Uuid> {
+        match self {
+            Self::ChatStarted { sandbox_id, .. } | Self::ChatDelta { sandbox_id, .. } => {
+                Some(*sandbox_id)
+            }
+            Self::ChatDone { sandbox_id, .. } => *sandbox_id,
+            _ => None,
+        }
+    }
+
+
     /// The environment, so a stream can refuse to leak another tenant's events.
     pub fn environment_id(&self) -> Uuid {
         match self {
             Self::Telemetry(e) => e.environment_id(),
+            Self::ChatStarted { environment_id, .. }
+            | Self::ChatDelta { environment_id, .. }
+            | Self::ChatDone { environment_id, .. } => *environment_id,
             Self::SandboxStateChanged { environment_id, .. } => *environment_id,
             Self::GatewayHealthChanged { environment_id, .. } => *environment_id,
             Self::JobProgress { environment_id, .. } => *environment_id,

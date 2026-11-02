@@ -90,3 +90,5 @@ and the `off_allow_all` answer.
 suspended sandbox may still reach, in audit mode, because OpenShell 0.1.6 has no host wildcard.
 | `privacy.rs` | Detectors, actions, modes, the settings matrix, and which requests are checked |
 | `privacy_json.rs` | String values of a JSON document by byte span, so a rewrite touches one value and nothing else |
+| `chat_turn.rs` | What one model call says: request, answer, tool calls, tokens, session, provider, agent |
+| `privacy_exception.rs` | A finding allowed on purpose, and the specificity rule that picks it |

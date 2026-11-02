@@ -355,3 +355,7 @@ that one line.
 `policy_service::sync_openshell_policies` pushes each sandbox's compiled policy and, while the rules
 are suspended (`off_allow_all`, or an open `all`/`openshell` window), the destinations it has been
 seen reaching, in audit mode: OpenShell logs them instead of blocking.
+| `chat_service.rs` | Chat turns: storing, querying, grouping, and who may read the text |
+| `chat_live.rs` | The live report of a running model request; nothing stored |
+| `privacy_exceptions.rs` | DLP exceptions: create, list, delete, and the check the filter asks |
+| `quick_allow.rs` | Allow one destination for a while, from the live view |
