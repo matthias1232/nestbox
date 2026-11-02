@@ -71,6 +71,12 @@ func upstreamHandlerWith(roots *x509.CertPool, dial func(ctx context.Context, ne
 		},
 		Transport:     transport,
 		FlushInterval: -1, // streamed answers (SSE) must not wait for a full buffer
+		// A pseudonymised request comes back with placeholders in the answer.
+		// They are turned back here, in the hop that holds the plaintext.
+		ModifyResponse: func(resp *http.Response) error {
+			pairs, _ := resp.Request.Context().Value(restoreKey{}).([]restorePair)
+			return restoreResponse(resp, pairs)
+		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			log.Printf("egress-upstream: %s: %v", r.Host, err)
 			http.Error(w, "upstream: "+err.Error(), http.StatusBadGateway)
@@ -81,7 +87,7 @@ func upstreamHandlerWith(roots *x509.CertPool, dial func(ctx context.Context, ne
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if dlp != nil && dlp.apply(w, r, r.Header.Get("x-nestbox-egress-mode")) {
+		if dlp != nil && dlp.apply(w, r) {
 			return
 		}
 		proxy.ServeHTTP(w, r)

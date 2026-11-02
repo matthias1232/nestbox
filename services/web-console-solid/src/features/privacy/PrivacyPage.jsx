@@ -280,6 +280,22 @@ export default function PrivacyPage(props) {
           <p class="muted small">
             How long the server keeps incidents. The purge below takes its own day count.
           </p>
+          <label class="small">
+            Hosts to check in addition to the model hosts
+            <textarea
+              class="input"
+              rows="3"
+              placeholder="one host per line"
+              value={(privacy.draft().enforce_hosts || []).join('\n')}
+              disabled={!isAdmin()}
+              onInput={(event) => privacy.setEnforceHosts(event.currentTarget.value)}
+            />
+          </label>
+          <p class="muted small">
+            The model providers are always checked. Everything else a sandbox reaches — a browser, a package
+            registry — is only recorded, unless you name it here: rewriting a shop's form because a value looked
+            like an e-mail is breakage, not protection.
+          </p>
 
           <Show
             when={isAdmin()}

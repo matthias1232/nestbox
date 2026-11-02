@@ -33,6 +33,7 @@ pub mod persist;
 pub mod presence;
 pub mod policy;
 pub mod privacy;
+pub mod privacy_json;
 pub mod provider;
 pub mod proxy;
 pub mod runtime;

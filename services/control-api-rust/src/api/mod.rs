@@ -65,6 +65,22 @@ use crate::state::AppState;
 ///
 /// The `/api/v1/` prefix is frozen (ADR 0015): a breaking change gets a new
 /// prefix rather than silently altering this one.
+/// The proxy's content check, with a body limit of its own.
+///
+/// Merged after the global `RequestBodyLimitLayer` so the larger limit applies to
+/// this path and to nothing else. The handler still refuses content over 8 MiB
+/// with a clear message; the 9 MiB here is the transport's ceiling, a little above
+/// the check's own.
+fn internal_privacy_router(state: AppState) -> Router {
+    Router::new()
+        .route(
+            "/api/v1/internal/privacy/inspect",
+            post(accounting::inspect),
+        )
+        .layer(axum::extract::DefaultBodyLimit::max(9 * 1024 * 1024))
+        .with_state(state)
+}
+
 pub fn router(state: AppState) -> Router {
     let mut router = Router::new()
         // System and documentation
@@ -268,7 +284,6 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/internal/accounting/models/{sandbox}",
             get(model_grants::internal_models),
         )
-        .route("/api/v1/internal/privacy/inspect", post(accounting::inspect))
         // Content privacy (DLP): policy, a filter test, incidents, purge.
         .route(
             "/api/v1/privacy/settings",
@@ -596,6 +611,12 @@ pub fn router(state: AppState) -> Router {
     // A body limit is the cheapest defence against a request that tries to
     // exhaust memory before any handler sees it.
     router = router.layer(RequestBodyLimitLayer::new(state.config.body_limit_bytes));
+
+    // One exception, and only after the global limit is in place: the proxy's
+    // content check takes a whole model request, and a real one carries a system
+    // prompt and the tool definitions with it. With the 1 MiB default every real
+    // agent request was refused before the check could answer (finding A1).
+    router = router.merge(internal_privacy_router(state.clone()));
 
     router.layer(TraceLayer::new_for_http())
 }

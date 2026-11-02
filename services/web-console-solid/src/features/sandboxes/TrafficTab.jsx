@@ -71,7 +71,7 @@ export default function TrafficTab(props) {
       <Show when={(data()?.items || []).length} fallback={<p class="muted">No request in this window. Run something in the sandbox that reaches the network and it appears here within seconds.</p>}>
         <div class="table-scroll">
           <table class="dense">
-            <thead><tr><th>Time</th><th>Decision</th><th>Destination</th><th>Request</th><th>Status</th><th>Why</th><th /></tr></thead>
+            <thead><tr><th>Time</th><th>Decision</th><th>Destination</th><th>Request</th><th>Status</th><th>Content check</th><th>Why</th><th /></tr></thead>
             <tbody>
               <For each={data().items}>
                 {(e) => (
@@ -81,6 +81,7 @@ export default function TrafficTab(props) {
                     <td class="mono small">{e.host}:{e.port}</td>
                     <td class="mono small">{e.method || (e.inspected ? '' : 'tunnel')} {e.path || ''}{e.mcp_tool ? ` · tool ${e.mcp_tool}` : ''}</td>
                     <td class="mono small">{e.status ?? '—'}</td>
+                    <td>{dlpBadge(e.dlp)}</td>
                     <td class="small muted">{e.reason}</td>
                     <td><Show when={e.decision === 'deny'}><button class="tiny primary" onClick={() => allow(e)}>Allow</button> <button class="tiny secondary" title="Allow this host on every port" onClick={() => allow(e, true)}>any port</button></Show></td>
                   </tr>
@@ -92,4 +93,21 @@ export default function TrafficTab(props) {
       </Show>
     </section>
   );
+}
+
+// What the content check did with this request, in the words a person uses.
+// `blocked` means the answer never reached the model: that is a different fact
+// from a network denial, and the one a user has to know about.
+const DLP_LABELS = {
+  blocked: { label: 'not delivered', tone: 'error' },
+  replaced: { label: 'rewritten', tone: 'warn' },
+  pseudonymized: { label: 'pseudonymised', tone: 'warn' },
+  unavailable: { label: 'check failed', tone: 'error' },
+  too_large: { label: 'too large', tone: 'error' },
+};
+
+function dlpBadge(value) {
+  const entry = DLP_LABELS[value];
+  if (!entry) return null;
+  return <span class={`badge ${entry.tone}`}><i />{entry.label}</span>;
 }

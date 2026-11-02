@@ -88,3 +88,5 @@ session; `model_grant.rs` a grant and the inheritance rule; `node_tunnel.rs` a n
 and the `off_allow_all` answer.
 `openshell_policy.rs` compiles rules into an OpenShell policy; `allow_hosts` adds the destinations a
 suspended sandbox may still reach, in audit mode, because OpenShell 0.1.6 has no host wildcard.
+| `privacy.rs` | Detectors, actions, modes, the settings matrix, and which requests are checked |
+| `privacy_json.rs` | String values of a JSON document by byte span, so a rewrite touches one value and nothing else |

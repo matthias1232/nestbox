@@ -94,6 +94,7 @@ Two decisions were made here that are easy to get wrong:
 | `envoy.yaml` | Listener 3128, terminating listener 10000, ext_authz, JSON access log, 64 KiB buffer |
 | `extensions/mcp.lua` | Recognise JSON-RPC MCP on request and response; never rewrite a body |
 | `mitm/main.go` | Sign a leaf per SNI, terminate TLS, forward to the inner listener |
+| `mitm/restore.go` | Turn pseudonymised placeholders back into their values in the answer, for JSON and for server-sent events |
 | `mitm/main_test.go` | The certificate tests: host SAN, CA signature, cache |
 | `start-egress-proxy.sh` | Start the broker, then `exec envoy` so Envoy stays PID 1 |
 

@@ -94,6 +94,10 @@ pub enum Action {
     Redact,
     /// Replace with a labelled placeholder (`<API_KEYS_1a2b3c4d>`).
     Replace,
+    /// Replace like [`Action::Replace`], and turn the placeholder back into the
+    /// value in the model's answer. The model never sees the value; the agent
+    /// still works with it.
+    Pseudonymize,
     /// Leave it alone; the finding is still recorded.
     Allow,
 }
@@ -105,6 +109,7 @@ impl Action {
             Self::Block => "block",
             Self::Redact => "redact",
             Self::Replace => "replace",
+            Self::Pseudonymize => "pseudonymize",
             Self::Allow => "allow",
         }
     }
@@ -115,6 +120,7 @@ impl Action {
             "block" => Some(Self::Block),
             "redact" => Some(Self::Redact),
             "replace" => Some(Self::Replace),
+            "pseudonymize" => Some(Self::Pseudonymize),
             "allow" => Some(Self::Allow),
             _ => None,
         }
@@ -129,6 +135,7 @@ impl Action {
             Self::Block => IncidentAction::Blocked,
             Self::Redact => IncidentAction::Redacted,
             Self::Replace => IncidentAction::Replaced,
+            Self::Pseudonymize => IncidentAction::Pseudonymized,
             Self::Allow => IncidentAction::Allowed,
         }
     }
@@ -145,6 +152,7 @@ pub enum IncidentAction {
     Blocked,
     Redacted,
     Replaced,
+    Pseudonymized,
     Allowed,
 }
 
@@ -155,6 +163,7 @@ impl IncidentAction {
             Self::Blocked => "blocked",
             Self::Redacted => "redacted",
             Self::Replaced => "replaced",
+            Self::Pseudonymized => "pseudonymized",
             Self::Allowed => "allowed",
         }
     }
@@ -165,6 +174,7 @@ impl IncidentAction {
             "blocked" => Some(Self::Blocked),
             "redacted" => Some(Self::Redacted),
             "replaced" => Some(Self::Replaced),
+            "pseudonymized" => Some(Self::Pseudonymized),
             "allowed" => Some(Self::Allowed),
             _ => None,
         }
@@ -178,7 +188,7 @@ impl IncidentAction {
     pub fn severity(self) -> &'static str {
         match self {
             Self::Blocked => "critical",
-            Self::Redacted | Self::Replaced => "warning",
+            Self::Redacted | Self::Replaced | Self::Pseudonymized => "warning",
             Self::Allowed => "info",
         }
     }
@@ -389,6 +399,11 @@ pub struct PrivacySettings {
     pub block_cloud_egress: bool,
     /// How long an incident is kept, in days.
     pub retention_days: i32,
+    /// Hosts whose content is checked on top of the model hosts. The transparent
+    /// hop sees every request a sandbox makes, including a browser's; rewriting a
+    /// shop's form because a value looked like an e-mail is breakage, not
+    /// protection, so everything else is only recorded.
+    pub enforce_hosts: Vec<String>,
     /// Who saved the row last; `None` for the built-in default.
     pub updated_by: Option<Uuid>,
     /// `None` for the built-in default, which has no row.
@@ -408,6 +423,7 @@ impl PrivacySettings {
             actions: BTreeMap::new(),
             block_cloud_egress: true,
             retention_days: DEFAULT_RETENTION_DAYS,
+            enforce_hosts: Vec::new(),
             updated_by: None,
             updated_at: None,
         }
@@ -456,6 +472,9 @@ pub struct PrivacyUpdate {
     /// Defaults to 30 days.
     #[serde(default = "default_retention_days")]
     pub retention_days: i32,
+    /// Extra hosts to check. The model hosts are always checked.
+    #[serde(default)]
+    pub enforce_hosts: Vec<String>,
 }
 
 impl Default for PrivacyUpdate {
@@ -467,6 +486,7 @@ impl Default for PrivacyUpdate {
             actions: settings.actions,
             block_cloud_egress: settings.block_cloud_egress,
             retention_days: settings.retention_days,
+            enforce_hosts: settings.enforce_hosts,
         }
     }
 }
@@ -488,6 +508,19 @@ impl PrivacyUpdate {
     pub fn validate(&self) -> Result<(), String> {
         if !(1..=3650).contains(&self.retention_days) {
             return Err("retention_days must be between 1 and 3650.".into());
+        }
+        for host in &self.enforce_hosts {
+            let trimmed = host.trim();
+            let plain = !trimmed.is_empty()
+                && trimmed.len() <= 253
+                && !trimmed
+                    .chars()
+                    .any(|character| matches!(character, '/' | '\\' | '@' | ' ' | '"'));
+            if !plain {
+                return Err(format!(
+                    "enforce_hosts must be plain host names; '{trimmed}' is not one."
+                ));
+            }
         }
         Ok(())
     }
@@ -511,6 +544,7 @@ impl PrivacyUpdate {
             actions: self.actions,
             block_cloud_egress: self.block_cloud_egress,
             retention_days: self.retention_days,
+            enforce_hosts: self.enforce_hosts,
             updated_by: None,
             updated_at: None,
         }
@@ -628,12 +662,13 @@ pub struct Outcome {
 }
 
 impl Outcome {
-    /// The wire spelling of [`Outcome::action`]: `allowed`, `replaced`, `blocked`.
+    /// The wire spelling of [`Outcome::action`].
     pub fn action_str(&self) -> &'static str {
         match self.action {
             Action::Allow => "allowed",
             Action::Block => "blocked",
             Action::Redact | Action::Replace => "replaced",
+            Action::Pseudonymize => "pseudonymized",
         }
     }
 }
@@ -682,7 +717,7 @@ pub fn apply(settings: &PrivacySettings, marked: &[Marked], text: &str) -> Outco
                 action = Action::Block;
                 break;
             }
-            Action::Redact | Action::Replace => action = Action::Replace,
+            Action::Redact | Action::Replace | Action::Pseudonymize => action = Action::Replace,
             Action::Allow => {}
         }
     }
@@ -740,6 +775,11 @@ pub struct PrivacyIncident {
     pub mcp_tool: Option<String>,
     /// The conversation the request belonged to, for the link to the chat.
     pub conversation_id: Option<String>,
+    /// How often this finding was seen. A repeated value within a day increments
+    /// the same row instead of writing a new one.
+    pub occurrences: i32,
+    /// When it was last seen.
+    pub last_seen_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -1079,4 +1119,57 @@ mod tests {
         assert_eq!(Action::parse(""), None);
         assert_eq!(IncidentAction::parse("ignored"), None);
     }
+}
+
+/// What the content check does with one request, decided before any detector
+/// runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Enforcement {
+    /// Read the body and block or rewrite it.
+    Enforce,
+    /// Read the body and record what the policy would have done; change nothing.
+    /// The transparent hop sees a browser as well as an agent, and rewriting a
+    /// shop's form is breakage, not protection.
+    RecordOnly,
+    /// Do not read the body at all. Login and token endpoints only: a refresh
+    /// token is machine-issued, and blocking it signs the user out.
+    Exempt,
+}
+
+/// Login and token endpoints that the content check never reads.
+pub const EXEMPT_HOSTS: &[&str] = &[
+    "claude.ai",
+    "console.anthropic.com",
+    "platform.claude.com",
+    "auth.openai.com",
+    "accounts.google.com",
+];
+
+/// Whether one request is checked, only recorded, or left alone.
+pub fn enforcement_for(
+    source: super::privacy::IncidentSource,
+    destination: Option<&str>,
+    path: Option<&str>,
+    enforce_hosts: &[String],
+) -> Enforcement {
+    let host = destination
+        .unwrap_or_default()
+        .split(':')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let path = path.unwrap_or_default().to_ascii_lowercase();
+    if path.contains("/oauth/") || path.ends_with("/oauth/token") || EXEMPT_HOSTS.contains(&host.as_str())
+    {
+        return Enforcement::Exempt;
+    }
+    let listed = enforce_hosts
+        .iter()
+        .any(|entry| entry.trim().eq_ignore_ascii_case(&host));
+    if source == super::privacy::IncidentSource::Mcp || crate::domain::egress::is_agent_host(&host) || listed
+    {
+        return Enforcement::Enforce;
+    }
+    Enforcement::RecordOnly
 }

@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -35,14 +36,24 @@ import (
 // otherwise not at all. The console says that plainly instead of implying
 // otherwise.
 
-// maxInspectedBody is the same 4 MiB Envoy buffers on the terminated listener.
-// A larger body is forwarded uninspected rather than truncated: half a JSON
-// document is not a smaller document.
-const maxInspectedBody = 4 << 20
+// maxInspectedBody is what the proxy reads and what the control API accepts.
+// A larger body is not truncated: half a JSON document is not a smaller document,
+// and a truncated one would be inspected as text and rewritten in the wrong
+// places.
+const maxInspectedBody = 8 << 20
 
-// dlpTimeout bounds the check. The control API answers from one row and a
-// regex set; a slow answer must not become a slow request.
-const dlpTimeout = 1500 * time.Millisecond
+// dlpTimeout bounds the check. A model request can be megabytes, and the scan is
+// a walk over it; 1.5 s was measured against a 120-byte test body, not against
+// what an agent actually sends.
+const dlpTimeout = 5 * time.Second
+
+// The three facts worth extracting from a body, compiled once. `MustCompile`
+// per request was the only work in this file that grew with traffic.
+var (
+	modelPattern        = regexp.MustCompile(`"model"\s*:\s*"([^"]+)"`)
+	conversationPattern = regexp.MustCompile(`session_id\\?"\s*:\s*\\?"([0-9a-fA-F-]{8,})`)
+	toolPattern         = regexp.MustCompile(`"name"\s*:\s*"([^"]+)"`)
+)
 
 // dlpClient asks the control API about one body.
 type dlpClient struct {
@@ -50,6 +61,10 @@ type dlpClient struct {
 	nodeID string
 	token  string
 	client *http.Client
+	// The last mode the control API answered with, per sandbox. It is only used
+	// when the check cannot answer: `observe` may let a body through, and a mode
+	// nobody has seen may not.
+	modes sync.Map
 }
 
 // newDlpClientFromEnv builds the client from the proxy's own identity.
@@ -110,6 +125,18 @@ type dlpVerdict struct {
 	Action             string       `json:"action"`
 	TransformedContent string       `json:"transformed_content"`
 	Findings           []dlpFinding `json:"findings"`
+	// The policy mode that answered, so this hop can fall back to the same
+	// decision when it cannot ask.
+	Mode string `json:"mode"`
+	// Placeholders to turn back into their values on the way out, for
+	// `pseudonymize`. Only the answer of this request carries them.
+	Restore []restorePair `json:"restore"`
+}
+
+// restorePair is one placeholder and the value it stands for.
+type restorePair struct {
+	Placeholder string `json:"placeholder"`
+	Value       string `json:"value"`
 }
 
 // inspect sends one body and returns the verdict.
@@ -150,9 +177,9 @@ func (c *dlpClient) inspect(ctx context.Context, body dlpRequest) (dlpVerdict, e
 // A request this hop cannot check — no sandbox, a body it must not read, a
 // non-JSON content type — is forwarded, because the policy decision that let it
 // through has already been made by Envoy. What it must never do is forward a
-// body it read and then failed to check while the mode forbids that; that case
+// body it read and then failed to check while the policy forbids that; that case
 // is the 503 below.
-func (c *dlpClient) apply(w http.ResponseWriter, r *http.Request, mode string) (handled bool) {
+func (c *dlpClient) apply(w http.ResponseWriter, r *http.Request) (handled bool) {
 	if r.Body == nil {
 		return false
 	}
@@ -168,23 +195,24 @@ func (c *dlpClient) apply(w http.ResponseWriter, r *http.Request, mode string) (
 	if sandboxID == "" {
 		// Envoy copies the id out of the policy answer. An empty one means the
 		// request was not identified, and a body nobody can be blamed for is not
-		// a body this hop may refuse. Say so once per request: silence here was
-		// how "the check ran and found nothing" looked exactly like "the check
-		// never ran".
+		// a body this hop may refuse.
 		log.Printf("egress-dlp: %s %s: no sandbox in the request; body not checked", r.Method, r.Host)
 		return false
 	}
 	if r.ContentLength > maxInspectedBody {
-		return false
+		return c.refuseOversize(w, r, sandboxID)
 	}
 	original, err := io.ReadAll(io.LimitReader(r.Body, maxInspectedBody+1))
 	if err != nil {
-		return false
+		return c.refuseUnavailable(w, r, sandboxID, err)
 	}
 	_ = r.Body.Close()
-	if len(original) == 0 || len(original) > maxInspectedBody {
+	if len(original) == 0 {
 		r.Body = io.NopCloser(bytes.NewReader(original))
 		return false
+	}
+	if len(original) > maxInspectedBody {
+		return c.refuseOversize(w, r, sandboxID)
 	}
 	r.Body = io.NopCloser(bytes.NewReader(original))
 
@@ -197,34 +225,29 @@ func (c *dlpClient) apply(w http.ResponseWriter, r *http.Request, mode string) (
 		Path:        r.URL.Path,
 	}
 	text := string(original)
-	body.Model = jsonField(text, `"model"\s*:\s*"([^"]+)"`)
-	body.ConversationID = jsonField(text, `session_id\\?"\s*:\s*\\?"([0-9a-fA-F-]{8,})`)
+	body.Model = jsonField(text, modelPattern)
+	body.ConversationID = jsonField(text, conversationPattern)
 	if strings.Contains(text, `"jsonrpc"`) {
 		body.Source = "mcp"
-		body.McpTool = jsonField(text, `"name"\s*:\s*"([^"]+)"`)
+		body.McpTool = jsonField(text, toolPattern)
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), dlpTimeout)
 	defer cancel()
 	verdict, err := c.inspect(ctx, body)
 	if err == nil {
-		// One line per request that found something. A clean request stays quiet,
-		// because a log nobody can read is a log nobody reads.
+		c.modes.Store(sandboxID, verdict.Mode)
 		if len(verdict.Findings) > 0 || !verdict.Permitted {
 			log.Printf("egress-dlp: %s %s: %s (%d findings)", r.Method, r.Host, verdict.Action, len(verdict.Findings))
 		}
 	}
 	if err != nil {
-		if mode == "observe" {
-			log.Printf("egress-dlp: %s: %v; observe mode forwards", r.Host, err)
-			return false
-		}
-		log.Printf("egress-dlp: %s: %v; refusing", r.Host, err)
-		writeDlpRefusal(w, "privacy.unavailable", "The content check could not be answered, so the request was refused.")
-		return true
+		return c.refuseUnavailable(w, r, sandboxID, err)
 	}
 	if !verdict.Permitted {
-		writeDlpRefusal(w, "privacy.blocked", "The content policy refused this request.")
+		w.Header().Set(dlpHeader, "blocked")
+		writeDlpRefusal(w, http.StatusForbidden, "privacy.blocked",
+			"The content policy refused this request.")
 		return true
 	}
 	if verdict.Action == "replaced" && verdict.TransformedContent != "" && verdict.TransformedContent != string(original) {
@@ -232,25 +255,85 @@ func (c *dlpClient) apply(w http.ResponseWriter, r *http.Request, mode string) (
 		r.Body = io.NopCloser(bytes.NewReader(replaced))
 		r.ContentLength = int64(len(replaced))
 		r.Header.Set("content-length", strconv.Itoa(len(replaced)))
+		w.Header().Set(dlpHeader, "replaced")
+	}
+	if len(verdict.Restore) > 0 {
+		*r = *r.WithContext(context.WithValue(r.Context(), restoreKey{}, verdict.Restore))
+		w.Header().Set(dlpHeader, "pseudonymized")
 	}
 	return false
 }
+
+// mayFailOpen reports whether an unanswered check may be forwarded.
+//
+// It follows the *policy* mode the control API last reported, not the egress
+// mode: comparing the egress mode made this branch dead code, because a
+// transparent sandbox is never told "observe" (finding A3).
+func (c *dlpClient) mayFailOpen(sandboxID string) bool {
+	mode, seen := c.modes.Load(sandboxID)
+	if !seen {
+		return false
+	}
+	value, _ := mode.(string)
+	return value == "observe" || value == "off"
+}
+
+// refuseUnavailable answers a request whose check could not be answered.
+func (c *dlpClient) refuseUnavailable(w http.ResponseWriter, r *http.Request, sandboxID string, cause error) bool {
+	if c.mayFailOpen(sandboxID) {
+		log.Printf("egress-dlp: %s: %v; the policy is observe, forwarding", r.Host, cause)
+		return false
+	}
+	log.Printf("egress-dlp: %s: %v; refusing", r.Host, cause)
+	w.Header().Set(dlpHeader, "unavailable")
+	writeDlpRefusal(w, http.StatusServiceUnavailable, "privacy.unavailable",
+		"The content check could not be answered, so the request was refused.")
+	return true
+}
+
+// refuseOversize answers a body larger than the check reads.
+//
+// Padding a prompt past the limit would otherwise be a way around the policy,
+// and a body that is never read cannot be touched up: half a JSON document is
+// not a smaller document.
+func (c *dlpClient) refuseOversize(w http.ResponseWriter, r *http.Request, sandboxID string) bool {
+	if c.mayFailOpen(sandboxID) {
+		log.Printf("egress-dlp: %s: body over %d bytes; the policy is observe, forwarding", r.Host, maxInspectedBody)
+		return false
+	}
+	log.Printf("egress-dlp: %s: body over %d bytes; refusing", r.Host, maxInspectedBody)
+	w.Header().Set(dlpHeader, "too_large")
+	writeDlpRefusal(w, http.StatusRequestEntityTooLarge, "privacy.too_large",
+		"The request is larger than the content check reads (8 MiB) and the policy does not let unchecked content leave.")
+	return true
+}
+
+// dlpHeader tells the sandbox — and, through Envoy's access log, the console —
+// what happened to this request.
+const dlpHeader = "x-nestbox-dlp"
+
+// restoreKey carries the placeholders of one answer to the response side.
+type restoreKey struct{}
 
 // writeDlpRefusal answers the sandbox with a reason it can act on.
 //
 // No matched value is in the body; a detector name and a count are enough to
 // say why, and enough is all that may be said.
-func writeDlpRefusal(w http.ResponseWriter, code, message string) {
+func writeDlpRefusal(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("content-type", "application/json")
-	w.WriteHeader(http.StatusForbidden)
+	w.WriteHeader(status)
+	// The shape an agent's SDK already understands: `type` plus `error.type`
+	// and `error.message`. A bare `{"error": {...}}` was shown as a parse error
+	// rather than as the refusal it is.
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"error": map[string]any{"code": code, "message": message},
+		"type":  "error",
+		"error": map[string]any{"type": "permission_error", "message": message + " (" + code + ")"},
 	})
 }
 
 // jsonField returns the first match of a pattern, or "".
-func jsonField(text, pattern string) string {
-	match := regexp.MustCompile(pattern).FindStringSubmatch(text)
+func jsonField(text string, pattern *regexp.Regexp) string {
+	match := pattern.FindStringSubmatch(text)
 	if len(match) < 2 {
 		return ""
 	}

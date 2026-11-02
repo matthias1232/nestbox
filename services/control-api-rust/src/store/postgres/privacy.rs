@@ -24,13 +24,13 @@ use crate::error::StoreError;
 /// The settings columns, named so a schema change is a mapping error rather than
 /// a silently swapped field.
 const SETTINGS_COLUMNS: &str = "sandbox_id, mode, detectors, actions, \
-     block_cloud_egress, retention_days, updated_by, updated_at";
+     block_cloud_egress, retention_days, enforce_hosts, updated_by, updated_at";
 
 /// The incident columns, named for the same reason.
 const INCIDENT_COLUMNS: &str = "id, environment_id, sandbox_id, detector, action, severity, \
      masked_value, value_fingerprint, destination, cloud_delivery, direction, \
      requested_action, mode, replacement, source, method, path, model, mcp_tool, \
-     conversation_id, created_at";
+     conversation_id, occurrences, last_seen_at, created_at";
 
 /// One incident to write: a masked excerpt, a fingerprint, and what happened.
 ///
@@ -140,6 +140,7 @@ pub async fn settings_for(
         actions,
         block_cloud_egress: row.try_get("block_cloud_egress")?,
         retention_days: row.try_get("retention_days")?,
+        enforce_hosts: row.try_get("enforce_hosts")?,
         updated_by: row.try_get("updated_by")?,
         updated_at: Some(updated_at),
     }))
@@ -165,14 +166,15 @@ pub async fn save_settings(
 
     sqlx::query(
         "INSERT INTO privacy_settings (environment_id, sandbox_id, mode, detectors, actions, \
-            block_cloud_egress, retention_days, updated_by, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now()) \
+            block_cloud_egress, retention_days, enforce_hosts, updated_by, updated_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now()) \
          ON CONFLICT ON CONSTRAINT privacy_settings_scope DO UPDATE SET \
             mode = EXCLUDED.mode, \
             detectors = EXCLUDED.detectors, \
             actions = EXCLUDED.actions, \
             block_cloud_egress = EXCLUDED.block_cloud_egress, \
             retention_days = EXCLUDED.retention_days, \
+            enforce_hosts = EXCLUDED.enforce_hosts, \
             updated_by = EXCLUDED.updated_by, \
             updated_at = now()",
     )
@@ -183,6 +185,7 @@ pub async fn save_settings(
     .bind(&actions)
     .bind(settings.block_cloud_egress)
     .bind(settings.retention_days)
+    .bind(&settings.enforce_hosts)
     .bind(settings.updated_by)
     .execute(scope.connection())
     .await?;
@@ -217,6 +220,33 @@ pub async fn insert_incident(
     scope: &mut TenantScope<'_>,
     incident: NewIncident<'_>,
 ) -> Result<Uuid, StoreError> {
+    // The same finding again within a day is the same secret seen again, not a
+    // second secret. An agent resends its whole history on every turn, so a
+    // fresh row per request turned one IBAN into hundreds of rows.
+    let repeated: Option<Uuid> = sqlx::query_scalar(
+        "UPDATE privacy_incidents SET occurrences = occurrences + 1, last_seen_at = now() \
+          WHERE id = (SELECT id FROM privacy_incidents \
+                       WHERE environment_id = $1 AND sandbox_id = $2 AND detector = $3 \
+                         AND action = $4 AND direction = $5 \
+                         AND value_fingerprint IS NOT DISTINCT FROM $6 \
+                         AND conversation_id IS NOT DISTINCT FROM $7 \
+                         AND created_at > now() - interval '24 hours' \
+                       ORDER BY created_at DESC LIMIT 1) \
+          RETURNING id",
+    )
+    .bind(scope.environment_id())
+    .bind(incident.sandbox_id)
+    .bind(incident.detector.as_str())
+    .bind(incident.action.as_str())
+    .bind(incident.direction)
+    .bind(incident.value_fingerprint)
+    .bind(incident.conversation_id)
+    .fetch_optional(scope.connection())
+    .await?;
+    if let Some(id) = repeated {
+        return Ok(id);
+    }
+
     let id: Uuid = sqlx::query_scalar(
         "INSERT INTO privacy_incidents (environment_id, sandbox_id, detector, action, severity, \
             masked_value, value_fingerprint, destination, cloud_delivery, direction, \
@@ -323,6 +353,8 @@ fn incident_from_row(row: &sqlx::postgres::PgRow) -> Result<PrivacyIncident, Sto
         model: row.try_get("model")?,
         mcp_tool: row.try_get("mcp_tool")?,
         conversation_id: row.try_get("conversation_id")?,
+        occurrences: row.try_get("occurrences")?,
+        last_seen_at: row.try_get("last_seen_at")?,
         created_at: row.try_get("created_at")?,
     })
 }
@@ -391,7 +423,10 @@ impl DlpGroup {
 #[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
 pub struct DlpRow {
     pub key: String,
+    /// Rows: one per distinct finding.
     pub incidents: i64,
+    /// Times the finding was seen: a repeated value counts again.
+    pub seen: i64,
     pub blocked: i64,
     pub redacted: i64,
     pub replaced: i64,
@@ -410,6 +445,7 @@ pub async fn dlp_breakdown(
 ) -> Result<Vec<DlpRow>, StoreError> {
     let statement = format!(
         "SELECT {key} AS key, count(*)::bigint AS incidents, \
+            coalesce(sum(i.occurrences), 0)::bigint AS seen, \
             count(*) FILTER (WHERE i.action = 'blocked')::bigint AS blocked, \
             count(*) FILTER (WHERE i.action = 'redacted')::bigint AS redacted, \
             count(*) FILTER (WHERE i.action = 'replaced')::bigint AS replaced, \
@@ -435,6 +471,7 @@ pub async fn dlp_breakdown(
         out.push(DlpRow {
             key: row.try_get("key")?,
             incidents: row.try_get("incidents")?,
+            seen: row.try_get("seen")?,
             blocked: row.try_get("blocked")?,
             redacted: row.try_get("redacted")?,
             replaced: row.try_get("replaced")?,
@@ -465,7 +502,8 @@ pub async fn dlp_events(
     let statement = "SELECT i.id, i.environment_id, i.sandbox_id, i.detector, i.action, \
             i.severity, i.masked_value, i.value_fingerprint, i.destination, i.cloud_delivery, \
             i.direction, i.requested_action, i.mode, i.replacement, i.source, i.method, \
-            i.path, i.model, i.mcp_tool, i.conversation_id, i.created_at, s.name AS sandbox_name \
+            i.path, i.model, i.mcp_tool, i.conversation_id, i.occurrences, i.last_seen_at, \
+            i.created_at, s.name AS sandbox_name \
        FROM privacy_incidents i JOIN sandboxes s ON s.id = i.sandbox_id \
       WHERE i.environment_id = $1 AND i.created_at >= $2 \
         AND ($3::uuid IS NULL OR i.sandbox_id = $3) \

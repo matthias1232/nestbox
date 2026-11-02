@@ -400,6 +400,14 @@ static_resources:
                           would_deny: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-would-deny)%"
                           reason: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-reason)%"
                           rule_id: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:x-nestbox-rule-id)%"
+                          # What the content check did: blocked, replaced,
+                          # pseudonymized, unavailable, too_large. Empty when the
+                          # check does not apply to this request.
+                          dlp: "%RESP(X-NESTBOX-DLP)%"
+                          # What the content check did: blocked, replaced,
+                          # pseudonymized, unavailable, too_large. Empty when the
+                          # check does not apply to this request.
+                          dlp: "%RESP(X-NESTBOX-DLP)%"
                 route_config:
                   name: egress_terminated
                   virtual_hosts:

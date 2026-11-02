@@ -115,17 +115,19 @@ pub async fn inspect(
 ) -> Result<Json<InspectResult>, ApiError> {
     let direction = privacy_service::Direction::parse(&body.direction)
         .ok_or_else(|| ApiError::validation("direction must be 'inbound' or 'outbound'."))?;
-    Ok(Json(
-        privacy_service::inspect(
-            &state.services,
-            &auth.principal,
-            body.sandbox_id,
-            direction,
-            &body.content,
-            body.destination.as_deref(),
-        )
-        .await?,
-    ))
+    // The test button shows what the policy would do; the values behind the
+    // placeholders never leave this endpoint.
+    let mut result = privacy_service::inspect(
+        &state.services,
+        &auth.principal,
+        body.sandbox_id,
+        direction,
+        &body.content,
+        body.destination.as_deref(),
+    )
+    .await?;
+    result.restore.clear();
+    Ok(Json(result))
 }
 
 /// The recent incidents of one sandbox, newest first.

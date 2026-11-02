@@ -109,6 +109,11 @@ pub struct ProxyTrafficEntry {
     /// `key` or `account`: how the call was authenticated. Never the credential.
     #[serde(default)]
     pub llm_auth: Option<String>,
+    /// What the content check did with this request, as the broker reported it:
+    /// `blocked`, `replaced`, `pseudonymized`, `unavailable`, `too_large`. Absent
+    /// when the check does not apply (a tunnel, a non-JSON body, an exempt host).
+    #[serde(default)]
+    pub dlp: Option<String>,
 }
 
 /// One DNS answer, from the node's resolver.
@@ -256,18 +261,63 @@ pub async fn ingest_batch(
         })
         .collect();
 
+    // A captured body is the request as it *arrived*, which is before the content
+    // check rewrote it. Storing that would keep the value the policy promised not
+    // to keep, so the batch is scrubbed first — always, whatever the mode.
+    let mut scrubbed: Vec<Option<(String, String)>> = Vec::with_capacity(prepared.len());
+    for item in &prepared {
+        match &item.body {
+            None => scrubbed.push(None),
+            Some(body) => {
+                let texts: Vec<String> = [body.request.as_ref(), body.response.as_ref()]
+                    .into_iter()
+                    .flatten()
+                    .cloned()
+                    .collect();
+                // A body with no sandbox cannot be masked: there is no policy to
+                // ask. It is stored as it arrived and is not attributable to a
+                // tenant, which is why it is also rare.
+                let masked = match item.sandbox_id {
+                    None => texts.clone(),
+                    Some(sandbox_id) => {
+                        let items: Vec<(Uuid, String)> =
+                            texts.iter().map(|text| (sandbox_id, text.clone())).collect();
+                        crate::services::privacy_service::scrub_batch(
+                            ctx,
+                            batch.environment_id,
+                            &items,
+                        )
+                        .await
+                        .unwrap_or_else(|error| {
+                            tracing::warn!(?error, "cannot mask a captured body; storing it as it arrived");
+                            texts.clone()
+                        })
+                    }
+                };
+                let mut masked = masked.into_iter();
+                let request = body.request.as_ref().map(|_| masked.next().unwrap_or_default());
+                let response = body.response.as_ref().map(|_| masked.next().unwrap_or_default());
+                scrubbed.push(Some((request.unwrap_or_default(), response.unwrap_or_default())));
+            }
+        }
+    }
+
     let bodies: Vec<traffic_bodies::NewBody<'_>> = prepared
         .iter()
-        .filter_map(|item| item.body.as_ref().map(|body| (item, body)))
-        .map(|(item, body)| traffic_bodies::NewBody {
-            event_id: item.id,
-            sandbox_id: item.sandbox_id,
-            ts: item.ts,
-            request_body: body.request.as_deref(),
-            response_body: body.response.as_deref(),
-            request_bytes: body.request_bytes,
-            response_bytes: body.response_bytes,
-            truncated: body.truncated,
+        .zip(scrubbed.iter())
+        .filter_map(|(item, masked)| {
+            let body = item.body.as_ref()?;
+            let (request, response) = masked.as_ref()?;
+            Some(traffic_bodies::NewBody {
+                event_id: item.id,
+                sandbox_id: item.sandbox_id,
+                ts: item.ts,
+                request_body: body.request.as_ref().map(|_| request.as_str()),
+                response_body: body.response.as_ref().map(|_| response.as_str()),
+                request_bytes: body.request_bytes,
+                response_bytes: body.response_bytes,
+                truncated: body.truncated,
+            })
         })
         .collect();
 
@@ -596,6 +646,11 @@ fn prepare_traffic(
         }
         if let Some(tool) = entry.mcp_tool.as_deref().filter(|value| !value.is_empty()) {
             map.insert("mcp_tool".into(), serde_json::json!(tool));
+        }
+        // A refused request is a fact about the chat, not only about the proxy:
+        // the console shows "not delivered" from this field.
+        if let Some(dlp) = entry.dlp.as_deref().filter(|value| !value.is_empty()) {
+            map.insert("dlp".into(), serde_json::json!(dlp));
         }
     }
 
@@ -1034,6 +1089,7 @@ mod tests {
         ProxyTrafficEntry {
             ts: None,
             sandbox_id: None,
+            dlp: None,
             host: "mcp.example.com".into(),
             port: Some(443),
             protocol: Some("HTTP/2".into()),
@@ -1405,6 +1461,7 @@ pub async fn pull_openshell_events(ctx: &ServiceContext) -> Result<u64, ApiError
             }
 
             let entry = ProxyTrafficEntry {
+                dlp: None,
                 ts,
                 sandbox_id: Some(*sandbox_id),
                 host: host.to_string(),

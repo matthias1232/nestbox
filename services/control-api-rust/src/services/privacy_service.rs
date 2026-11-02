@@ -49,6 +49,14 @@ use crate::store::TenantScope;
 /// applies.
 const MAX_CONTENT: usize = 64 * 1024;
 
+/// What the proxy hop may send: a whole model request, not a typed paragraph.
+///
+/// The 64 KiB above is the test button's limit — a person typing into a form.
+/// An agent ships its system prompt and tool definitions with every request, so
+/// a real one is routinely larger; refusing it turned every inspected request
+/// into a 403 and the DLP into an outage (finding A1).
+const MAX_PROXY_CONTENT: usize = 8 * 1024 * 1024;
+
 /// How many findings one inspection reports and records.
 ///
 /// Bounded on purpose: a pasted log full of hostnames would otherwise write
@@ -124,6 +132,14 @@ pub struct InspectResult {
     /// that ignores `permitted` still never forwards a value.
     pub transformed_content: String,
     pub findings: Vec<FindingView>,
+    /// Placeholders to turn back into their values in the answer. Empty for the
+    /// test button; only the internal endpoint fills it.
+    pub restore: Vec<RestorePair>,
+    /// The policy mode that answered: `off`, `observe`, `review` or `strict`.
+    ///
+    /// The proxy keeps it so that a check it cannot answer later falls back to
+    /// the same decision: `observe` may forward, and nothing else may.
+    pub mode: String,
 }
 
 /// The SHA-256 of one matched value, as lowercase hex.
@@ -967,6 +983,34 @@ struct IncidentDraft {
 struct Evaluation {
     outcome: Outcome,
     incidents: Vec<IncidentDraft>,
+    /// The mode in force, carried so the answer can tell the proxy what to do
+    /// when it cannot ask again.
+    mode: PrivacyMode,
+    /// Placeholders to turn back into their values in the answer, for
+    /// `pseudonymize`. Only the internal endpoint's answer carries them.
+    restore: Vec<RestorePair>,
+}
+
+/// One placeholder and the value it stands for.
+///
+/// Lives only for the duration of one request: the proxy keeps it in memory and
+/// never writes it down. `Debug` is written by hand for that reason.
+#[derive(Clone, Serialize, ToSchema)]
+pub struct RestorePair {
+    /// The placeholder the model saw.
+    pub placeholder: String,
+    /// The value it stands for.
+    pub value: String,
+}
+
+impl std::fmt::Debug for RestorePair {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RestorePair")
+            .field("placeholder", &self.placeholder)
+            .field("value", &"[redacted]")
+            .finish()
+    }
 }
 
 /// Whether the content counts as a delivery to a cloud destination.
@@ -1015,6 +1059,8 @@ fn evaluate(
                 decisions: Vec::new(),
             },
             incidents: Vec::new(),
+            mode: settings.mode,
+            restore: Vec::new(),
         };
     }
 
@@ -1047,7 +1093,25 @@ fn evaluate(
         })
         .collect();
 
-    Evaluation { outcome, incidents }
+    // The values behind the placeholders, for the hop that has to restore them.
+    // Built from `marked`, which still holds the value: nothing else does.
+    let restore = outcome
+        .decisions
+        .iter()
+        .zip(marked.iter())
+        .filter(|(decision, _)| decision.action == Action::Pseudonymize)
+        .map(|(decision, entry)| RestorePair {
+            placeholder: decision.replacement(),
+            value: entry.finding.value.clone(),
+        })
+        .collect();
+
+    Evaluation {
+        outcome,
+        incidents,
+        mode: settings.mode,
+        restore,
+    }
 }
 
 /// The settings that apply to a sandbox: its own row, else the environment
@@ -1091,6 +1155,9 @@ pub async fn effective_settings(
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
+    if let Some(sandbox_id) = sandbox_id {
+        require_owned_sandbox(&mut scope, principal, sandbox_id).await?;
+    }
     let settings = resolve_settings(&mut scope, sandbox_id).await?;
     scope.commit().await.map_err(ApiError::from)?;
     Ok(settings)
@@ -1297,9 +1364,14 @@ pub async fn inspect_with(
     context: &InspectContext,
 ) -> Result<InspectResult, ApiError> {
     require(principal, Permission::TelemetryRead)?;
-    if content.len() > MAX_CONTENT {
+    let limit = if context.source == IncidentSource::Test {
+        MAX_CONTENT
+    } else {
+        MAX_PROXY_CONTENT
+    };
+    if content.len() > limit {
         return Err(ApiError::validation(format!(
-            "Content must be at most {MAX_CONTENT} bytes."
+            "Content must be at most {limit} bytes."
         )));
     }
 
@@ -1317,7 +1389,47 @@ pub async fn inspect_with(
     }
     let settings = resolve_settings(&mut scope, Some(sandbox_id)).await?;
     let destination = context.destination();
-    let evaluation = evaluate(&settings, direction, destination, content);
+    // What this request is allowed to cost: a body check, a record, or nothing.
+    // The login paths are exempt before any detector runs, because a refresh
+    // token in a credential detector's hands signs the user out.
+    let enforcement = crate::domain::privacy::enforcement_for(
+        context.source,
+        destination,
+        context.path.as_deref(),
+        &settings.enforce_hosts,
+    );
+    if enforcement == crate::domain::privacy::Enforcement::Exempt {
+        scope.commit().await.map_err(ApiError::from)?;
+        return Ok(InspectResult {
+            permitted: true,
+            action: "skipped".to_string(),
+            transformed_content: content.to_string(),
+            findings: Vec::new(),
+            restore: Vec::new(),
+            mode: settings.mode.as_str().to_string(),
+        });
+    }
+    // A host that is not a model or an operator's entry is recorded as if the
+    // mode were `observe`, whatever the mode says.
+    let settings = if enforcement == crate::domain::privacy::Enforcement::RecordOnly {
+        PrivacySettings {
+            mode: PrivacyMode::Observe,
+            ..settings
+        }
+    } else {
+        settings
+    };
+    // The proxy sends a document, not a sentence: inspect the string values and
+    // splice back exactly those, so the request stays byte-identical everywhere a
+    // detector found nothing. The test button sends free text and keeps the
+    // plain path.
+    let evaluation = match context.source {
+        IncidentSource::Test | IncidentSource::AccountingProxy => {
+            evaluate(&settings, direction, destination, content)
+        }
+        _ => evaluate_json(&settings, direction, destination, content)
+            .unwrap_or_else(|| evaluate(&settings, direction, destination, content)),
+    };
     let mode = settings.mode.as_str();
     for incident in &evaluation.incidents {
         store::insert_incident(
@@ -1351,6 +1463,149 @@ pub async fn inspect_with(
     Ok(view(evaluation))
 }
 
+/// Evaluate every string value of a JSON document and splice back only the ones
+/// a detector changed.
+///
+/// `None` when the text is not JSON, so the caller falls back to the plain path.
+/// The first system block is never rewritten: with a subscription, Anthropic
+/// accepts an OAuth request only while that block says exactly what Claude Code
+/// wrote (finding B6 / section 5.2 of the privacy module).
+fn evaluate_json(
+    settings: &PrivacySettings,
+    direction: Direction,
+    destination: Option<&str>,
+    raw: &str,
+) -> Option<Evaluation> {
+    let values = crate::domain::privacy_json::string_values(raw)?;
+    let mut action = Action::Allow;
+    let mut decisions = Vec::new();
+    let mut incidents = Vec::new();
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    let mut restore = Vec::new();
+    let mut system_head_seen = false;
+
+    for value in &values {
+        let is_system_head = value.path == ["system"] || value.path == ["system", "text"];
+        if is_system_head && !system_head_seen {
+            system_head_seen = true;
+            continue;
+        }
+        if crate::domain::privacy_json::is_skipped(&value.path) {
+            continue;
+        }
+        let one = evaluate(settings, direction, destination, &value.value);
+        action = stronger(action, one.outcome.action);
+        if one.outcome.transformed != value.value {
+            edits.push((value.start, value.end, one.outcome.transformed.clone()));
+        }
+        decisions.extend(one.outcome.decisions);
+        incidents.extend(one.incidents);
+        restore.extend(one.restore);
+    }
+
+    Some(Evaluation {
+        outcome: Outcome {
+            action,
+            permitted: action != Action::Block,
+            transformed: crate::domain::privacy_json::replace_spans(raw, &edits),
+            decisions,
+        },
+        incidents,
+        mode: settings.mode,
+        restore,
+    })
+}
+
+/// The more severe of two actions, for aggregating one document.
+fn stronger(current: Action, next: Action) -> Action {
+    match (current, next) {
+        (Action::Block, _) | (_, Action::Block) => Action::Block,
+        (
+            Action::Redact | Action::Replace | Action::Pseudonymize,
+            _,
+        )
+        | (
+            _,
+            Action::Redact | Action::Replace | Action::Pseudonymize,
+        ) => Action::Replace,
+        _ => Action::Allow,
+    }
+}
+
+/// The text as it may be stored: every finding replaced by its placeholder.
+///
+/// The proxy captures a body before the content check rewrites it, so the stored
+/// copy would otherwise hold the value the policy promised never to keep. The
+/// masked text is the one that left (or, in `observe`, a masked copy of the one
+/// that left unchanged).
+///
+/// Settings are read once per sandbox in the batch; a batch carries up to 500
+/// bodies and a body is not worth a settings query each.
+pub async fn scrub_batch(
+    ctx: &ServiceContext,
+    environment_id: Uuid,
+    items: &[(Uuid, String)],
+) -> Result<Vec<String>, ApiError> {
+    if items.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut scope = crate::store::TenantScope::begin(&ctx.pool, environment_id)
+        .await
+        .map_err(ApiError::from)?;
+    let mut cache: std::collections::HashMap<Uuid, PrivacySettings> =
+        std::collections::HashMap::new();
+    let mut out = Vec::with_capacity(items.len());
+    for (sandbox_id, text) in items {
+        if !cache.contains_key(sandbox_id) {
+            let settings = resolve_settings(&mut scope, Some(*sandbox_id)).await?;
+            cache.insert(*sandbox_id, settings);
+        }
+        let settings = cache.get(sandbox_id).expect("inserted above");
+        // Stored as if the policy were enforced: what a reader sees must not
+        // depend on the mode that happened to be set when the body arrived.
+        let strict = PrivacySettings {
+            mode: PrivacyMode::Strict,
+            block_cloud_egress: true,
+            ..settings.clone()
+        };
+        let evaluation = evaluate_json(&strict, Direction::Inbound, None, text)
+            .unwrap_or_else(|| evaluate(&strict, Direction::Inbound, None, text));
+        out.push(evaluation.outcome.transformed);
+    }
+    scope.commit().await.map_err(ApiError::from)?;
+    Ok(out)
+}
+
+/// A non-admin may read the DLP data of a sandbox they own and of no other.
+///
+/// Answers "not found" rather than "forbidden" so that the existence of someone
+/// else's sandbox is not confirmed by the error.
+async fn require_owned_sandbox(
+    scope: &mut TenantScope<'_>,
+    principal: &Principal,
+    sandbox_id: Uuid,
+) -> Result<(), ApiError> {
+    if principal.role == crate::domain::auth::Role::Admin {
+        return Ok(());
+    }
+    let owner: Option<Uuid> = sqlx::query_scalar(
+        "SELECT owner_user_id FROM sandboxes WHERE environment_id = $1 AND id = $2",
+    )
+    .bind(scope.environment_id())
+    .bind(sandbox_id)
+    .fetch_optional(scope.connection())
+    .await
+    .map_err(|error| ApiError::from(crate::store::map_sqlx_error(error)))?
+    .flatten();
+    if owner == Some(principal.user_id) {
+        return Ok(());
+    }
+    Err(ApiError::not_found(
+        ErrorCode::SANDBOX_NOT_FOUND,
+        "No such sandbox in this environment.",
+    ))
+}
+
 /// The policy history of one sandbox and the environment default it inherits.
 pub async fn changes(
     ctx: &ServiceContext,
@@ -1369,15 +1624,7 @@ pub async fn changes(
         .await
         .map_err(ApiError::from)?;
     if let Some(sandbox_id) = sandbox_id {
-        if !store::sandbox_exists(&mut scope, sandbox_id)
-            .await
-            .map_err(ApiError::from)?
-        {
-            return Err(ApiError::not_found(
-                ErrorCode::SANDBOX_NOT_FOUND,
-                "No such sandbox in this environment.",
-            ));
-        }
+        require_owned_sandbox(&mut scope, principal, sandbox_id).await?;
     }
     let environment_id = scope.environment_id();
     let items = incident_store::dlp_changes(&mut scope, sandbox_id, environment_id, limit)
@@ -1408,6 +1655,8 @@ fn view(evaluation: Evaluation) -> InspectResult {
         action: evaluation.outcome.action_str().to_string(),
         transformed_content: evaluation.outcome.transformed,
         findings,
+        restore: evaluation.restore,
+        mode: evaluation.mode.as_str().to_string(),
     }
 }
 
@@ -1427,6 +1676,7 @@ pub async fn list_incidents(
     let mut scope = TenantScope::begin_for(&ctx.pool, principal)
         .await
         .map_err(ApiError::from)?;
+    require_owned_sandbox(&mut scope, principal, sandbox_id).await?;
     let incidents = store::list_incidents(&mut scope, sandbox_id, limit)
         .await
         .map_err(ApiError::from)?;
@@ -1780,6 +2030,7 @@ pub async fn dlp_overview(
     let mut totals = incident_store::DlpRow {
         key: "total".into(),
         incidents: 0,
+        seen: 0,
         blocked: 0,
         redacted: 0,
         replaced: 0,
@@ -1788,6 +2039,7 @@ pub async fn dlp_overview(
     };
     for row in &rows {
         totals.incidents += row.incidents;
+        totals.seen += row.seen;
         totals.blocked += row.blocked;
         totals.redacted += row.redacted;
         totals.replaced += row.replaced;
@@ -1835,4 +2087,82 @@ pub async fn dlp_log(
         .map_err(ApiError::from)?;
     scope.commit().await.map_err(ApiError::from)?;
     Ok(items)
+}
+
+#[cfg(test)]
+mod json_tests {
+    use super::*;
+
+    fn policy(mode: PrivacyMode) -> PrivacySettings {
+        PrivacySettings {
+            mode,
+            ..PrivacySettings::strict_default()
+        }
+    }
+
+    fn request_with_tools() -> String {
+        let tools: Vec<String> = (0..40)
+            .map(|index| {
+                format!(
+                    r#"{{"name":"tool{index}","description":"see https://github.com/org/repo{index} and mail ops{index}@example.org","input_schema":{{"type":"object"}}}}"#
+                )
+            })
+            .collect();
+        format!(
+            r#"{{"model":"claude-x","tools":[{}],"system":[{{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude."}},{{"type":"text","text":"Contact Max Mustermann"}}],"messages":[{{"role":"user","content":[{{"type":"text","text":"IBAN DE89370400440532013000 and ada@example.com"}}]}}]}}"#,
+            tools.join(",")
+        )
+    }
+
+    #[test]
+    fn a_json_request_keeps_everything_else_byte_identical() {
+        let raw = request_with_tools();
+        let evaluation = evaluate_json(
+            &policy(PrivacyMode::Strict),
+            Direction::Inbound,
+            Some("api.anthropic.com"),
+            &raw,
+        )
+        .expect("a valid document");
+        let out = &evaluation.outcome.transformed;
+
+        // Tool definitions are not a person's text and must survive untouched.
+        assert!(out.contains("https://github.com/org/repo39"));
+        assert!(out.contains("ops39@example.org"));
+        // The block a subscription is checked against is never rewritten.
+        assert!(out.contains("You are Claude Code, Anthropic's official CLI for Claude."));
+        // A name in the second system block is a finding.
+        assert!(!out.contains("Max Mustermann"));
+        // The user's text is rewritten, and the document is still valid JSON.
+        assert!(!out.contains("ada@example.com"));
+        assert!(out.contains("<EMAIL_ADDRESSES_"));
+        serde_json::from_str::<serde_json::Value>(out).expect("still json");
+        // Strict refuses the IBAN.
+        assert!(!evaluation.outcome.permitted);
+        assert_eq!(evaluation.outcome.action, Action::Block);
+    }
+
+    #[test]
+    fn a_large_document_is_inspected() {
+        let padding = "x".repeat(300 * 1024);
+        let raw = format!(
+            r#"{{"model":"claude-x","system":"{padding}","messages":[{{"role":"user","content":"IBAN DE89370400440532013000"}}]}}"#
+        );
+        let evaluation = evaluate_json(
+            &policy(PrivacyMode::Review),
+            Direction::Inbound,
+            Some("api.anthropic.com"),
+            &raw,
+        )
+        .expect("a valid document");
+        assert!(evaluation.outcome.permitted);
+        assert!(evaluation.outcome.transformed.contains("<IBAN_"));
+        serde_json::from_str::<serde_json::Value>(&evaluation.outcome.transformed)
+            .expect("still json");
+    }
+
+    #[test]
+    fn free_text_still_takes_the_plain_path() {
+        assert!(evaluate_json(&policy(PrivacyMode::Strict), Direction::Inbound, None, "not json").is_none());
+    }
 }
